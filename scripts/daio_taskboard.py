@@ -167,46 +167,183 @@ class TaskboardManager:
             </div>
             """
 
+        # Compute progress metrics
+        canonical_milestones = [
+            ("P4_FREEZE", "P4: Freeze"),
+            ("P5_CANONICALIZE", "P5: Canonical"),
+            ("P6_RUNTIME", "P6: Runtime"),
+            ("OOS-1", "OOS-1: TW 9"),
+            ("OOS-2", "OOS-2: Friction"),
+            ("OOS-3A", "OOS-3A: TW 40"),
+            ("OOS-3B", "OOS-3B: US 28"),
+            ("CE-1", "CE-1: Sizing"),
+            ("CE-2", "CE-2: Robustness"),
+            ("P7_RELEASE", "P7: Release"),
+        ]
+        
+        done_phases = set(t.get("phase") for t in self.tasks if t.get("status") == "DONE")
+        in_prog_phases = set(t.get("phase") for t in self.tasks if t.get("status") in ["IN_PROGRESS", "TESTING", "REVIEW"])
+        
+        completed_count = sum(1 for m_id, _ in canonical_milestones if m_id in done_phases)
+        total_milestones = len(canonical_milestones)
+        progress_pct = int(round((completed_count / total_milestones) * 100))
+
+        stepper_items_html = ""
+        for m_id, label in canonical_milestones:
+            if m_id in done_phases:
+                cls = "step-done"
+                icon = "✓"
+                badge = "DONE"
+            elif m_id in in_prog_phases:
+                cls = "step-active"
+                icon = "⚡"
+                badge = "ACTIVE"
+            else:
+                cls = "step-pending"
+                icon = "🔒"
+                badge = "PLAN"
+            stepper_items_html += f"""
+            <div class="stepper-item {cls}">
+                <div class="step-circle">{icon}</div>
+                <div class="step-label">{label}</div>
+                <span class="step-status">{badge}</span>
+            </div>
+            """
+
+        progress_html = f"""
+        <div class="progress-container">
+            <div class="progress-header">
+                <div class="progress-title">
+                    <span>🚀 專案整體推進進度 (Overall Project Pipeline)</span>
+                    <strong style="color: #38bdf8; font-size: 16px;">{completed_count} / {total_milestones} 里程碑完成 ({progress_pct}%)</strong>
+                </div>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width: {progress_pct}%;">
+                    <div class="progress-shine"></div>
+                </div>
+            </div>
+            <div class="stepper-bar">
+                {stepper_items_html}
+            </div>
+        </div>
+        """
+
+        # Determine active turn
+        active_task = next((t for t in self.tasks if t.get("status") in ["IN_PROGRESS", "TESTING", "REVIEW"]), None)
+        active_agent = "Antigravity (Lead Engineer)"
+        standby_agent = "ChatGPT (Lead Architect)"
+        turn_action = "Executing algorithms & test suite"
+        
+        if active_task and active_task.get("status") == "REVIEW":
+            active_agent = "ChatGPT (Lead Architect)"
+            standby_agent = "Antigravity (Lead Engineer)"
+            turn_action = "Auditing evidence & making architectural verdict"
+        elif active_task:
+            active_agent = f"{active_task.get('assigned_agent', 'Antigravity')} (Lead Engineer)"
+            standby_agent = "ChatGPT (Lead Architect)"
+            turn_action = f"Working on {active_task.get('title')}"
+
+        last_event = self.history[-1] if self.history else {"agent": "System", "summary": "System initialized.", "timestamp": ""}
+        prev_event = self.history[-2] if len(self.history) >= 2 else None
+
+        # Build Dialogue Feed HTML
+        dialogue_html = f"""
+        <div class="dialogue-stage">
+            <div class="turn-banner">
+                <div class="turn-indicator">
+                    <span class="pulse-dot"></span>
+                    <span>當前行動回合 (Active Turn)：<strong style="color: #38bdf8;">{active_agent}</strong></span>
+                </div>
+                <div class="turn-status-badge">
+                    <span>⚡ 狀態：{turn_action}</span>
+                </div>
+            </div>
+            <div class="chat-bubbles-container">
+                <div class="chat-bubble architect-bubble">
+                    <div class="bubble-header">
+                        <span class="avatar">🏛️</span>
+                        <strong>ChatGPT Project</strong>
+                        <span class="role-badge">Lead Architect & Auditor</span>
+                        <span class="bubble-time">{last_event.get('timestamp', '')}</span>
+                    </div>
+                    <div class="bubble-text">
+                        {last_event.get('summary', '審計中...')}
+                    </div>
+                </div>
+                <div class="chat-bubble engineer-bubble">
+                    <div class="bubble-header">
+                        <span class="avatar">🛠️</span>
+                        <strong>Antigravity</strong>
+                        <span class="role-badge">Lead Execution Engineer</span>
+                        <span class="bubble-time">Live Sync</span>
+                    </div>
+                    <div class="bubble-text">
+                        收到架構師裁定！正在 100% 凍結 S1-S7 策略層前提下，接棒執行 <strong>{active_task.get('title') if active_task else '下階段任務'}</strong>，完成後將自動通過 CDP 回傳審計報告。
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+
         history_rows = ""
         for h in reversed(self.history[-15:]):
-            badge_cls = "approved" if h["decision"] == "APPROVE" else ("review" if "HUMAN" in h["decision"] else "revise")
+            badge_cls = "approved" if h.get("decision") == "APPROVE" else ("review" if "HUMAN" in h.get("decision", "") else "revise")
             history_rows += f"""
             <tr>
-                <td>{h['timestamp']}</td>
-                <td>#{h['iteration']}</td>
-                <td><strong>{h['phase']}</strong></td>
-                <td><span class="decision-badge {badge_cls}">{h['decision']}</span></td>
-                <td>{h['agent']}</td>
-                <td>{h['summary']}</td>
+                <td>{h.get('timestamp', '')}</td>
+                <td>#{h.get('iteration', '')}</td>
+                <td><strong>{h.get('phase', '')}</strong></td>
+                <td><span class="decision-badge {badge_cls}">{h.get('decision', '')}</span></td>
+                <td>{h.get('agent', '')}</td>
+                <td>{h.get('summary', '')}</td>
             </tr>
             """
 
         html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DAIO Dual-Agent Visual Taskboard</title>
+    <title>DAIO Dual-Agent Visual Taskboard & Live Dialogue</title>
     <style>
         :root {{
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-card: #182234;
+            --bg-primary: #0b1329;
+            --bg-secondary: #131f37;
+            --bg-card: #1a2846;
             --text-primary: #f8fafc;
             --text-secondary: #94a3b8;
-            --border-color: #334155;
+            --border-color: #243556;
             --accent: #38bdf8;
+            --architect-color: #f59e0b;
+            --engineer-color: #38bdf8;
         }}
         * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
         body {{ background-color: var(--bg-primary); color: var(--text-primary); padding: 24px; min-height: 100vh; }}
-        header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }}
-        .header-title {{ font-size: 24px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }}
+        header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }}
+        .header-title {{ font-size: 22px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }}
         .live-pulse {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981; animation: pulse 2s infinite; }}
         @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.4; }} }}
         
+        /* Dialogue Stage Styles */
+        .dialogue-stage {{ background: linear-gradient(135deg, #131f37 0%, #0f172a 100%); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }}
+        .turn-banner {{ display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #1e293b; }}
+        .turn-indicator {{ font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }}
+        .pulse-dot {{ width: 8px; height: 8px; background: #38bdf8; border-radius: 50%; box-shadow: 0 0 8px #38bdf8; }}
+        .turn-status-badge {{ background: #1e293b; border: 1px solid var(--border-color); padding: 4px 12px; border-radius: 20px; font-size: 12px; color: #cbd5e1; }}
+        .chat-bubbles-container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+        @media (max-width: 800px) {{ .chat-bubbles-container {{ grid-template-columns: 1fr; }} }}
+        .chat-bubble {{ background: var(--bg-card); border-radius: 10px; padding: 14px; border-left: 4px solid; }}
+        .architect-bubble {{ border-left-color: var(--architect-color); }}
+        .engineer-bubble {{ border-left-color: var(--engineer-color); }}
+        .bubble-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }}
+        .role-badge {{ font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--text-secondary); }}
+        .bubble-time {{ margin-left: auto; font-size: 11px; color: #64748b; }}
+        .bubble-text {{ font-size: 13px; line-height: 1.5; color: #e2e8f0; }}
+        
         .board {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 32px; overflow-x: auto; }}
         .column {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); display: flex; flex-direction: column; min-height: 480px; }}
-        .col-header {{ padding: 14px 16px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid; background: #131d2e; border-top-left-radius: 12px; border-top-right-radius: 12px; }}
+        .col-header {{ padding: 14px 16px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid; background: #101a2e; border-top-left-radius: 12px; border-top-right-radius: 12px; }}
         .count-badge {{ padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 700; }}
         .col-body {{ padding: 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow-y: auto; }}
         
@@ -221,38 +358,72 @@ class TaskboardManager:
         .badge {{ background: #334155; color: #94a3b8; padding: 1px 5px; border-radius: 4px; margin-left: 4px; }}
         .empty-col {{ color: #475569; font-size: 12px; text-align: center; margin-top: 40px; font-style: italic; }}
 
+        /* Progress Bar & Stepper Styles */
+        .progress-container {{ background: linear-gradient(135deg, #131f37 0%, #0f172a 100%); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }}
+        .progress-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }}
+        .progress-title {{ font-size: 14px; font-weight: 600; color: #f1f5f9; display: flex; justify-content: space-between; width: 100%; align-items: center; }}
+        .progress-bar-bg {{ width: 100%; height: 12px; background: #1e293b; border-radius: 6px; overflow: hidden; position: relative; border: 1px solid #334155; margin-bottom: 18px; }}
+        .progress-bar-fill {{ height: 100%; background: linear-gradient(90deg, #0284c7 0%, #38bdf8 50%, #10b981 100%); border-radius: 6px; position: relative; transition: width 0.5s ease; box-shadow: 0 0 12px rgba(56, 189, 248, 0.5); }}
+        .progress-shine {{ position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent); animation: shine 2.5s infinite; }}
+        @keyframes shine {{ 0% {{ transform: translateX(-100%); }} 100% {{ transform: translateX(100%); }} }}
+        
+        .stepper-bar {{ display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px; }}
+        @media (max-width: 900px) {{ .stepper-bar {{ grid-template-columns: repeat(5, 1fr); gap: 8px; }} }}
+        .stepper-item {{ display: flex; flex-direction: column; align-items: center; text-align: center; padding: 8px 4px; border-radius: 8px; background: var(--bg-card); border: 1px solid var(--border-color); position: relative; transition: transform 0.15s; }}
+        .stepper-item:hover {{ transform: translateY(-2px); }}
+        .step-circle {{ width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-bottom: 4px; }}
+        .step-label {{ font-size: 11px; font-weight: 600; color: #cbd5e1; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; }}
+        .step-status {{ font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 700; }}
+        
+        .stepper-item.step-done {{ border-color: #10b98144; background: #064e3b15; }}
+        .stepper-item.step-done .step-circle {{ background: #10b981; color: #fff; box-shadow: 0 0 8px #10b98166; }}
+        .stepper-item.step-done .step-status {{ background: #10b98122; color: #34d399; }}
+        
+        .stepper-item.step-active {{ border-color: #38bdf8; background: #0284c722; box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); animation: activeGlow 2s infinite alternate; }}
+        @keyframes activeGlow {{ 0% {{ border-color: #38bdf8; }} 100% {{ border-color: #f59e0b; }} }}
+        .stepper-item.step-active .step-circle {{ background: #38bdf8; color: #0f172a; box-shadow: 0 0 10px #38bdf8; }}
+        .stepper-item.step-active .step-status {{ background: #38bdf822; color: #38bdf8; }}
+        
+        .stepper-item.step-pending {{ border-color: #334155; opacity: 0.55; }}
+        .stepper-item.step-pending .step-circle {{ background: #334155; color: #94a3b8; }}
+        .stepper-item.step-pending .step-status {{ background: #33415522; color: #94a3b8; }}
+
         .history-section {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); padding: 20px; }}
-        .history-title {{ font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #fff; }}
+        .history-title {{ font-size: 17px; font-weight: 600; margin-bottom: 16px; color: #fff; }}
         table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
         th, td {{ padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }}
-        th {{ color: var(--text-secondary); font-weight: 600; background: #131d2e; }}
+        th {{ color: var(--text-secondary); font-weight: 600; background: #101a2e; }}
         .decision-badge {{ padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; }}
         .decision-badge.approved {{ background: #10b98122; color: #34d399; }}
         .decision-badge.revise {{ background: #f59e0b22; color: #fbbf24; }}
         .decision-badge.review {{ background: #ef444422; color: #f87171; }}
     </style>
     <script>
-        // Auto-refresh every 10 seconds
-        setTimeout(() => {{ window.location.reload(); }}, 10000);
+        // Auto-refresh every 8 seconds
+        setTimeout(() => {{ window.location.reload(); }}, 8000);
     </script>
 </head>
 <body>
     <header>
         <div class="header-title">
             <span class="live-pulse"></span>
-            DAIO Dual-Agent Live Taskboard
+            DAIO 雙 Agent 即時對話與任務看板
         </div>
         <div style="font-size: 12px; color: var(--text-secondary);">
-            Auto-refreshing live state | CDP Active
+            即時對話串流 | Chrome CDP 連線正常 (8秒自動重整)
         </div>
     </header>
+
+    {progress_html}
+
+    {dialogue_html}
 
     <div class="board">
         {cols_html}
     </div>
 
     <div class="history-section">
-        <div class="history-title">📜 Autonomous Dual-Agent Decision Audit Stream</div>
+        <div class="history-title">📜 雙 Agent 歷史審計決策串流 (Audit Decision Stream)</div>
         <table>
             <thead>
                 <tr>
@@ -274,3 +445,4 @@ class TaskboardManager:
         """
         with open(self.html_file, "w", encoding="utf-8") as f:
             f.write(html)
+

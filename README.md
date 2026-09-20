@@ -55,21 +55,35 @@ NEXT PHASE  │
 
 ---
 
-## 📊 Live Visual Taskboard Integration
+## 📊 Live Visual Taskboard & Dialogue Feed
 
-DAIO now comes with a **built-in visual Kanban Taskboard engine** (`daio_taskboard.py`):
+DAIO features a **rich visual Kanban Taskboard & Live Conversation Hub** (`daio_taskboard.py`):
 
-1. **`taskboard.html`**: A sleek, dark-mode, auto-refreshing interactive Kanban board with live status pulses, phase tags, agent assignment badges, and a chronological audit decision stream.
-2. **`TASKBOARD.md`**: Markdown-formatted Kanban table automatically maintained in your repository for clean Git history.
-3. **`taskboard.json`**: Structured state representation for programmatic integrations.
+1. **🚀 Animated Progress Bar & 10-Step Milestone Stepper**:
+   - Dynamic glow progress fill showing real-time pipeline completion percentage (e.g. `80% Complete`).
+   - Interactive milestone stepper tracking `P4 Freeze` $\rightarrow$ `P5 Canonical` $\rightarrow$ `P6 Runtime` $\rightarrow$ `OOS-1/2/3A/3B` $\rightarrow$ `CE-1/2` $\rightarrow$ `P7 Release`.
+2. **🎭 Dual-Agent Live Dialogue Stage (Turn-Taking)**:
+   - **Active Turn Indicator**: Visual pulse badge highlighting whose turn it is (`🛠️ Antigravity (Executing)` vs `🏛️ ChatGPT (Auditing)`).
+   - **Speech Bubbles Feed**: Chronological dialogic exchange showing the Architect's directive and Engineer's response in real time.
+3. **`taskboard.html`**: A sleek, dark-mode, auto-refreshing interactive Kanban dashboard.
+4. **`TASKBOARD.md` & `taskboard.json`**: Markdown & structured JSON sync.
 
-### Task Status Lifecycle:
-- 📝 **`TODO`**: Backlog & upcoming planned milestones.
-- ⚙️ **`IN_PROGRESS`**: Active engineering execution by Antigravity.
-- 🧪 **`TESTING`**: Automated Test Integrity Gate execution.
-- 🧐 **`REVIEW`**: Transmitted to Architect via Chrome CDP; awaiting review.
-- ✅ **`DONE`**: Formally approved by Architect & verified by tests.
-- 🛑 **`BLOCKED`**: Safety Breaker triggered or Human Review requested.
+---
+
+## ⚡ One-Click CLI (`./daio`)
+
+DAIO comes with an all-in-one executable root CLI:
+
+```bash
+# 1. Start autonomous dual-agent iteration loop
+./daio
+
+# 2. Open live visual taskboard & dialogue stage in your browser
+./daio board
+
+# 3. View terminal status, active turn, and safety metrics
+./daio status
+```
 
 ---
 
@@ -94,10 +108,10 @@ Navigate to your desired **ChatGPT Project**, **Claude Artifact**, or custom **W
 pip install -r requirements.txt
 ```
 
-### Step 3: Launch DAIO Orchestrator
+### Step 3: Launch DAIO
 ```bash
-# Option A: Run directly with CLI arguments
-python3 scripts/daio_orchestrator.py \
+./daio
+```
   --url "https://chatgpt.com/g/g-p-your-project-id" \
   --phase "PHASE_1_SCAFFOLDING" \
   --cmd "python3 src/main.py" \

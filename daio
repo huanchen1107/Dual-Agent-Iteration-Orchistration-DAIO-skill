@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""DAIO (Dual-Agent Iteration Orchestrator) One-Click CLI.
+
+Usage:
+    ./daio          # Start autonomous dual-agent iteration loop
+    ./daio board    # Open visual live taskboard in browser
+    ./daio status   # Print current phase, taskboard state & safety breaker metrics
+"""
+import argparse
+import asyncio
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+# Add project root to sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+def open_board():
+    """Open taskboard.html in default system browser."""
+    board_path = PROJECT_ROOT / "taskboard.html"
+    if not board_path.exists():
+        print(f"❌ taskboard.html not found at {board_path}")
+        return
+    print(f"📊 Opening DAIO Live Taskboard: {board_path}")
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(board_path)])
+    elif sys.platform.startswith("linux"):
+        subprocess.run(["xdg-open", str(board_path)])
+    elif sys.platform == "win32":
+        os.startfile(str(board_path))
+
+def show_status():
+    """Show current taskboard status."""
+    from skills.daio.scripts.daio_taskboard import TaskboardManager
+    tb = TaskboardManager(str(PROJECT_ROOT))
+    print("=" * 70)
+    print("🤖 DAIO Dual-Agent System Status")
+    print("=" * 70)
+    print(f"📁 Project Root : {PROJECT_ROOT.name}")
+    print(f"📋 Total Tasks  : {len(tb.tasks)}")
+    print(f"📜 Audit Events : {len(tb.history)}")
+    print("\n--- Tasks State ---")
+    for t in tb.tasks:
+        st = t.get("status", "TODO")
+        sym = "✅" if st == "DONE" else ("⚙️" if st == "IN_PROGRESS" else ("🧐" if st == "REVIEW" else "📝"))
+        phase = t.get("phase", "N/A")
+        print(f" {sym} [{st:<12}] {phase:<12} : {t.get('title')}")
+    print("=" * 70)
+
+def run_loop():
+    """Run DAIO Autonomous Loop."""
+    from skills.daio.scripts.daio_orchestrator import UniversalDAIO
+    print("🚀 Starting DAIO Autonomous Orchestration Loop...")
+    orchestrator = UniversalDAIO(
+        config_path=str(PROJECT_ROOT / "daio_config.json") if (PROJECT_ROOT / "daio_config.json").exists() else None
+    )
+    asyncio.run(orchestrator.run_autonomous_loop())
+
+def main():
+    parser = argparse.ArgumentParser(description="DAIO One-Click CLI")
+    parser.add_argument("action", nargs="?", default="run", choices=["run", "board", "status"],
+                        help="Action to perform: run (default), board (open browser), status (print state)")
+    args = parser.parse_args()
+
+    if args.action == "board":
+        open_board()
+    elif args.action == "status":
+        show_status()
+    else:
+        run_loop()
+
+if __name__ == "__main__":
+    main()
