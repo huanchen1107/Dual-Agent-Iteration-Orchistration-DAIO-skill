@@ -22,6 +22,9 @@ class TaskboardManager:
         self.html_file = self.output_dir / "taskboard.html"
         self.tasks: List[Dict[str, Any]] = []
         self.history: List[Dict[str, Any]] = []
+        self.dialogue_history: List[Dict[str, Any]] = []
+        self.active_turn: str = "Antigravity"
+        self.active_turn_description: str = ""
         self.active_work_detail: Dict[str, Any] = {}
         self.load()
 
@@ -32,6 +35,9 @@ class TaskboardManager:
                     data = json.load(f)
                     self.tasks = data.get("tasks", [])
                     self.history = data.get("history", [])
+                    self.dialogue_history = data.get("dialogue_history", [])
+                    self.active_turn = data.get("active_turn", "Antigravity")
+                    self.active_turn_description = data.get("active_turn_description", "")
                     self.active_work_detail = data.get("active_work_detail", {})
             except Exception:
                 pass
@@ -39,6 +45,9 @@ class TaskboardManager:
     def save(self):
         data = {
             "updated_at": datetime.now().isoformat(),
+            "active_turn": self.active_turn,
+            "active_turn_description": self.active_turn_description,
+            "dialogue_history": self.dialogue_history,
             "tasks": self.tasks,
             "history": self.history,
             "active_work_detail": self.active_work_detail,
@@ -189,54 +198,56 @@ class TaskboardManager:
             </div>
             """
 
-        # Compute progress metrics
-        canonical_milestones = [
-            ("P4_FREEZE", "P4: Freeze"),
-            ("P5_CANONICALIZE", "P5: Canonical"),
-            ("P6_RUNTIME", "P6: Runtime"),
-            ("OOS-1", "OOS-1: TW 9"),
-            ("OOS-2", "OOS-2: Friction"),
-            ("OOS-3A", "OOS-3A: TW 40"),
-            ("OOS-3B", "OOS-3B: US 28"),
-            ("CE-1", "CE-1: Sizing"),
-            ("CE-2", "CE-2: Robustness"),
-            ("P7_RELEASE", "P7: Release"),
-        ]
-        
-        done_phases = set(t.get("phase") for t in self.tasks if t.get("status") == "DONE")
-        in_prog_phases = set(t.get("phase") for t in self.tasks if t.get("status") in ["IN_PROGRESS", "TESTING", "REVIEW"])
-        
-        completed_count = sum(1 for m_id, _ in canonical_milestones if m_id in done_phases)
-        total_milestones = len(canonical_milestones)
-        progress_pct = int(round((completed_count / total_milestones) * 100))
+        # Compute progress metrics dynamically from current taskboard tasks
+        if self.tasks:
+            dynamic_milestones = []
+            for t in self.tasks:
+                phase_id = t.get("phase", t.get("id", ""))
+                # Create short label
+                title = t.get("title", "")
+                if ":" in title:
+                    short_label = title.split(":", 1)[0].strip() + ": " + title.split(":", 1)[1].strip()[:10]
+                else:
+                    short_label = title[:15]
+                dynamic_milestones.append((t.get("id"), short_label, t.get("status", "TODO"), t.get("phase", "")))
 
-        stepper_items_html = ""
-        for m_id, label in canonical_milestones:
-            if m_id in done_phases:
-                cls = "step-done"
-                icon = "✓"
-                badge = "DONE"
-            elif m_id in in_prog_phases:
-                cls = "step-active"
-                icon = "⚡"
-                badge = "ACTIVE"
-            else:
-                cls = "step-pending"
-                icon = "🔒"
-                badge = "PLAN"
-            stepper_items_html += f"""
-            <div class="stepper-item {cls}">
-                <div class="step-circle">{icon}</div>
-                <div class="step-label">{label}</div>
-                <span class="step-status">{badge}</span>
-            </div>
-            """
+            completed_count = sum(1 for _, _, status, _ in dynamic_milestones if status == "DONE")
+            total_milestones = len(dynamic_milestones)
+            progress_pct = int(round((completed_count / total_milestones) * 100)) if total_milestones > 0 else 0
 
-        is_p7_done = any(t.get("phase") in ["P7_RELEASE", "P7"] and t.get("status") == "DONE" for t in self.tasks)
+            stepper_items_html = ""
+            for t_id, label, status, phase_id in dynamic_milestones:
+                if status == "DONE":
+                    cls = "step-done"
+                    icon = "✓"
+                    badge = "DONE"
+                elif status in ["IN_PROGRESS", "TESTING", "REVIEW"]:
+                    cls = "step-active"
+                    icon = "⚡"
+                    badge = "ACTIVE"
+                else:
+                    cls = "step-pending"
+                    icon = "🔒"
+                    badge = "PLAN"
+                stepper_items_html += f"""
+                <div class="stepper-item {cls}">
+                    <div class="step-circle">{icon}</div>
+                    <div class="step-label">{label}</div>
+                    <span class="step-status">{badge}</span>
+                </div>
+                """
+            all_done = (completed_count == total_milestones and total_milestones > 0)
+        else:
+            completed_count = 0
+            total_milestones = 0
+            progress_pct = 0
+            stepper_items_html = ""
+            all_done = False
+
         top_btn_html = (
-            '<button class="btn btn-approve btn-top-quick btn-completed" disabled><span>✨ 已批准完成發布 (v4.0.0 RELEASED)</span></button>'
-            if is_p7_done else
-            '<button class="btn btn-approve btn-top-quick" onclick="handleHumanDecision(\'APPROVE\')"><span>✅ 快速批准 (Quick Approve P7)</span></button>'
+            '<button class="btn btn-approve btn-top-quick btn-completed" disabled><span>✨ 本期任務已全數批准完成</span></button>'
+            if all_done else
+            '<button class="btn btn-approve btn-top-quick" onclick="handleHumanDecision(\'APPROVE\')"><span>✅ 快速批准當前階段</span></button>'
         )
 
         progress_html = f"""
@@ -279,7 +290,60 @@ class TaskboardManager:
         last_event = self.history[-1] if self.history else {"agent": "System", "summary": "System initialized.", "timestamp": ""}
         prev_event = self.history[-2] if len(self.history) >= 2 else None
 
-        # Build Dialogue Feed HTML
+        # Build Dialogue Feed HTML dynamically from dialogue_history
+        bubbles_html = ""
+        if self.dialogue_history:
+            for d in self.dialogue_history:
+                speaker = d.get("speaker", "")
+                role = d.get("role", "")
+                avatar = d.get("avatar", "🤖")
+                ts = d.get("timestamp", "")
+                txt = d.get("text", "").replace("\n", "<br/>")
+                if "Architect" in role or "ChatGPT" in speaker:
+                    bubble_cls = "architect-bubble"
+                elif "Human" in role or "Owner" in role:
+                    bubble_cls = "human-bubble"
+                else:
+                    bubble_cls = "engineer-bubble"
+                bubbles_html += f"""
+                <div class="chat-bubble {bubble_cls}">
+                    <div class="bubble-header">
+                        <span class="avatar">{avatar}</span>
+                        <strong>{speaker}</strong>
+                        <span class="role-badge">{role}</span>
+                        <span class="bubble-time">{ts}</span>
+                    </div>
+                    <div class="bubble-text">
+                        {txt}
+                    </div>
+                </div>
+                """
+        else:
+            bubbles_html = f"""
+            <div class="chat-bubble architect-bubble">
+                <div class="bubble-header">
+                    <span class="avatar">🏛️</span>
+                    <strong>ChatGPT Project</strong>
+                    <span class="role-badge">Lead Architect & Auditor</span>
+                    <span class="bubble-time">{last_event.get('timestamp', '')}</span>
+                </div>
+                <div class="bubble-text">
+                    {last_event.get('summary', '審計中...')}
+                </div>
+            </div>
+            <div class="chat-bubble engineer-bubble">
+                <div class="bubble-header">
+                    <span class="avatar">🛠️</span>
+                    <strong>Antigravity</strong>
+                    <span class="role-badge">Lead Execution Engineer</span>
+                    <span class="bubble-time">Live Sync</span>
+                </div>
+                <div class="bubble-text">
+                    收到架構師裁定！正在執行 <strong>{active_task.get('title') if active_task else '當前任務'}</strong>。
+                </div>
+            </div>
+            """
+
         dialogue_html = f"""
         <div class="dialogue-stage">
             <div class="turn-banner">
@@ -292,28 +356,7 @@ class TaskboardManager:
                 </div>
             </div>
             <div class="chat-bubbles-container">
-                <div class="chat-bubble architect-bubble">
-                    <div class="bubble-header">
-                        <span class="avatar">🏛️</span>
-                        <strong>ChatGPT Project</strong>
-                        <span class="role-badge">Lead Architect & Auditor</span>
-                        <span class="bubble-time">{last_event.get('timestamp', '')}</span>
-                    </div>
-                    <div class="bubble-text">
-                        {last_event.get('summary', '審計中...')}
-                    </div>
-                </div>
-                <div class="chat-bubble engineer-bubble">
-                    <div class="bubble-header">
-                        <span class="avatar">🛠️</span>
-                        <strong>Antigravity</strong>
-                        <span class="role-badge">Lead Execution Engineer</span>
-                        <span class="bubble-time">Live Sync</span>
-                    </div>
-                    <div class="bubble-text">
-                        收到架構師裁定！正在 100% 凍結 S1-S7 策略層前提下，接棒執行 <strong>{active_task.get('title') if active_task else '下階段任務'}</strong>，完成後將自動通過 CDP 回傳審計報告。
-                    </div>
-                </div>
+                {bubbles_html}
             </div>
         </div>
         """
@@ -345,11 +388,8 @@ class TaskboardManager:
                 </div>
                 """
             
-            prompt_text = "Human Owner 批准已正式生效！全系統正式上線生產封版！" if is_p7_done else "ChatGPT 首席架構師已完成 CE-2 審計，請 Human Owner 裁定："
-            if is_p7_done:
-                human_buttons_html = '<button class="btn btn-approve btn-completed" disabled><span class="btn-icon">✨</span> 批准已生效 (v4.0.0 RELEASED)</button><button class="btn btn-pause" onclick="handleHumanDecision(\'VIEW_MANIFEST\')"><span class="btn-icon">📜</span> 查看 Release Manifest</button>'
-            else:
-                human_buttons_html = '<button class="btn btn-approve" onclick="handleHumanDecision(\'APPROVE\')"><span class="btn-icon">✅</span> 批准通過 (Approve & Proceed to P7)</button><button class="btn btn-revise" onclick="handleHumanDecision(\'REVISE\')"><span class="btn-icon">🔄</span> 要求修改 (Request Revisions)</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停循環 (Pause Orchestrator)</button>'
+            prompt_text = "當前任務全部完成！" if all_done else f"當前進度進行中（{completed_count}/{total_milestones}）："
+            human_buttons_html = '<button class="btn btn-approve btn-completed" disabled><span class="btn-icon">✨</span> 所有任務已完成</button>' if all_done else '<button class="btn btn-approve" onclick="handleHumanDecision(\'APPROVE\')"><span class="btn-icon">✅</span> 批准通過當前階段</button><button class="btn btn-revise" onclick="handleHumanDecision(\'REVISE\')"><span class="btn-icon">🔄</span> 要求修改</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停</button>'
 
             inspector_html = f"""
             <div class="work-inspector-card">
@@ -427,6 +467,8 @@ class TaskboardManager:
         .chat-bubble {{ background: var(--bg-card); border-radius: 10px; padding: 14px; border-left: 4px solid; }}
         .architect-bubble {{ border-left-color: var(--architect-color); }}
         .engineer-bubble {{ border-left-color: var(--engineer-color); }}
+        .human-bubble {{ border-left-color: #10b981; }}
+        .human-bubble strong {{ color: #34d399; }}
         .bubble-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }}
         .role-badge {{ font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--text-secondary); }}
         .bubble-time {{ margin-left: auto; font-size: 11px; color: #64748b; }}
@@ -544,24 +586,16 @@ class TaskboardManager:
             const allApproveBtns = document.querySelectorAll('.btn-approve');
             
             if (action === 'APPROVE') {{
-                // Step 1: Synchronize all buttons to Executing state
+                // Step 1: Immediately lock and disable all approve buttons to prevent duplicate clicks
                 allApproveBtns.forEach(btn => {{
-                    btn.classList.add('btn-executing');
-                    btn.classList.remove('btn-completed');
-                    btn.innerHTML = '<span>⏳ 批准執行中 (Executing P7 Release...)</span>';
+                    btn.disabled = true;
+                    btn.style.pointerEvents = 'none';
+                    btn.classList.add('btn-completed');
+                    btn.classList.remove('btn-executing');
+                    btn.onclick = null;
+                    btn.innerHTML = '<span>✨ 已批准生效 (Approved)</span>';
                 }});
-                showToast('⏳ <strong>已收到批准授權！</strong> 正在執行 Phase P7 生產發布與雙 Agent 簽核...', 3000);
-                
-                // Step 2: Transition to Completed state with celebration
-                setTimeout(() => {{
-                    allApproveBtns.forEach(btn => {{
-                        btn.classList.remove('btn-executing');
-                        btn.classList.add('btn-completed');
-                        btn.disabled = true;
-                        btn.innerHTML = '<span>✨ 批准已生效 (v4.0.0 RELEASED)</span>';
-                    }});
-                    showToast('🎉 <strong>Phase P7 Production Release 簽核完成！</strong> 全系統正式生產封版！', 5000);
-                }}, 2500);
+                showToast('✅ <strong>已確認批准當前階段！</strong> 決策已正式生效並鎖定。', 4000);
             }} else if (action === 'VIEW_MANIFEST') {{
                 alert('📜 SMC7S.v4 正式生產發布資訊：\\n\\n• 版本：Version 4.0.0-RELEASE (Git Tag: v4.0.0-release)\\n• 預設配置：Profile A (Fixed 0.25% 曝險，MDD 2.10%)\\n• 成長配置：Profile B (1/8 Kelly 0.35% 曝險，MDD 2.93%)\\n• 測試門禁：55/55 PASS (100%)\\n• 治理狀態：Human Owner 批准 + ChatGPT 架構師 Sign-off 永久封版！');
             }} else if (action === 'REVISE') {{
@@ -622,4 +656,16 @@ class TaskboardManager:
         """
         with open(self.html_file, "w", encoding="utf-8") as f:
             f.write(html)
+
+
+if __name__ == "__main__":
+    import sys
+    mgr = TaskboardManager()
+    if len(sys.argv) > 1 and sys.argv[1] == "render":
+        mgr.generate_markdown()
+        mgr.generate_html()
+        print("Successfully re-rendered TASKBOARD.md and taskboard.html from taskboard.json")
+    else:
+        mgr.save()
+        print("Saved taskboard state and generated visual files.")
 
