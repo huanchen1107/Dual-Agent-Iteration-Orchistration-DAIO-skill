@@ -472,61 +472,69 @@ class TaskboardManager:
             --engineer-color: #38bdf8;
         }}
         * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-        body {{ background-color: var(--bg-primary); color: var(--text-primary); padding: 24px; min-height: 100vh; }}
-        header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }}
-        .header-title {{ font-size: 22px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }}
+        body {{ background-color: var(--bg-primary); color: var(--text-primary); padding: 20px; min-height: 100vh; overflow-x: hidden; }}
+        @media (max-width: 600px) {{ body {{ padding: 12px; }} }}
+
+        header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }}
+        .header-title {{ font-size: 20px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }}
         .live-pulse {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981; animation: pulse 2s infinite; }}
         @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.4; }} }}
         
-        /* Dialogue Stage Styles */
+        /* Dialogue Stage Styles (Responsive Vertical Chat Stream) */
         .dialogue-stage {{ background: linear-gradient(135deg, #131f37 0%, #0f172a 100%); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }}
-        .turn-banner {{ display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #1e293b; }}
-        .turn-indicator {{ font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }}
-        .pulse-dot {{ width: 8px; height: 8px; background: #38bdf8; border-radius: 50%; box-shadow: 0 0 8px #38bdf8; }}
+        .turn-banner {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #1e293b; }}
+        .turn-indicator {{ font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }}
+        .pulse-dot {{ width: 8px; height: 8px; background: #38bdf8; border-radius: 50%; box-shadow: 0 0 8px #38bdf8; flex-shrink: 0; }}
         .turn-status-badge {{ background: #1e293b; border: 1px solid var(--border-color); padding: 4px 12px; border-radius: 20px; font-size: 12px; color: #cbd5e1; }}
-        .chat-bubbles-container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
-        @media (max-width: 800px) {{ .chat-bubbles-container {{ grid-template-columns: 1fr; }} }}
-        .chat-bubble {{ background: var(--bg-card); border-radius: 10px; padding: 14px; border-left: 4px solid; }}
-        .architect-bubble {{ border-left-color: var(--architect-color); }}
-        .engineer-bubble {{ border-left-color: var(--engineer-color); }}
-        .human-bubble {{ border-left-color: #10b981; }}
+        
+        .chat-bubbles-container {{ display: flex; flex-direction: column; gap: 12px; max-height: 520px; overflow-y: auto; padding-right: 4px; }}
+        .chat-bubble {{ background: var(--bg-card); border-radius: 10px; padding: 14px 16px; border-left: 4px solid; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: transform 0.15s ease; }}
+        .chat-bubble:hover {{ transform: translateX(2px); }}
+        .architect-bubble {{ border-left-color: var(--architect-color); background: linear-gradient(135deg, #1a2846 0%, #1a233a 100%); }}
+        .engineer-bubble {{ border-left-color: var(--engineer-color); background: linear-gradient(135deg, #132742 0%, #0f1e33 100%); }}
+        .human-bubble {{ border-left-color: #10b981; background: linear-gradient(135deg, #0d2824 0%, #0a1f1c 100%); }}
         .human-bubble strong {{ color: #34d399; }}
-        .bubble-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }}
+        .bubble-header {{ display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; font-size: 13px; }}
         .role-badge {{ font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--text-secondary); }}
         .bubble-time {{ margin-left: auto; font-size: 11px; color: #64748b; }}
-        .bubble-text {{ font-size: 13px; line-height: 1.5; color: #e2e8f0; }}
+        .bubble-text {{ font-size: 13px; line-height: 1.6; color: #e2e8f0; word-break: break-word; }}
         
-        .board {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 32px; overflow-x: auto; }}
+        /* Kanban Board Styles (Responsive Grid / Touch Scroll) */
+        .board {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 32px; }}
+        @media (max-width: 1200px) {{
+            .board {{ display: flex; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 14px; gap: 14px; -webkit-overflow-scrolling: touch; }}
+            .column {{ min-width: 280px; flex: 0 0 280px; scroll-snap-align: start; }}
+        }}
         .column {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); display: flex; flex-direction: column; min-height: 480px; }}
         .col-header {{ padding: 14px 16px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid; background: #101a2e; border-top-left-radius: 12px; border-top-right-radius: 12px; }}
         .count-badge {{ padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 700; }}
-        .col-body {{ padding: 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow-y: auto; }}
+        .col-body {{ padding: 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow-y: auto; max-height: 600px; }}
         
         .card {{ background: var(--bg-card); border-radius: 8px; padding: 12px; border: 1px solid var(--border-color); border-left-width: 4px; transition: transform 0.15s ease; }}
         .card:hover {{ transform: translateY(-2px); border-color: var(--accent); }}
-        .card-header {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; }}
+        .card-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; }}
         .phase-tag {{ background: #0284c722; color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-weight: 600; }}
         .agent-tag {{ background: #64748b22; color: #cbd5e1; padding: 2px 6px; border-radius: 4px; }}
-        .card-title {{ font-size: 14px; font-weight: 600; margin-bottom: 6px; color: #f1f5f9; }}
+        .card-title {{ font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #f1f5f9; line-height: 1.4; }}
         .card-desc {{ font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.4; }}
-        .card-footer {{ display: flex; justify-content: space-between; align-items: center; font-size: 10px; color: #64748b; border-top: 1px solid #1e293b; padding-top: 6px; }}
-        .badge {{ background: #334155; color: #94a3b8; padding: 1px 5px; border-radius: 4px; margin-left: 4px; }}
+        .card-footer {{ display: flex; justify-content: space-between; align-items: center; font-size: 10px; color: #64748b; border-top: 1px solid #1e293b; padding-top: 6px; flex-wrap: wrap; gap: 4px; }}
+        .badge {{ background: #334155; color: #94a3b8; padding: 1px 5px; border-radius: 4px; margin-left: 2px; }}
         .empty-col {{ color: #475569; font-size: 12px; text-align: center; margin-top: 40px; font-style: italic; }}
 
-        /* Progress Bar & Stepper Styles */
+        /* Progress Bar & Dynamic Stepper Styles (RWD) */
         .progress-container {{ background: linear-gradient(135deg, #131f37 0%, #0f172a 100%); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }}
-        .progress-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }}
-        .progress-title {{ font-size: 14px; font-weight: 600; color: #f1f5f9; display: flex; justify-content: space-between; width: 100%; align-items: center; }}
-        .progress-bar-bg {{ width: 100%; height: 12px; background: #1e293b; border-radius: 6px; overflow: hidden; position: relative; border: 1px solid #334155; margin-bottom: 18px; }}
+        .progress-header {{ margin-bottom: 12px; }}
+        .progress-title {{ font-size: 14px; font-weight: 600; color: #f1f5f9; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; width: 100%; }}
+        .progress-bar-bg {{ width: 100%; height: 12px; background: #1e293b; border-radius: 6px; overflow: hidden; position: relative; border: 1px solid #334155; margin: 12px 0 16px 0; }}
         .progress-bar-fill {{ height: 100%; background: linear-gradient(90deg, #0284c7 0%, #38bdf8 50%, #10b981 100%); border-radius: 6px; position: relative; transition: width 0.5s ease; box-shadow: 0 0 12px rgba(56, 189, 248, 0.5); }}
         .progress-shine {{ position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent); animation: shine 2.5s infinite; }}
         @keyframes shine {{ 0% {{ transform: translateX(-100%); }} 100% {{ transform: translateX(100%); }} }}
         
-        .stepper-bar {{ display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px; }}
-        @media (max-width: 900px) {{ .stepper-bar {{ grid-template-columns: repeat(5, 1fr); gap: 8px; }} }}
-        .stepper-item {{ display: flex; flex-direction: column; align-items: center; text-align: center; padding: 8px 4px; border-radius: 8px; background: var(--bg-card); border: 1px solid var(--border-color); position: relative; transition: transform 0.15s; }}
+        .stepper-bar {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }}
+        @media (max-width: 600px) {{ .stepper-bar {{ grid-template-columns: repeat(2, 1fr); }} }}
+        .stepper-item {{ display: flex; flex-direction: column; align-items: center; text-align: center; padding: 8px 6px; border-radius: 8px; background: var(--bg-card); border: 1px solid var(--border-color); position: relative; transition: transform 0.15s; min-width: 0; }}
         .stepper-item:hover {{ transform: translateY(-2px); }}
-        .step-circle {{ width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-bottom: 4px; }}
+        .step-circle {{ width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-bottom: 4px; flex-shrink: 0; }}
         .step-label {{ font-size: 11px; font-weight: 600; color: #cbd5e1; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; }}
         .step-status {{ font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 700; }}
         
@@ -543,14 +551,14 @@ class TaskboardManager:
         .stepper-item.step-pending .step-circle {{ background: #334155; color: #94a3b8; }}
         .stepper-item.step-pending .step-status {{ background: #33415522; color: #94a3b8; }}
 
-        /* Active Work Inspector Styles */
+        /* Active Work Inspector Styles (Responsive) */
         .work-inspector-card {{ background: linear-gradient(135deg, #16243e 0%, #0d1629 100%); border: 1px solid #38bdf844; border-radius: 12px; padding: 18px 20px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }}
-        .inspector-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #243556; }}
-        .inspector-title {{ font-size: 15px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }}
+        .inspector-header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #243556; }}
+        .inspector-title {{ font-size: 15px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
         .inspector-badge {{ background: #0284c722; color: #38bdf8; border: 1px solid #38bdf844; padding: 2px 8px; border-radius: 12px; font-size: 11px; }}
         .inspector-narrative {{ font-size: 13px; color: #e2e8f0; line-height: 1.5; margin-bottom: 14px; background: rgba(0,0,0,0.2); padding: 10px 14px; border-radius: 8px; border-left: 3px solid #38bdf8; }}
-        .metric-chips-row {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }}
-        .metric-chip {{ background: #1a2846; border: 1px solid #2b4068; padding: 6px 12px; border-radius: 8px; display: flex; flex-direction: column; gap: 2px; min-width: 140px; }}
+        .metric-chips-row {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }}
+        .metric-chip {{ background: #1a2846; border: 1px solid #2b4068; padding: 8px 12px; border-radius: 8px; display: flex; flex-direction: column; gap: 2px; }}
         .metric-label {{ font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
         .metric-val {{ font-size: 14px; font-weight: 700; color: #38bdf8; }}
         .inspector-steps-list {{ display: flex; flex-direction: column; gap: 8px; }}
@@ -561,15 +569,15 @@ class TaskboardManager:
         .step-content strong {{ color: #f1f5f9; display: block; margin-bottom: 2px; }}
         .step-content p {{ color: #94a3b8; font-size: 12px; margin: 0; line-height: 1.4; }}
 
-        /* Human Action Bar Styles */
+        /* Human Action Bar Styles (RWD) */
         .human-actions-bar {{ margin-top: 16px; padding-top: 14px; border-top: 1px solid #243556; display: flex; flex-direction: column; gap: 10px; background: rgba(56, 189, 248, 0.04); padding: 14px; border-radius: 8px; border: 1px dashed #38bdf866; }}
-        .action-prompt-text {{ font-size: 13px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; }}
-        .action-buttons-group {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+        .action-prompt-text {{ font-size: 13px; color: #cbd5e1; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; line-height: 1.5; }}
+        .action-buttons-group {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }}
         .btn {{ padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; border: none; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px; }}
         .btn:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         .btn-approve {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; box-shadow: 0 0 15px rgba(16, 185, 129, 0.4); animation: btnPulse 2s infinite; }}
         @keyframes btnPulse {{ 0%, 100% {{ box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); }} 50% {{ box-shadow: 0 0 20px rgba(16, 185, 129, 0.8); }} }}
-        .btn-top-quick {{ padding: 4px 12px; font-size: 11px; border-radius: 6px; box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }}
+        .btn-top-quick {{ padding: 6px 12px; font-size: 12px; border-radius: 6px; box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }}
         .btn-completed {{ background: linear-gradient(135deg, #059669 0%, #047857 100%) !important; color: #f8fafc !important; cursor: default !important; box-shadow: 0 0 12px rgba(16, 185, 129, 0.4) !important; animation: none !important; }}
         .btn-executing {{ background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important; color: #fff !important; box-shadow: 0 0 20px rgba(245, 158, 11, 0.6) !important; animation: execPulse 1s infinite alternate !important; }}
         @keyframes execPulse {{ 0% {{ opacity: 0.8; transform: scale(0.98); }} 100% {{ opacity: 1; transform: scale(1.02); }} }}
@@ -578,14 +586,15 @@ class TaskboardManager:
         .btn-pause {{ background: #334155; color: #cbd5e1; border: 1px solid #475569; }}
 
         /* Floating Toast */
-        #daio-toast {{ position: fixed; top: 24px; right: 24px; background: #1e293b; border: 1px solid #38bdf8; color: #fff; padding: 14px 20px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; display: none; font-size: 13px; font-weight: 600; }}
+        #daio-toast {{ position: fixed; top: 24px; right: 24px; background: #1e293b; border: 1px solid #38bdf8; color: #fff; padding: 14px 20px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; display: none; font-size: 13px; font-weight: 600; max-width: calc(100vw - 48px); }}
 
-        .history-section {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); padding: 20px; }}
-        .history-title {{ font-size: 17px; font-weight: 600; margin-bottom: 16px; color: #fff; }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+        /* Decision History Section (Table Responsive Scroll) */
+        .history-section {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); padding: 18px 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; }}
+        .history-title {{ font-size: 16px; font-weight: 600; margin-bottom: 14px; color: #fff; }}
+        table {{ width: 100%; min-width: 650px; border-collapse: collapse; font-size: 13px; }}
         th, td {{ padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }}
-        th {{ color: var(--text-secondary); font-weight: 600; background: #101a2e; }}
-        .decision-badge {{ padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; }}
+        th {{ color: var(--text-secondary); font-weight: 600; background: #101a2e; white-space: nowrap; }}
+        .decision-badge {{ padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; white-space: nowrap; }}
         .decision-badge.approved {{ background: #10b98122; color: #34d399; }}
         .decision-badge.revise {{ background: #f59e0b22; color: #fbbf24; }}
         .decision-badge.review {{ background: #ef444422; color: #f87171; }}
