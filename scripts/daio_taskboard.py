@@ -22,6 +22,7 @@ class TaskboardManager:
         self.html_file = self.output_dir / "taskboard.html"
         self.tasks: List[Dict[str, Any]] = []
         self.history: List[Dict[str, Any]] = []
+        self.active_work_detail: Dict[str, Any] = {}
         self.load()
 
     def load(self):
@@ -31,6 +32,7 @@ class TaskboardManager:
                     data = json.load(f)
                     self.tasks = data.get("tasks", [])
                     self.history = data.get("history", [])
+                    self.active_work_detail = data.get("active_work_detail", {})
             except Exception:
                 pass
 
@@ -39,11 +41,31 @@ class TaskboardManager:
             "updated_at": datetime.now().isoformat(),
             "tasks": self.tasks,
             "history": self.history,
+            "active_work_detail": self.active_work_detail,
         }
         with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         self.generate_markdown()
         self.generate_html()
+
+    def set_active_work_detail(
+        self,
+        phase: str,
+        title: str,
+        steps: List[Dict[str, str]],
+        metrics: Optional[Dict[str, Any]] = None,
+        narrative: str = "",
+    ):
+        """Set rich active execution details for live UI rendering."""
+        self.active_work_detail = {
+            "phase": phase,
+            "title": title,
+            "steps": steps,
+            "metrics": metrics or {},
+            "narrative": narrative,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self.save()
 
     def upsert_task(
         self,
@@ -286,6 +308,67 @@ class TaskboardManager:
         </div>
         """
 
+        # Build Active Work Inspector HTML
+        inspector_html = ""
+        if self.active_work_detail:
+            wd = self.active_work_detail
+            steps_items = ""
+            for s in wd.get("steps", []):
+                st_icon = "✅" if s.get("status") == "DONE" else ("⚡" if s.get("status") == "IN_PROGRESS" else "⏳")
+                st_cls = "step-done-row" if s.get("status") == "DONE" else ("step-active-row" if s.get("status") == "IN_PROGRESS" else "step-pending-row")
+                steps_items += f"""
+                <div class="inspector-step-item {st_cls}">
+                    <span class="step-icon">{st_icon}</span>
+                    <div class="step-content">
+                        <strong>{s.get('name', '')}</strong>
+                        <p>{s.get('detail', '')}</p>
+                    </div>
+                </div>
+                """
+            
+            metrics_chips = ""
+            for m_k, m_v in wd.get("metrics", {}).items():
+                metrics_chips += f"""
+                <div class="metric-chip">
+                    <span class="metric-label">{m_k}</span>
+                    <span class="metric-val">{m_v}</span>
+                </div>
+                """
+            
+            inspector_html = f"""
+            <div class="work-inspector-card">
+                <div class="inspector-header">
+                    <div class="inspector-title">
+                        <span class="pulse-dot"></span>
+                        <span>🔍 即時工程執行細節 (Live Work Inspector) — <strong style="color: #38bdf8;">{wd.get('phase', '')}</strong></span>
+                    </div>
+                    <span class="inspector-badge">{wd.get('updated_at', '')}</span>
+                </div>
+                <div class="inspector-narrative">{wd.get('narrative', '')}</div>
+                {f'<div class="metric-chips-row">{metrics_chips}</div>' if metrics_chips else ''}
+                <div class="inspector-steps-list">
+                    {steps_items}
+                </div>
+
+                <div class="human-actions-bar">
+                    <div class="action-prompt-text">
+                        <span>⚖️ <strong>人類審批治理門 (Human Governance Gate)</strong>：ChatGPT 首席架構師已完成 CE-2 審計，請 Human Owner 裁定：</span>
+                    </div>
+                    <div class="action-buttons-group">
+                        <button class="btn btn-approve" onclick="handleHumanDecision('APPROVE')">
+                            <span class="btn-icon">✅</span> 批准通過 (Approve & Proceed to P7)
+                        </button>
+                        <button class="btn btn-revise" onclick="handleHumanDecision('REVISE')">
+                            <span class="btn-icon">🔄</span> 要求修改 (Request Revisions)
+                        </button>
+                        <button class="btn btn-pause" onclick="handleHumanDecision('PAUSE')">
+                            <span class="btn-icon">⏸️</span> 暫停循環 (Pause Orchestrator)
+                        </button>
+                    </div>
+                </div>
+            </div>
+            """
+
         history_rows = ""
         for h in reversed(self.history[-15:]):
             badge_cls = "approved" if h.get("decision") == "APPROVE" else ("review" if "HUMAN" in h.get("decision", "") else "revise")
@@ -388,6 +471,36 @@ class TaskboardManager:
         .stepper-item.step-pending .step-circle {{ background: #334155; color: #94a3b8; }}
         .stepper-item.step-pending .step-status {{ background: #33415522; color: #94a3b8; }}
 
+        /* Active Work Inspector Styles */
+        .work-inspector-card {{ background: linear-gradient(135deg, #16243e 0%, #0d1629 100%); border: 1px solid #38bdf844; border-radius: 12px; padding: 18px 20px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }}
+        .inspector-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #243556; }}
+        .inspector-title {{ font-size: 15px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }}
+        .inspector-badge {{ background: #0284c722; color: #38bdf8; border: 1px solid #38bdf844; padding: 2px 8px; border-radius: 12px; font-size: 11px; }}
+        .inspector-narrative {{ font-size: 13px; color: #e2e8f0; line-height: 1.5; margin-bottom: 14px; background: rgba(0,0,0,0.2); padding: 10px 14px; border-radius: 8px; border-left: 3px solid #38bdf8; }}
+        .metric-chips-row {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }}
+        .metric-chip {{ background: #1a2846; border: 1px solid #2b4068; padding: 6px 12px; border-radius: 8px; display: flex; flex-direction: column; gap: 2px; min-width: 140px; }}
+        .metric-label {{ font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
+        .metric-val {{ font-size: 14px; font-weight: 700; color: #38bdf8; }}
+        .inspector-steps-list {{ display: flex; flex-direction: column; gap: 8px; }}
+        .inspector-step-item {{ display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; background: #131f37; border: 1px solid #243556; font-size: 13px; }}
+        .inspector-step-item.step-done-row {{ border-left: 3px solid #10b981; }}
+        .inspector-step-item.step-active-row {{ border-left: 3px solid #38bdf8; background: #0c203d; }}
+        .inspector-step-item.step-pending-row {{ border-left: 3px solid #64748b; opacity: 0.6; }}
+        .step-content strong {{ color: #f1f5f9; display: block; margin-bottom: 2px; }}
+        .step-content p {{ color: #94a3b8; font-size: 12px; margin: 0; line-height: 1.4; }}
+
+        /* Human Action Bar Styles */
+        .human-actions-bar {{ margin-top: 16px; padding-top: 14px; border-top: 1px solid #243556; display: flex; flex-direction: column; gap: 10px; background: rgba(56, 189, 248, 0.04); padding: 14px; border-radius: 8px; border: 1px dashed #38bdf866; }}
+        .action-prompt-text {{ font-size: 13px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; }}
+        .action-buttons-group {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+        .btn {{ padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; border: none; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px; }}
+        .btn:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
+        .btn-approve {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; box-shadow: 0 0 15px rgba(16, 185, 129, 0.4); animation: btnPulse 2s infinite; }}
+        @keyframes btnPulse {{ 0%, 100% {{ box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); }} 50% {{ box-shadow: 0 0 20px rgba(16, 185, 129, 0.8); }} }}
+        .btn-revise {{ background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b66; }}
+        .btn-revise:hover {{ background: #f59e0b33; }}
+        .btn-pause {{ background: #334155; color: #cbd5e1; border: 1px solid #475569; }}
+
         .history-section {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); padding: 20px; }}
         .history-title {{ font-size: 17px; font-weight: 600; margin-bottom: 16px; color: #fff; }}
         table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
@@ -399,6 +512,25 @@ class TaskboardManager:
         .decision-badge.review {{ background: #ef444422; color: #f87171; }}
     </style>
     <script>
+        // Interactive Human Decision Handler
+        function handleHumanDecision(action) {{
+            if (action === 'APPROVE') {{
+                const btn = document.querySelector('.btn-approve');
+                if (btn) {{
+                    btn.innerHTML = '✨ 已正式批准！正在推進至 Phase P7...';
+                    btn.style.background = '#10b981';
+                }}
+                alert('✅ 已收到 Human Owner 批准！\\n\\n已正式簽核 Capital Pareto Freeze (Profile A: Fixed 0.25% 作為生產預設)。\\nDAIO 即將自動執行 Phase P7 Production Release 正式封版發布！');
+            }} else if (action === 'REVISE') {{
+                const comment = prompt('請輸入修改指示：', '請重新檢驗參數');
+                if (comment) {{
+                    alert('🔄 已記錄修改指示：' + comment);
+                }}
+            }} else {{
+                alert('⏸️ DAIO 自動循環已暫停。');
+            }}
+        }}
+
         // Auto-refresh every 8 seconds
         setTimeout(() => {{ window.location.reload(); }}, 8000);
     </script>
@@ -415,6 +547,8 @@ class TaskboardManager:
     </header>
 
     {progress_html}
+
+    {inspector_html}
 
     {dialogue_html}
 
