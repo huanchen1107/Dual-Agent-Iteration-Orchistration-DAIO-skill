@@ -1,0 +1,12 @@
+{
+  "target_browser_url": "https://chatgpt.com/g/g-p-your-project-id",
+  "project_root": ".",
+  "current_phase": "PHASE_1_INITIAL_IMPLEMENTATION",
+  "execution_command": "python3 src/main.py",
+  "test_gate_command": "pytest tests/ --maxfail=1",
+  "report_file_path": "reports/latest_phase_summary.md",
+  "auto_git_sync": true,
+  "max_iterations": 20,
+  "consecutive_errors_cap": 3,
+  "custom_prompt_instructions": "You are the Lead Architect and Auditor. Review the execution outputs and test results against specification. Respond with your structured assessment and final decision JSON block."
+}
