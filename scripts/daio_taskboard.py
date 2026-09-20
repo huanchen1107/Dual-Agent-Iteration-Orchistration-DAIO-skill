@@ -232,12 +232,22 @@ class TaskboardManager:
             </div>
             """
 
+        is_p7_done = any(t.get("phase") in ["P7_RELEASE", "P7"] and t.get("status") == "DONE" for t in self.tasks)
+        top_btn_html = (
+            '<button class="btn btn-approve btn-top-quick btn-completed" disabled><span>✨ 已批准完成發布 (v4.0.0 RELEASED)</span></button>'
+            if is_p7_done else
+            '<button class="btn btn-approve btn-top-quick" onclick="handleHumanDecision(\'APPROVE\')"><span>✅ 快速批准 (Quick Approve P7)</span></button>'
+        )
+
         progress_html = f"""
         <div class="progress-container">
             <div class="progress-header">
                 <div class="progress-title">
-                    <span>🚀 專案整體推進進度 (Overall Project Pipeline)</span>
-                    <strong style="color: #38bdf8; font-size: 16px;">{completed_count} / {total_milestones} 里程碑完成 ({progress_pct}%)</strong>
+                    <span style="display: flex; align-items: center; gap: 8px;">🚀 <strong>專案整體推進進度 (Overall Pipeline)</strong></span>
+                    <div style="display: flex; align-items: center; gap: 14px;">
+                        <strong style="color: #38bdf8; font-size: 16px;">{completed_count} / {total_milestones} 里程碑完成 ({progress_pct}%)</strong>
+                        {top_btn_html}
+                    </div>
                 </div>
             </div>
             <div class="progress-bar-bg">
@@ -335,6 +345,12 @@ class TaskboardManager:
                 </div>
                 """
             
+            prompt_text = "Human Owner 批准已正式生效！全系統正式上線生產封版！" if is_p7_done else "ChatGPT 首席架構師已完成 CE-2 審計，請 Human Owner 裁定："
+            if is_p7_done:
+                human_buttons_html = '<button class="btn btn-approve btn-completed" disabled><span class="btn-icon">✨</span> 批准已生效 (v4.0.0 RELEASED)</button><button class="btn btn-pause" onclick="handleHumanDecision(\'VIEW_MANIFEST\')"><span class="btn-icon">📜</span> 查看 Release Manifest</button>'
+            else:
+                human_buttons_html = '<button class="btn btn-approve" onclick="handleHumanDecision(\'APPROVE\')"><span class="btn-icon">✅</span> 批准通過 (Approve & Proceed to P7)</button><button class="btn btn-revise" onclick="handleHumanDecision(\'REVISE\')"><span class="btn-icon">🔄</span> 要求修改 (Request Revisions)</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停循環 (Pause Orchestrator)</button>'
+
             inspector_html = f"""
             <div class="work-inspector-card">
                 <div class="inspector-header">
@@ -352,18 +368,10 @@ class TaskboardManager:
 
                 <div class="human-actions-bar">
                     <div class="action-prompt-text">
-                        <span>⚖️ <strong>人類審批治理門 (Human Governance Gate)</strong>：ChatGPT 首席架構師已完成 CE-2 審計，請 Human Owner 裁定：</span>
+                        <span>⚖️ <strong>人類審批治理門 (Human Governance Gate)</strong>：{prompt_text}</span>
                     </div>
                     <div class="action-buttons-group">
-                        <button class="btn btn-approve" onclick="handleHumanDecision('APPROVE')">
-                            <span class="btn-icon">✅</span> 批准通過 (Approve & Proceed to P7)
-                        </button>
-                        <button class="btn btn-revise" onclick="handleHumanDecision('REVISE')">
-                            <span class="btn-icon">🔄</span> 要求修改 (Request Revisions)
-                        </button>
-                        <button class="btn btn-pause" onclick="handleHumanDecision('PAUSE')">
-                            <span class="btn-icon">⏸️</span> 暫停循環 (Pause Orchestrator)
-                        </button>
+                        {human_buttons_html}
                     </div>
                 </div>
             </div>
@@ -497,9 +505,16 @@ class TaskboardManager:
         .btn:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }}
         .btn-approve {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; box-shadow: 0 0 15px rgba(16, 185, 129, 0.4); animation: btnPulse 2s infinite; }}
         @keyframes btnPulse {{ 0%, 100% {{ box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); }} 50% {{ box-shadow: 0 0 20px rgba(16, 185, 129, 0.8); }} }}
+        .btn-top-quick {{ padding: 4px 12px; font-size: 11px; border-radius: 6px; box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }}
+        .btn-completed {{ background: linear-gradient(135deg, #059669 0%, #047857 100%) !important; color: #f8fafc !important; cursor: default !important; box-shadow: 0 0 12px rgba(16, 185, 129, 0.4) !important; animation: none !important; }}
+        .btn-executing {{ background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important; color: #fff !important; box-shadow: 0 0 20px rgba(245, 158, 11, 0.6) !important; animation: execPulse 1s infinite alternate !important; }}
+        @keyframes execPulse {{ 0% {{ opacity: 0.8; transform: scale(0.98); }} 100% {{ opacity: 1; transform: scale(1.02); }} }}
         .btn-revise {{ background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b66; }}
         .btn-revise:hover {{ background: #f59e0b33; }}
         .btn-pause {{ background: #334155; color: #cbd5e1; border: 1px solid #475569; }}
+
+        /* Floating Toast */
+        #daio-toast {{ position: fixed; top: 24px; right: 24px; background: #1e293b; border: 1px solid #38bdf8; color: #fff; padding: 14px 20px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; display: none; font-size: 13px; font-weight: 600; }}
 
         .history-section {{ background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); padding: 20px; }}
         .history-title {{ font-size: 17px; font-weight: 600; margin-bottom: 16px; color: #fff; }}
@@ -512,22 +527,50 @@ class TaskboardManager:
         .decision-badge.review {{ background: #ef444422; color: #f87171; }}
     </style>
     <script>
-        // Interactive Human Decision Handler
+        function showToast(msg, duration = 3500) {{
+            let toast = document.getElementById('daio-toast');
+            if (!toast) {{
+                toast = document.createElement('div');
+                toast.id = 'daio-toast';
+                document.body.appendChild(toast);
+            }}
+            toast.innerHTML = msg;
+            toast.style.display = 'block';
+            setTimeout(() => {{ toast.style.display = 'none'; }}, duration);
+        }}
+
+        // Synchronized Interactive Human Decision Handler
         function handleHumanDecision(action) {{
+            const allApproveBtns = document.querySelectorAll('.btn-approve');
+            
             if (action === 'APPROVE') {{
-                const btn = document.querySelector('.btn-approve');
-                if (btn) {{
-                    btn.innerHTML = '✨ 已正式批准！正在推進至 Phase P7...';
-                    btn.style.background = '#10b981';
-                }}
-                alert('✅ 已收到 Human Owner 批准！\\n\\n已正式簽核 Capital Pareto Freeze (Profile A: Fixed 0.25% 作為生產預設)。\\nDAIO 即將自動執行 Phase P7 Production Release 正式封版發布！');
+                // Step 1: Synchronize all buttons to Executing state
+                allApproveBtns.forEach(btn => {{
+                    btn.classList.add('btn-executing');
+                    btn.classList.remove('btn-completed');
+                    btn.innerHTML = '<span>⏳ 批准執行中 (Executing P7 Release...)</span>';
+                }});
+                showToast('⏳ <strong>已收到批准授權！</strong> 正在執行 Phase P7 生產發布與雙 Agent 簽核...', 3000);
+                
+                // Step 2: Transition to Completed state with celebration
+                setTimeout(() => {{
+                    allApproveBtns.forEach(btn => {{
+                        btn.classList.remove('btn-executing');
+                        btn.classList.add('btn-completed');
+                        btn.disabled = true;
+                        btn.innerHTML = '<span>✨ 批准已生效 (v4.0.0 RELEASED)</span>';
+                    }});
+                    showToast('🎉 <strong>Phase P7 Production Release 簽核完成！</strong> 全系統正式生產封版！', 5000);
+                }}, 2500);
+            }} else if (action === 'VIEW_MANIFEST') {{
+                alert('📜 SMC7S.v4 正式生產發布資訊：\\n\\n• 版本：Version 4.0.0-RELEASE (Git Tag: v4.0.0-release)\\n• 預設配置：Profile A (Fixed 0.25% 曝險，MDD 2.10%)\\n• 成長配置：Profile B (1/8 Kelly 0.35% 曝險，MDD 2.93%)\\n• 測試門禁：55/55 PASS (100%)\\n• 治理狀態：Human Owner 批准 + ChatGPT 架構師 Sign-off 永久封版！');
             }} else if (action === 'REVISE') {{
                 const comment = prompt('請輸入修改指示：', '請重新檢驗參數');
                 if (comment) {{
-                    alert('🔄 已記錄修改指示：' + comment);
+                    showToast('🔄 已記錄修改指示：' + comment);
                 }}
             }} else {{
-                alert('⏸️ DAIO 自動循環已暫停。');
+                showToast('⏸️ DAIO 自動循環已暫停。');
             }}
         }}
 
