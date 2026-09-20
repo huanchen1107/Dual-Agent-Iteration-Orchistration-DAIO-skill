@@ -1,6 +1,6 @@
-# Dual-Agent Iteration Orchestrator (DAIO) 🤖⚡🤖
+# Dual-Agent Iteration Orchestrator (DAIO) + Live Taskboard 🤖⚡📊
 
-> **Universal Autonomous Engineering & Auditing Bridge between Local AI Coding Agents (e.g. Antigravity / Claude Code) and Web LLM Architects (e.g. ChatGPT Projects / Claude Artifacts) via Chrome Remote Debugging Protocol (CDP).**
+> **Universal Autonomous Engineering & Auditing Bridge with Integrated Live Kanban Taskboard between Local AI Coding Agents (e.g. Antigravity / Claude Code) and Web LLM Architects (e.g. ChatGPT Projects / Claude Artifacts) via Chrome Remote Debugging Protocol (CDP).**
 
 ---
 
@@ -8,50 +8,72 @@
 
 **DAIO (Dual-Agent Iteration Orchestrator)** completely eliminates the repetitive manual copy-pasting cycle between an **Execution / Engineer Agent** (writing code, running unit tests, generating backtests/audits) and an **Architect / Auditor Agent** (reviewing reports, enforcing statistical rigor, issuing next-phase directives).
 
+### 🚀 Complete Visual Architecture with Taskboard
 ```text
-                  DAIO ORCHESTRATOR
-                          │
-                          ▼
-            ┌───────────────────────────┐
-            │  Antigravity / Engineer   │
-            │  Executes Task & Analysis │
-            └─────────────┬─────────────┘
-                          │
-                          ▼
-               Test Gate (Pytest 100%)
-               Git Commit & Remote Push
-                          │
-                          ▼
-            ┌───────────────────────────┐
-            │  External Web LLM Agent   │
-            │  (ChatGPT Project / Tab)  │
-            │  Chrome CDP Transmit      │
-            └─────────────┬─────────────┘
-                          │
-                          ▼
-                  WAIT_FOR_STREAM
-                 (Auto-detect completion)
-                          │
-                          ▼
-                Parse Decision Block
-                          │
-           ┌──────────────┼──────────────┐
-           ▼              ▼              ▼
-        APPROVE         REVISE       HUMAN_REVIEW / STOP
-           │              │              │
-           ▼              │              └──→ Pause & Yield to User
-       NEXT PHASE         │
-           │              │
-           └──────────────┘
-                  ↓
-         Re-invoke Engineer
-                  ↓
-             Next Iteration ↻
+                       DAIO ORCHESTRATOR
+                               │
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+   ┌──────────────────┐                  ┌──────────────────┐
+   │ Antigravity /    │                  │  LIVE TASKBOARD  │
+   │ Engineer Agent   │                  │  (Kanban / HTML) │
+   │ Code, Test, Run  │                  │  Auto-Refreshing │
+   └────────┬─────────┘                  └────────┬─────────┘
+            │                                     │
+            ▼                                     │
+     Test Integrity Gate                          │
+     Git Commit & Remote Push                     │
+            │                                     │
+            ▼                                     │
+   ┌──────────────────┐                           │
+   │  External LLM    │                           │
+   │  Architect Agent │                           │
+   │  (ChatGPT / Web) │                           │
+   │  Chrome CDP Sync │                           │
+   └────────┬─────────┘                           │
+            │                                     │
+            ▼                                     │
+     WAIT_FOR_STREAM                              │
+    (Auto-completion)                             │
+            │                                     │
+            ▼                                     │
+    Parse Decision Block ─────────────────────────┘
+            │
+   ┌────────┼────────┐
+   ▼        ▼        ▼
+APPROVE  REVISE  HUMAN/STOP
+   │        │        └──→ Yield to Human Operator
+   ▼        │
+NEXT PHASE  │
+   │        │
+   └────────┘
+        ↓
+  Re-invoke Engineer
+        ↓
+   Next Iteration ↻
 ```
 
 ---
 
-## 🚀 Quick Start
+## 📊 Live Visual Taskboard Integration
+
+DAIO now comes with a **built-in visual Kanban Taskboard engine** (`daio_taskboard.py`):
+
+1. **`taskboard.html`**: A sleek, dark-mode, auto-refreshing interactive Kanban board with live status pulses, phase tags, agent assignment badges, and a chronological audit decision stream.
+2. **`TASKBOARD.md`**: Markdown-formatted Kanban table automatically maintained in your repository for clean Git history.
+3. **`taskboard.json`**: Structured state representation for programmatic integrations.
+
+### Task Status Lifecycle:
+- 📝 **`TODO`**: Backlog & upcoming planned milestones.
+- ⚙️ **`IN_PROGRESS`**: Active engineering execution by Antigravity.
+- 🧪 **`TESTING`**: Automated Test Integrity Gate execution.
+- 🧐 **`REVIEW`**: Transmitted to Architect via Chrome CDP; awaiting review.
+- ✅ **`DONE`**: Formally approved by Architect & verified by tests.
+- 🛑 **`BLOCKED`**: Safety Breaker triggered or Human Review requested.
+
+---
+
+## 🚀 Quick Start in 3 Steps
 
 ### Step 1: Launch Chrome with Remote Debugging
 Launch Google Chrome with remote debugging port `9222` enabled:
@@ -65,22 +87,28 @@ google-chrome --remote-debugging-port=9222
 # Windows
 chrome.exe --remote-debugging-port=9222
 ```
-Navigate to your desired **ChatGPT Project** or **Web LLM Conversation** in that Chrome browser.
+Navigate to your desired **ChatGPT Project**, **Claude Artifact**, or custom **Web LLM** tab in that Chrome browser.
 
 ### Step 2: Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 3: Run the Orchestrator
+### Step 3: Launch DAIO Orchestrator
 ```bash
+# Option A: Run directly with CLI arguments
 python3 scripts/daio_orchestrator.py \
-  --url "https://chatgpt.com/g/g-p-6a7b02e338b8819182fa5b270ed91354" \
-  --phase "PHASE_1" \
-  --cmd "python3 research/run_task.py" \
+  --url "https://chatgpt.com/g/g-p-your-project-id" \
+  --phase "PHASE_1_SCAFFOLDING" \
+  --cmd "python3 src/main.py" \
   --test "pytest tests/" \
-  --max-iterations 15
+  --max-iterations 20
+
+# Option B: Run with declarative configuration file
+python3 scripts/daio_orchestrator.py --config daio_config.example.json
 ```
+
+Open `taskboard.html` in your browser to monitor the live dual-agent loop in real-time!
 
 ---
 
@@ -96,7 +124,7 @@ python3 scripts/daio_orchestrator.py \
    - Maximum 3 consecutive errors (execution errors, communication timeouts, unparseable decisions).
    - Exceeding the threshold safely halts the loop and alerts the human operator.
 4. **`MAX_ITERATIONS`**:
-   - Default safety limit (e.g., 15 rounds) to prevent runaway infinite loops.
+   - Default safety limit (e.g., 20 rounds) to prevent runaway infinite loops.
 
 ---
 
@@ -130,11 +158,14 @@ The external Architect Agent is prompted to provide a machine-readable JSON cont
 
 ```text
 .
-├── README.md                      # Documentation & architecture
-├── SKILL.md                       # Antigravity / AI Agent Skill Specification
-├── requirements.txt               # Dependencies (websockets)
+├── README.md                      # Comprehensive documentation & architecture guide
+├── SKILL.md                       # Antigravity / AI Agent Universal Skill Specification
+├── requirements.txt               # Dependencies (websockets, pytest)
+├── LICENSE                        # MIT Open Source License
+├── daio_config.example.json       # Declarative configuration template
 └── scripts/
     ├── daio_bridge.py             # Universal Chrome CDP Bridge (URL discovery, stream detection)
+    ├── daio_taskboard.py          # Visual Taskboard State & HTML/Markdown Generator
     └── daio_orchestrator.py       # Persistent Iterative Loop CLI Engine
 ```
 

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent))
 from daio_bridge import UniversalCDPClient, discover_tab_by_url
+from daio_taskboard import TaskboardManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +75,15 @@ class UniversalDAIO:
         self.auto_git = auto_git
         self.iteration_count = 0
         self.consecutive_errors = 0
+        self.taskboard = TaskboardManager(self.project_root)
+        self.taskboard.upsert_task(
+            task_id=f"phase_{self.current_phase.lower()}",
+            title=f"Phase {self.current_phase} Execution & Audit",
+            status="IN_PROGRESS",
+            description=f"Active engineering task for {self.current_phase}",
+            assigned_agent="Antigravity",
+            phase=self.current_phase,
+        )
 
     def run_command(self, cmd: str) -> Tuple[int, str]:
         env = os.environ.copy()
@@ -166,21 +176,53 @@ class UniversalDAIO:
                 logger.info(f"\n{'='*70}\n>>> DAIO ITERATION #{self.iteration_count} | CURRENT PHASE: {self.current_phase}\n{'='*70}")
 
                 # 1. Execute Work
+                self.taskboard.upsert_task(
+                    task_id=f"phase_{self.current_phase.lower()}",
+                    title=f"Phase {self.current_phase} Execution",
+                    status="IN_PROGRESS",
+                    description=f"Running task command for {self.current_phase}",
+                    assigned_agent="Antigravity",
+                    phase=self.current_phase,
+                )
                 if self.exec_cmd:
                     logger.info(f"[Step 1/4] Running execution command: {self.exec_cmd}")
                     code, out = self.run_command(self.exec_cmd)
                     if code != 0:
                         self.consecutive_errors += 1
                         logger.error(f"Execution failed with code {code}:\n{out}")
+                        self.taskboard.upsert_task(
+                            task_id=f"phase_{self.current_phase.lower()}",
+                            title=f"Phase {self.current_phase} Execution",
+                            status="BLOCKED",
+                            description=f"Execution error code {code}",
+                            assigned_agent="Antigravity",
+                            phase=self.current_phase,
+                        )
                         if self.consecutive_errors >= self.consecutive_errors_cap:
                             logger.error("Consecutive error cap reached! Halting for Human Review.")
                             break
                         continue
 
                 # 2. Test Integrity Gate
+                self.taskboard.upsert_task(
+                    task_id=f"phase_{self.current_phase.lower()}",
+                    title=f"Phase {self.current_phase} Verification",
+                    status="TESTING",
+                    description="Running automated test integrity gate",
+                    assigned_agent="Antigravity",
+                    phase=self.current_phase,
+                )
                 if not self.run_tests():
                     self.consecutive_errors += 1
                     logger.error("Test Integrity Gate failed! Halting submission to Architect.")
+                    self.taskboard.upsert_task(
+                        task_id=f"phase_{self.current_phase.lower()}",
+                        title=f"Phase {self.current_phase} Verification",
+                        status="BLOCKED",
+                        description="Test gate failed",
+                        assigned_agent="Antigravity",
+                        phase=self.current_phase,
+                    )
                     break
 
                 # 3. Git Sync
@@ -188,6 +230,14 @@ class UniversalDAIO:
 
                 # 4. Transmit Report to Web LLM
                 logger.info(f"[Step 2/4] Transmitting report to Web LLM via CDP...")
+                self.taskboard.upsert_task(
+                    task_id=f"phase_{self.current_phase.lower()}",
+                    title=f"Phase {self.current_phase} Audit & Review",
+                    status="REVIEW",
+                    description="Transmitted to Architect via Chrome CDP. Waiting for review stream...",
+                    assigned_agent="Architect (Web LLM)",
+                    phase=self.current_phase,
+                )
                 report_body = self.prepare_report()
                 send_res = await client.send_message(report_body)
 
@@ -208,23 +258,72 @@ class UniversalDAIO:
                 # 6. Dispatch Next Action
                 dec_type = decision.get("decision", "HUMAN_REVIEW").upper()
                 next_p = decision.get("next_phase", self.current_phase)
+                instr = decision.get("instruction", "No specific instruction.")
+
+                self.taskboard.log_event(
+                    iteration=self.iteration_count,
+                    phase=self.current_phase,
+                    decision=dec_type,
+                    agent="Architect",
+                    summary=instr,
+                )
 
                 if dec_type == "APPROVE":
                     logger.info(f"★ APPROVAL GRANTED! Advancing to: {next_p}")
+                    self.taskboard.upsert_task(
+                        task_id=f"phase_{self.current_phase.lower()}",
+                        title=f"Phase {self.current_phase}",
+                        status="DONE",
+                        description=f"Approved by Architect: {instr}",
+                        assigned_agent="Architect",
+                        phase=self.current_phase,
+                    )
                     self.consecutive_errors = 0
                     if next_p == self.current_phase or not next_p:
                         logger.info("Milestone stabilized. Loop completed.")
                         break
                     self.current_phase = next_p
+                    self.taskboard.upsert_task(
+                        task_id=f"phase_{self.current_phase.lower()}",
+                        title=f"Phase {self.current_phase}",
+                        status="IN_PROGRESS",
+                        description=f"Initiating next milestone: {self.current_phase}",
+                        assigned_agent="Antigravity",
+                        phase=self.current_phase,
+                    )
                 elif dec_type == "REVISE":
                     logger.warning(f"Revision requested for {self.current_phase}. Re-executing...")
+                    self.taskboard.upsert_task(
+                        task_id=f"phase_{self.current_phase.lower()}",
+                        title=f"Phase {self.current_phase} (Revision)",
+                        status="IN_PROGRESS",
+                        description=f"Revision requested: {instr}",
+                        assigned_agent="Antigravity",
+                        phase=self.current_phase,
+                    )
                     continue
                 elif dec_type == "HUMAN_REVIEW" or decision.get("human_approval_required"):
                     logger.warning(f"!!! HUMAN REVIEW REQUIRED AT PHASE: {self.current_phase} !!!")
-                    print(f"\nInstruction: {decision.get('instruction', 'Review required')}\n")
+                    self.taskboard.upsert_task(
+                        task_id=f"phase_{self.current_phase.lower()}",
+                        title=f"Phase {self.current_phase}",
+                        status="BLOCKED",
+                        description=f"Human review required: {instr}",
+                        assigned_agent="Human Operator",
+                        phase=self.current_phase,
+                    )
+                    print(f"\nInstruction: {instr}\n")
                     break
                 elif dec_type == "STOP":
                     logger.info("STOP decision received. Research cycle completed.")
+                    self.taskboard.upsert_task(
+                        task_id=f"phase_{self.current_phase.lower()}",
+                        title=f"Phase {self.current_phase}",
+                        status="DONE",
+                        description="Cycle stopped gracefully.",
+                        assigned_agent="Architect",
+                        phase=self.current_phase,
+                    )
                     break
                 else:
                     logger.warning(f"Unknown decision type {dec_type}. Pausing.")
