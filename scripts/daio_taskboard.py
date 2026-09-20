@@ -199,16 +199,25 @@ class TaskboardManager:
             """
 
         # Compute progress metrics dynamically from current taskboard tasks
+        review_task = next((t for t in self.tasks if t.get("status") in ["REVIEW", "BLOCKED"]), None)
+        active_task = next((t for t in self.tasks if t.get("status") in ["IN_PROGRESS", "TESTING"]), None)
+        done_tasks = [t for t in self.tasks if t.get("status") == "DONE"]
+        last_done_task = done_tasks[-1] if done_tasks else None
+        
+        last_approved_issue = last_done_task.get("issue_number", last_done_task.get("id", "")) if last_done_task else ""
+        review_issue = review_task.get("issue_number", review_task.get("id", "")) if review_task else ""
+        active_issue = active_task.get("issue_number", active_task.get("id", "")) if active_task else ""
+
         if self.tasks:
             dynamic_milestones = []
             for t in self.tasks:
                 phase_id = t.get("phase", t.get("id", ""))
-                # Create short label
+                iss = t.get("issue_number", "")
                 title = t.get("title", "")
                 if ":" in title:
-                    short_label = title.split(":", 1)[0].strip() + ": " + title.split(":", 1)[1].strip()[:10]
+                    short_label = (f"[{iss}] " if iss else "") + title.split(":", 1)[0].strip() + ": " + title.split(":", 1)[1].strip()[:8]
                 else:
-                    short_label = title[:15]
+                    short_label = (f"[{iss}] " if iss else "") + title[:15]
                 dynamic_milestones.append((t.get("id"), short_label, t.get("status", "TODO"), t.get("phase", "")))
 
             completed_count = sum(1 for _, _, status, _ in dynamic_milestones if status == "DONE")
@@ -244,11 +253,14 @@ class TaskboardManager:
             stepper_items_html = ""
             all_done = False
 
-        top_btn_html = (
-            '<button class="btn btn-approve btn-top-quick btn-completed" disabled><span>✨ 本期任務已全數批准完成</span></button>'
-            if all_done else
-            '<button class="btn btn-approve btn-top-quick" onclick="handleHumanDecision(\'APPROVE\')"><span>✅ 快速批准當前階段</span></button>'
-        )
+        if all_done:
+            top_btn_html = '<button class="btn btn-approve btn-top-quick btn-completed" disabled><span>✨ 本期全數任務已批准封版</span></button>'
+        elif review_task:
+            top_btn_html = f'<button class="btn btn-approve btn-top-quick" onclick="handleHumanDecision(\'APPROVE\', \'{review_issue}\')"><span>✅ 批准當前審批門 [{review_issue}]</span></button>'
+        elif last_done_task:
+            top_btn_html = f'<button class="btn btn-approve btn-top-quick btn-completed" disabled><span>✨ [{last_approved_issue} 已批准生效] 正在執行 {active_issue or "下階段"}</span></button>'
+        else:
+            top_btn_html = '<button class="btn btn-approve btn-top-quick" onclick="handleHumanDecision(\'APPROVE\')"><span>✅ 快速批准當前階段</span></button>'
 
         progress_html = f"""
         <div class="progress-container">
@@ -388,8 +400,18 @@ class TaskboardManager:
                 </div>
                 """
             
-            prompt_text = "當前任務全部完成！" if all_done else f"當前進度進行中（{completed_count}/{total_milestones}）："
-            human_buttons_html = '<button class="btn btn-approve btn-completed" disabled><span class="btn-icon">✨</span> 所有任務已完成</button>' if all_done else '<button class="btn btn-approve" onclick="handleHumanDecision(\'APPROVE\')"><span class="btn-icon">✅</span> 批准通過當前階段</button><button class="btn btn-revise" onclick="handleHumanDecision(\'REVISE\')"><span class="btn-icon">🔄</span> 要求修改</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停</button>'
+            if all_done:
+                prompt_text = "✨ 全數階段任務已全數批准並完成驗證！"
+                human_buttons_html = '<button class="btn btn-approve btn-completed" disabled><span class="btn-icon">✨</span> 所有任務已完成</button>'
+            elif review_task:
+                prompt_text = f"🚨 <strong>[{review_issue}] 審批門待裁定</strong>：ChatGPT 架構師已提交審計報告，請 Human Owner 裁定："
+                human_buttons_html = f'<button class="btn btn-approve" onclick="handleHumanDecision(\'APPROVE\', \'{review_issue}\')"><span class="btn-icon">✅</span> 批准通過 [{review_issue}]</button><button class="btn btn-revise" onclick="handleHumanDecision(\'REVISE\', \'{review_issue}\')"><span class="btn-icon">🔄</span> 要求修改</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停</button>'
+            elif last_done_task:
+                prompt_text = f"✨ <strong>[{last_approved_issue}] 批准已正式生效！</strong> 工程端正在自動執行 [{active_issue or '下階段任務'}]，無需重複批准。"
+                human_buttons_html = f'<button class="btn btn-approve btn-completed" disabled><span class="btn-icon">✨</span> [{last_approved_issue}] 批准已生效</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停循環 (Pause Orchestrator)</button>'
+            else:
+                prompt_text = f"當前進度進行中（{completed_count}/{total_milestones}）："
+                human_buttons_html = '<button class="btn btn-approve" onclick="handleHumanDecision(\'APPROVE\')"><span class="btn-icon">✅</span> 快速批准當前階段</button><button class="btn btn-pause" onclick="handleHumanDecision(\'PAUSE\')"><span class="btn-icon">⏸️</span> 暫停</button>'
 
             inspector_html = f"""
             <div class="work-inspector-card">
