@@ -58,9 +58,32 @@ DAIO eliminates manual copy-pasting between Antigravity and external Web LLMs (C
 
 ---
 
+## 🔔 Automatic Skill Activation Protocol & UI Launch Inquirer
+
+**CRITICAL BEHAVIORAL RULE**: Whenever the user activates or invokes this skill (via `/daio`, `daio`, `啟動 daio`, or asks for dual-agent orchestration), the AI assistant MUST strictly follow this 3-step activation protocol in its very first response:
+
+1. **Proactively Inquire & Offer UI Launch**:
+   - Explicitly ask the user: *"是否需要為您在瀏覽器中自動開啟即時視覺對話看板 (Live Taskboard)？"*
+   - Provide clickable local file link: [taskboard.html](file:///Users/huanchen/Desktop/2026%20Projects/2026.8.26AwinFinTechSMCHybridSystemFolder/_AwinFinTechHybridSystem_/taskboard.html).
+2. **Report Active Turn & Dialogue State**:
+   - Clearly state whose turn it is right now (`🟢 當前行動回合: 🛠️ Antigravity (執行工程師)` 或 `🟡 🏛️ ChatGPT (審計架構師)`).
+   - Show the latest speech bubble exchange between both agents.
+3. **Report Milestone Pipeline Progress**:
+   - Report the overall completion percentage (e.g. `8 / 10 里程碑完成 (80%)`) and the active milestone task.
+
+---
+
 ## 🚀 Quick Start & Usage
 
-### 1. Launch Chrome in Debugging Mode
+### 1. One-Click CLI (`./daio`)
+In the workspace root, use the unified executable CLI:
+```bash
+./daio board    # Open live visual taskboard in browser
+./daio status   # Check current active turn, tasks, and audit log
+./daio          # Start autonomous dual-agent iteration loop (with interactive UI prompt)
+```
+
+### 2. Launch Chrome in Debugging Mode
 Ensure Google Chrome is open with remote debugging enabled on port `9222`:
 ```bash
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222

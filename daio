@@ -49,9 +49,18 @@ def show_status():
         print(f" {sym} [{st:<12}] {phase:<12} : {t.get('title')}")
     print("=" * 70)
 
-def run_loop():
+def run_loop(auto_open_board: bool = False):
     """Run DAIO Autonomous Loop."""
     from skills.daio.scripts.daio_orchestrator import UniversalDAIO
+    from skills.daio.scripts.daio_taskboard import TaskboardManager
+    
+    # Refresh board state first
+    tb = TaskboardManager(str(PROJECT_ROOT))
+    tb.save()
+    
+    if auto_open_board:
+        open_board()
+    
     print("🚀 Starting DAIO Autonomous Orchestration Loop...")
     orchestrator = UniversalDAIO(
         config_path=str(PROJECT_ROOT / "daio_config.json") if (PROJECT_ROOT / "daio_config.json").exists() else None
@@ -62,6 +71,7 @@ def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI")
     parser.add_argument("action", nargs="?", default="run", choices=["run", "board", "status"],
                         help="Action to perform: run (default), board (open browser), status (print state)")
+    parser.add_argument("--open-board", "-b", action="store_true", help="Automatically open live taskboard in browser when running loop")
     args = parser.parse_args()
 
     if args.action == "board":
@@ -69,7 +79,16 @@ def main():
     elif args.action == "status":
         show_status()
     else:
-        run_loop()
+        # Check if running interactively in terminal
+        should_open = args.open_board
+        if not should_open and sys.stdin.isatty():
+            try:
+                ans = input("📊 是否要在瀏覽器中開啟即時對話看板 (Live Taskboard)？[Y/n]: ").strip().lower()
+                if ans in ["", "y", "yes"]:
+                    open_board()
+            except (EOFError, KeyboardInterrupt):
+                pass
+        run_loop(auto_open_board=False)
 
 if __name__ == "__main__":
     main()
