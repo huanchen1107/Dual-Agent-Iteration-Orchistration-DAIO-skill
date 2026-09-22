@@ -52,3 +52,36 @@ def checkpoint(root=".", **metadata):
                   "authority":"NON_AUTHORITATIVE_RECOVERY_CACHE"})
     (d/STATE_FILE).write_text(json.dumps(state,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     return state
+
+
+def build_rehydration_packet(root="."):
+    """Build a bounded packet for a replacement Architect/Engineer session."""
+    d=diagnose(root); root=Path(d["project_root"])
+    _,branch=_git(root,"branch","--show-current")
+    _,status=_git(root,"status","--short")
+    _,last=_git(root,"log","-10","--pretty=format:%h %s")
+    candidates=[]
+    for name in ("AGENTS.md","TASKBOARD.md","README.md","design.md"):
+        if (root/name).exists(): candidates.append(name)
+    for dirname in ("openspec","_myplan_"):
+        if (root/dirname).exists(): candidates.append(dirname+"/")
+    lines=[
+      "# DAIO Context Rehydration Packet",
+      "- Project root: "+str(root), "- Branch: "+(branch or "UNKNOWN"),
+      "- HEAD: "+(d["head"] or "UNKNOWN"), "- Recovery health: "+d["health"],
+      "- Previous checkpoint: "+(d["checkpoint_head"] or "NONE"),
+      "- Authority: Git/project artifacts; this packet is navigation context only.",
+      "", "## Canonical artifact candidates", *["- "+x for x in candidates],
+      "", "## Recent commits", last or "(none)",
+      "", "## Commits since checkpoint",
+      "\n".join(d["recent_commits"]) or "(checkpoint current or missing)",
+      "", "## Working tree", status or "(clean)", "",
+      "## Recovery directive",
+      "Reconcile the artifacts above before acting. STALE or CHECKPOINT_MISSING is recoverable and must not by itself trigger HUMAN_REVIEW."
+    ]
+    return "\n".join(lines)+"\n"
+
+def write_rehydration_packet(root="."):
+    root=discover_project_root(root); d=Path(root)/STATE_DIR; d.mkdir(exist_ok=True)
+    p=d/"rehydration_packet.md"; p.write_text(build_rehydration_packet(root),encoding="utf-8")
+    return p
