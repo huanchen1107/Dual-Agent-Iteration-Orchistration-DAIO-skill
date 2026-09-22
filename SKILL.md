@@ -64,7 +64,7 @@ DAIO eliminates manual copy-pasting between Antigravity and external Web LLMs (C
 
 1. **Proactively Inquire & Offer UI Launch**:
    - Explicitly ask the user: *"是否需要為您在瀏覽器中自動開啟即時視覺對話看板 (Live Taskboard)？"*
-   - Provide clickable local file link: [taskboard.html](file:///Users/huanchen/Desktop/2026%20Projects/2026.8.26AwinFinTechSMCHybridSystemFolder/_AwinFinTechHybridSystem_/taskboard.html).
+   - Resolve the active project's taskboard dynamically; never hard-code a project-specific local path.
 2. **Report Active Turn & Dialogue State**:
    - Clearly state whose turn it is right now (`🟢 當前行動回合: 🛠️ Antigravity (執行工程師)` 或 `🟡 🏛️ ChatGPT (審計架構師)`).
    - Show the latest speech bubble exchange between both agents.
@@ -72,6 +72,23 @@ DAIO eliminates manual copy-pasting between Antigravity and external Web LLMs (C
    - Report the overall completion percentage (e.g. `8 / 10 里程碑完成 (80%)`) and the active milestone task.
 
 ---
+
+## ♻️ Robust Cross-Session Recovery
+
+DAIO MUST treat the Git repository as durable coordination state and browser/chat context as a replaceable cache.
+
+On activation, continuation, browser-tab replacement, ChatGPT Project thread switch, or Agent context loss:
+
+1. Resolve the actual project Git root and current HEAD.
+2. Run `./daio recover` (or the equivalent recovery preflight).
+3. Read `.daio/recovery_state.json` only as a non-authoritative checkpoint.
+4. If the checkpoint is missing, reconstruct from Git/project artifacts and continue.
+5. If checkpoint HEAD differs from actual HEAD, classify `STALE`, inspect intervening commits, rehydrate context, and continue automatically.
+6. Never require the human to paste an old conversation when repository evidence is sufficient.
+7. Only stop for a real semantic conflict, destructive/human approval gate, or irreconcilable ownership conflict.
+8. ChatGPT conversation URLs/IDs are optional navigation hints; they are never the source of truth and DAIO must not assume GitHub can enumerate private ChatGPT conversations.
+
+Recovery health states: `SYNCED`, `STALE`, `CHECKPOINT_MISSING`, `DEGRADED`, `BLOCKED`.
 
 ## 🚀 Quick Start & Usage
 
