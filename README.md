@@ -61,7 +61,7 @@ DAIO features a **rich visual Kanban Taskboard & Live Conversation Hub** (`daio_
 
 1. **🚀 Animated Progress Bar & 10-Step Milestone Stepper**:
    - Dynamic glow progress fill showing real-time pipeline completion percentage (e.g. `100% Complete`).
-   - Interactive milestone stepper tracking `P4 Freeze` $\rightarrow$ `P5 Canonical` $\rightarrow$ `P6 Runtime` $\rightarrow$ `OOS-1/2/3A/3B` $\rightarrow$ `CE-1/2` $\rightarrow$ `P7 Release`.
+   - Interactive milestone stepper driven by the active project's phases and milestones.
 2. **⚖️ Interactive Human Governance Action Bar (Dual-Button Sync)**:
    - **One-Click Quick Approve (Top Bar) & Full Governance Gate (Inspector Card)**.
    - **Full Synchronized Lifecycle**:
@@ -139,7 +139,7 @@ Open `taskboard.html` in your browser (or run `./daio board`) to monitor the liv
 1. **`TEST_INTEGRITY_GATE`**:
    - Before any report is submitted to the Architect, all unit tests must pass (`pytest` exit code = 0).
    - If tests fail, report transmission is immediately blocked to maintain strict codebase integrity.
-2. **`FROZEN_PARAMETER_LOCK`**:
+2. **Project parameter-freeze policy (project-owned, not enforced by DAIO Core)**:
    - Canonical parameters and frozen specifications cannot be modified automatically.
    - If an Architect instruction suggests modifying frozen parameters, DAIO immediately halts and triggers `HUMAN_REVIEW`.
 3. **`CONSECUTIVE_ERRORS_CAP`**:
