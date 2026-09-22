@@ -125,7 +125,7 @@ python3 /Users/huanchen/.gemini/config/skills/daio/scripts/daio_orchestrator.py 
 1. **`TEST_INTEGRITY_GATE`**:
    - Before any report is sent to the Architect, all unit tests must pass (`pytest` exit code = 0).
    - If tests fail, report transmission is blocked immediately.
-2. **`FROZEN_PARAMETER_LOCK`**:
+2. **Project parameter-freeze policy (project-owned, not enforced by DAIO Core)**:
    - Canonical strategy parameters (e.g. S1–S7 frozen contracts) are strictly locked.
    - If an Architect instruction suggests tweaking frozen parameters, DAIO immediately halts and triggers `HUMAN_REVIEW`.
 3. **`CONSECUTIVE_ERRORS_CAP`**:
