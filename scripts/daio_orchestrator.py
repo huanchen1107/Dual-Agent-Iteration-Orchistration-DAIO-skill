@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from daio_bridge import UniversalCDPClient, discover_tab_by_url
 from daio_taskboard import TaskboardManager
 from daio_recovery import diagnose, checkpoint, write_rehydration_packet
-from daio_sync import heartbeat, sync_status, mark_git
+from daio_sync import heartbeat, sync_status, mark_git, healing_plan, build_delta_packet
 
 logging.basicConfig(
     level=logging.INFO,
@@ -193,6 +193,13 @@ class UniversalDAIO:
                 heartbeat(self.project_root, "engineer", current_phase=self.current_phase, iteration=self.iteration_count)
                 logger.info(f"\n{'='*70}\n>>> DAIO ITERATION #{self.iteration_count} | CURRENT PHASE: {self.current_phase}\n{'='*70}")
 
+                # Self-heal participant context before semantic work.
+                heal = healing_plan(self.project_root)
+                engineer_delta = build_delta_packet(self.project_root, "engineer")
+                if engineer_delta:
+                    logger.warning("Engineer context lag detected; self-healing to canonical HEAD before execution.")
+                    heartbeat(self.project_root, "engineer", current_phase=self.current_phase,
+                              iteration=self.iteration_count, recovery_action="REHYDRATED")
                 # 1. Execute Work
                 self.taskboard.upsert_task(
                     task_id=f"phase_{self.current_phase.lower()}",
@@ -257,6 +264,9 @@ class UniversalDAIO:
                     phase=self.current_phase,
                 )
                 report_body = self.prepare_report()
+                architect_delta = build_delta_packet(self.project_root, "architect")
+                if architect_delta:
+                    report_body += "\n\n---\n" + architect_delta
                 send_res = await client.send_message(report_body)
 
                 if not send_res.get("success"):
