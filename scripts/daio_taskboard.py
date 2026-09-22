@@ -29,6 +29,7 @@ class TaskboardManager:
         self.market_data_inventory: Dict[str, Any] = {}
         self.blind_replay_matrix: Dict[str, Any] = {}
         self.sync_health: Dict[str, Any] = {}
+        self.project_sections: Dict[str, Any] = {}
         self.updated_at: str = datetime.now().isoformat()
         self.load()
 
@@ -52,6 +53,13 @@ class TaskboardManager:
 
     def _ensure_dynamic_sections(self):
         """Populate or update market data inventory and blind replay matrix if available."""
+        # -1. Optional project adapter sections (domain-neutral core boundary)
+        try:
+            from daio_adapter import collect_sections
+            self.project_sections = collect_sections(self.output_dir)
+        except Exception:
+            self.project_sections = {}
+
         # 0. DAIO three-party sync health
         try:
             from daio_sync import sync_status, healing_plan
@@ -170,6 +178,7 @@ class TaskboardManager:
             "market_data_inventory": self.market_data_inventory,
             "blind_replay_matrix": self.blind_replay_matrix,
             "sync_health": self.sync_health,
+            "project_sections": self.project_sections,
         }
         with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
