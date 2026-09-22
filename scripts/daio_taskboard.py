@@ -55,14 +55,14 @@ class TaskboardManager:
         """Populate or update market data inventory and blind replay matrix if available."""
         # -1. Optional project adapter sections (domain-neutral core boundary)
         try:
-            from daio_adapter import collect_sections
+            from scripts.daio_adapter import collect_sections
             self.project_sections = collect_sections(self.output_dir)
         except Exception:
             self.project_sections = {}
 
         # 0. DAIO three-party sync health
         try:
-            from daio_sync import sync_status, healing_plan
+            from scripts.daio_sync import sync_status, healing_plan
             self.sync_health = sync_status(self.output_dir)
             self.sync_health["healing_plan"] = healing_plan(self.output_dir)
         except Exception:
@@ -189,7 +189,7 @@ class TaskboardManager:
 
         # Optional domain UI is opaque to DAIO core.
         try:
-            from daio_adapter import render_sections
+            from scripts.daio_adapter import render_sections
             adapter_rendered = render_sections(self.output_dir, self.project_sections)
             if adapter_rendered.get("markdown"):
                 lines.append(adapter_rendered["markdown"])
