@@ -3,7 +3,7 @@
 Generates:
 1. taskboard.json (Machine-readable state)
 2. TASKBOARD.md (Markdown Kanban table + Market Data Hub + Blind Replay Matrix)
-3. taskboard.html (Rich interactive Dark-Mode Kanban Dashboard + Live Inspector + Data Hub + Replay Studio)
+3. taskboard.html (Rich interactive Dark-Mode Kanban Dashboard + Live Inspector)
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class TaskboardManager:
         self._ensure_dynamic_sections()
 
     def _ensure_dynamic_sections(self):
-        """Populate or update market data inventory and blind replay matrix if available."""
+        """Refresh generic project extensions and three-party sync health."""
         # -1. Optional project adapter sections (domain-neutral core boundary)
         try:
             from scripts.daio_adapter import collect_sections
@@ -67,11 +67,6 @@ class TaskboardManager:
             self.sync_health["healing_plan"] = healing_plan(self.output_dir)
         except Exception:
             self.sync_health = {}
-
-        # Compatibility aliases for legacy dashboard renderers.
-        # Data now comes only from an explicitly enabled project adapter.
-        self.market_data_inventory = self.project_sections.get("market_data_inventory", {})
-        self.blind_replay_matrix = self.project_sections.get("blind_replay_matrix", {})
 
     def save(self):
         self._ensure_dynamic_sections()
