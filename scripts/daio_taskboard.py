@@ -187,38 +187,14 @@ class TaskboardManager:
             st = status_icons.get(t["status"], t["status"])
             lines.append(f"| `{t['id']}` | **{t['phase']}** | {t['title']} | {st} | `{t['assigned_agent']}` | {t['updated_at']} |")
 
-        # 1. Multi-Symbol Market Data Inventory Markdown Section
-        if self.market_data_inventory and "categories" in self.market_data_inventory:
-            m = self.market_data_inventory
-            lines.append("\n## 📡 54 檔市場數據庫資產中心 (Multi-Symbol Market Database Matrix)\n")
-            lines.append(f"- **總入庫標的數**：`{m.get('total_symbols', 54)}` 檔標的")
-            lines.append(f"- **存儲引擎**：`{m.get('database_engine')}`")
-            lines.append(f"- **爬蟲防護**：`{m.get('jitter_delay')}` 隨機延遲防封鎖機制")
-            lines.append(f"- **數據結構**：`{m.get('schema_version')}`\n")
-            
-            for cat in m.get("categories", []):
-                lines.append(f"### {cat['category']} ({cat['count']} 檔)")
-                lines.append("| 標的代碼 | 1D K棒 | 4H K棒 | 2H K棒 | 1H K棒 | SQLite 資料庫 | 狀態 |")
-                lines.append("| :--- | :---: | :---: | :---: | :---: | :--- | :---: |")
-                for it in cat["items"]:
-                    tf = it["timeframes"]
-                    lines.append(f"| **{it['symbol']}** | {tf.get('1d', '-')} | {tf.get('4h', '-')} | {tf.get('2h', '-')} | {tf.get('1h', '-')} | `data/db/{it['db']}` | ✅ 100% PERSISTED |")
-                lines.append("")
-
-        # 2. Change 045 Blind Replay Engine Matrix Markdown Section
-        if self.blind_replay_matrix:
-            r = self.blind_replay_matrix
-            lines.append("\n## 🔬 Change 045 RTS-A/B/C 盲測回放引擎與 S5 門禁矩陣 (Zero Lookahead Engine)\n")
-            lines.append(f"- **回放案例**：`{r.get('case_id')} ({r.get('symbol')})`")
-            lines.append(f"- **無前瞻偏誤保證**：`Zero Lookahead = {r.get('zero_lookahead')}`（逐根 2H/1H 因果推進）")
-            lines.append(f"- **RTS 策略策略**：`{r.get('rts_policy', {}).get('name')}` (轉折觸發 $X = {r.get('rts_policy', {}).get('trigger_x')}$, 防守低點 $Y = {r.get('rts_policy', {}).get('stop_y')}$, 曝險 $R = {r.get('rts_policy', {}).get('risk_r')}$)")
-            lines.append(f"- **回放結果**：`{r.get('execution_summary', {}).get('result_r')}` | 進場 `{r.get('execution_summary', {}).get('entry_price')}` → 出場 `{r.get('execution_summary', {}).get('exit_price')}`\n")
-            lines.append("### S5 六大剛性防護門禁檢查 (G1~G6 Integrity Gates)")
-            lines.append("| Gate ID | 門禁名稱 | 檢查項目與因果細節 | 驗證結果 |")
-            lines.append("| :---: | :--- | :--- | :---: |")
-            for g in r.get("s5_guards", []):
-                lines.append(f"| **{g['id']}** | {g['name']} | {g['detail']} | `{g['status']}` |")
-            lines.append("")
+        # Optional domain UI is opaque to DAIO core.
+        try:
+            from daio_adapter import render_sections
+            adapter_rendered = render_sections(self.output_dir, self.project_sections)
+            if adapter_rendered.get("markdown"):
+                lines.append(adapter_rendered["markdown"])
+        except Exception:
+            pass
 
         lines.append("\n## 📜 雙 Agent 歷史審計決策串流 (Recent Decision Stream)\n")
         lines.append("| Time | Iter # | Phase | Decision | Auditor Agent | Summary |")
@@ -514,138 +490,13 @@ class TaskboardManager:
             </div>
             """
 
-        # Build Market Data Inventory HTML Component
-        market_hub_html = ""
-        if self.market_data_inventory and "categories" in self.market_data_inventory:
-            inv = self.market_data_inventory
-            cat_tabs_html = ""
-            cat_content_html = ""
-            for idx, cat in enumerate(inv.get("categories", [])):
-                active_cls = "active" if idx == 0 else ""
-                cat_tabs_html += f"""
-                <button class="cat-tab-btn {active_cls}" onclick="switchCatTab(event, 'cat-tab-{idx}')">
-                    {cat['category']} <span class="badge">{cat['count']}</span>
-                </button>
-                """
-                
-                rows_html = ""
-                for it in cat["items"]:
-                    tf = it["timeframes"]
-                    rows_html += f"""
-                    <tr>
-                        <td><strong style="color: #38bdf8;">{it['symbol']}</strong></td>
-                        <td><span class="tf-badge">{tf.get('1d', '-')}</span></td>
-                        <td><span class="tf-badge">{tf.get('4h', '-')}</span></td>
-                        <td><span class="tf-badge">{tf.get('2h', '-')}</span></td>
-                        <td><span class="tf-badge">{tf.get('1h', '-')}</span></td>
-                        <td><code style="font-size: 11px; color: #94a3b8;">data/db/{it['db']}</code></td>
-                        <td><span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);">✅ 100% PERSISTED</span></td>
-                    </tr>
-                    """
-                
-                cat_content_html += f"""
-                <div id="cat-tab-{idx}" class="cat-tab-panel {active_cls}">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>標的代碼 (Symbol)</th>
-                                <th>1D K棒</th>
-                                <th>4H K棒</th>
-                                <th>2H K棒</th>
-                                <th>1H K棒</th>
-                                <th>SQLite 資料庫路徑</th>
-                                <th>入庫狀態</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows_html}
-                        </tbody>
-                    </table>
-                </div>
-                """
-
-            market_hub_html = f"""
-            <div class="market-hub-section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span>📡 <strong>54 檔市場數據庫資產中心 (Multi-Symbol Market Database Matrix)</strong></span>
-                        <span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);">{inv.get('total_symbols', 54)} 檔標的全部入庫</span>
-                    </div>
-                    <div class="section-meta">
-                        <span>防封鎖隨機延遲：<strong>{inv.get('jitter_delay', '1.0s~2.2s')}</strong></span>
-                        <span>引擎：<strong>{inv.get('database_engine', 'SQLite 3')}</strong></span>
-                    </div>
-                </div>
-                <div class="cat-tabs-bar">
-                    {cat_tabs_html}
-                </div>
-                <div class="cat-panels-container">
-                    {cat_content_html}
-                </div>
-            </div>
-            """
-
-        # Build Blind Replay Matrix HTML Component
-        replay_matrix_html = ""
-        if self.blind_replay_matrix:
-            r = self.blind_replay_matrix
-            guards_rows = ""
-            for g in r.get("s5_guards", []):
-                guards_rows += f"""
-                <div class="guard-pill">
-                    <div class="guard-pill-header">
-                        <span class="guard-id">{g['id']}</span>
-                        <strong class="guard-name">{g['name']}</strong>
-                        <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399;">{g['status']}</span>
-                    </div>
-                    <div class="guard-detail">{g['detail']}</div>
-                </div>
-                """
-
-            exec_sum = r.get("execution_summary", {})
-            replay_matrix_html = f"""
-            <div class="replay-matrix-section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span>🔬 <strong>Change 045 RTS-A/B/C 盲測回放引擎與 S5 門禁驗證 (Blind Replay Studio)</strong></span>
-                        <span class="badge" style="background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4);">Zero Lookahead 嚴格保證</span>
-                    </div>
-                    <div class="section-meta">
-                        <span>標的：<strong>{r.get('symbol')} ({r.get('case_id')})</strong></span>
-                        <span>策略：<strong>{r.get('rts_policy', {}).get('name')}</strong></span>
-                    </div>
-                </div>
-                <div class="replay-grid">
-                    <div class="replay-card">
-                        <div class="card-subtitle">🎯 RTS 觸發與防守前置鎖定 (Pre-Commitment)</div>
-                        <div class="param-grid">
-                            <div class="param-item">
-                                <span class="param-label">轉折高點觸發價 (X)</span>
-                                <span class="param-val">${r.get('rts_policy', {}).get('trigger_x', 960.0)}</span>
-                            </div>
-                            <div class="param-item">
-                                <span class="param-label">防守低點止損 (Y)</span>
-                                <span class="param-val">${r.get('rts_policy', {}).get('stop_y', 930.0)}</span>
-                            </div>
-                            <div class="param-item">
-                                <span class="param-label">單筆風險曝險 (R)</span>
-                                <span class="param-val">${r.get('rts_policy', {}).get('risk_r', 30.0)}</span>
-                            </div>
-                            <div class="param-item">
-                                <span class="param-label">最終回放績效</span>
-                                <span class="param-val" style="color: #34d399;">{exec_sum.get('result_r', '+0.93R')}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="replay-card">
-                        <div class="card-subtitle">🛡️ S5 六大剛性防護門禁狀態 (G1 ~ G6 Guards)</div>
-                        <div class="guards-list">
-                            {guards_rows}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """
+        # Optional project adapter HTML; DAIO core does not know domain schema.
+        adapter_html = ""
+        try:
+            from daio_adapter import render_sections
+            adapter_html = render_sections(self.output_dir, self.project_sections).get("html", "")
+        except Exception:
+            adapter_html = ""
 
         history_rows = ""
         for h in reversed(self.history[-15:]):
@@ -957,9 +808,9 @@ class TaskboardManager:
 
     {dialogue_html}
 
-    {market_hub_html}
+    {adapter_html}
 
-    {replay_matrix_html}
+    
 
     <div class="board">
         {cols_html}
