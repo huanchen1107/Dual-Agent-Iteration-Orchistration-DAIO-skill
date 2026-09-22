@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).parent))
 from daio_bridge import UniversalCDPClient, discover_tab_by_url
 from daio_taskboard import TaskboardManager
+from daio_recovery import diagnose, checkpoint, write_rehydration_packet
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,12 +70,19 @@ class UniversalDAIO:
         self.exec_cmd = exec_cmd
         self.test_cmd = test_cmd
         self.report_file = report_file
-        self.project_root = project_root or os.getcwd()
+        self.project_root = str(Path(project_root or os.getcwd()).resolve())
         self.max_iterations = max_iterations
         self.consecutive_errors_cap = consecutive_errors_cap
         self.auto_git = auto_git
         self.iteration_count = 0
         self.consecutive_errors = 0
+        self.recovery = diagnose(self.project_root)
+        self.rehydration_packet = write_rehydration_packet(self.project_root)
+        logger.info("DAIO recovery preflight: %s | HEAD=%s | cached=%s",
+                    self.recovery["health"], self.recovery["head"], self.recovery["checkpoint_head"])
+        if self.recovery["health"] in ("STALE", "CHECKPOINT_MISSING"):
+            logger.warning("Recoverable context state %s detected; generated %s and continuing.",
+                           self.recovery["health"], self.rehydration_packet)
         self.taskboard = TaskboardManager(self.project_root)
         self.taskboard.upsert_task(
             task_id=f"phase_{self.current_phase.lower()}",
@@ -160,7 +168,10 @@ class UniversalDAIO:
             content = Path(self.report_file).read_text(encoding="utf-8")
         else:
             content = f"### Phase {self.current_phase} Execution Completed\n\nAll tasks and automated test integrity gates passed. Please audit and provide next instructions."
-        return content + UNIVERSAL_PROMPT_APPENDIX.replace("CURRENT_PHASE", self.current_phase)
+        packet = ""
+        if self.rehydration_packet and Path(self.rehydration_packet).exists():
+            packet = "\n\n---\n" + Path(self.rehydration_packet).read_text(encoding="utf-8")
+        return content + packet + UNIVERSAL_PROMPT_APPENDIX.replace("CURRENT_PHASE", self.current_phase)
 
     async def run_loop(self):
         logger.info(f"Connecting to browser tab matching pattern: {self.url_pattern}")
@@ -331,6 +342,7 @@ class UniversalDAIO:
 
                 await asyncio.sleep(2.0)
         finally:
+            checkpoint(self.project_root, agent="DAIO-Orchestrator", current_phase=self.current_phase, iteration=self.iteration_count)
             await client.close()
 
 
@@ -364,6 +376,7 @@ def main():
         exec_cmd=exec_cmd,
         test_cmd=test_cmd,
         report_file=report_file,
+        project_root=cfg.get("project_root", "."),
         max_iterations=max_iters,
     )
     asyncio.run(daio.run_loop())
