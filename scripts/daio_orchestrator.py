@@ -127,11 +127,16 @@ class UniversalDAIO:
         if not self.auto_git:
             return True
         logger.info(f"Syncing Git deliverables for {phase_name}...")
-        self.run_command("git add .")
+        self.run_command("git add -A -- ':!.daio'")
         self.run_command(f'git commit -m "feat(daio): automated iteration deliverables for {phase_name}"')
-        code, out = self.run_command("git push origin main")
+        branch_code, branch = self.run_command("git branch --show-current")
+        if branch_code != 0 or not branch.strip():
+            logger.error("Cannot determine current Git branch; refusing automatic push.")
+            return False
+        code, out = self.run_command(f"git push origin {branch.strip()}")
         if code != 0:
             logger.warning(f"Git push warning: {out}")
+            return False
         return True
 
     def parse_architect_decision(self, response_text: str) -> Dict[str, Any]:
