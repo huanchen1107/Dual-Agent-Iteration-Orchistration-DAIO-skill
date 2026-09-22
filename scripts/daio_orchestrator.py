@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from daio_bridge import UniversalCDPClient, discover_tab_by_url
 from daio_taskboard import TaskboardManager
 from daio_recovery import diagnose, checkpoint, write_rehydration_packet
+from daio_sync import heartbeat, sync_status, mark_git
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,6 +84,10 @@ class UniversalDAIO:
         if self.recovery["health"] in ("STALE", "CHECKPOINT_MISSING"):
             logger.warning("Recoverable context state %s detected; generated %s and continuing.",
                            self.recovery["health"], self.rehydration_packet)
+        mark_git(self.project_root)
+        heartbeat(self.project_root, "engineer", current_phase=self.current_phase)
+        self.sync = sync_status(self.project_root)
+        logger.info("DAIO three-party sync preflight: %s", self.sync["overall"])
         self.taskboard = TaskboardManager(self.project_root)
         self.taskboard.upsert_task(
             task_id=f"phase_{self.current_phase.lower()}",
@@ -184,6 +189,8 @@ class UniversalDAIO:
         try:
             while self.iteration_count < self.max_iterations:
                 self.iteration_count += 1
+                mark_git(self.project_root)
+                heartbeat(self.project_root, "engineer", current_phase=self.current_phase, iteration=self.iteration_count)
                 logger.info(f"\n{'='*70}\n>>> DAIO ITERATION #{self.iteration_count} | CURRENT PHASE: {self.current_phase}\n{'='*70}")
 
                 # 1. Execute Work
@@ -263,6 +270,7 @@ class UniversalDAIO:
                 # 5. Parse Decision
                 logger.info("[Step 3/4] Parsing Architect's response...")
                 reply_text = send_res.get("reply", "")
+                heartbeat(self.project_root, "architect", current_phase=self.current_phase, iteration=self.iteration_count, session_ref=self.url_pattern)
                 decision = self.parse_architect_decision(reply_text)
                 logger.info(f"Parsed Decision:\n{json.dumps(decision, indent=2, ensure_ascii=False)}")
 
@@ -342,6 +350,8 @@ class UniversalDAIO:
 
                 await asyncio.sleep(2.0)
         finally:
+            mark_git(self.project_root)
+            heartbeat(self.project_root, "engineer", current_phase=self.current_phase, iteration=self.iteration_count)
             checkpoint(self.project_root, agent="DAIO-Orchestrator", current_phase=self.current_phase, iteration=self.iteration_count)
             await client.close()
 
