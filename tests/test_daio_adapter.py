@@ -20,7 +20,7 @@ def test_core_has_no_project_adapter_by_default(tmp_path):
 def test_project_adapter_is_explicit_opt_in(tmp_path):
     init_repo(tmp_path)
     (tmp_path/"custom_adapter.py").write_text(
-        "def collect_sections(project_root):\\n    return {'demo': {'title':'Demo','items':['ok']}}\\n"
+        "def collect_sections(project_root):\n    return {'demo': {'title':'Demo','items':['ok']}}\n"
     )
     d=tmp_path/".daio"; d.mkdir()
     (d/"project_adapter.json").write_text(json.dumps({"enabled":True,"path":"custom_adapter.py"}))
