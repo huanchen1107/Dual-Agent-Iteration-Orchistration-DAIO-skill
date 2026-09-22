@@ -68,102 +68,10 @@ class TaskboardManager:
         except Exception:
             self.sync_health = {}
 
-        # 1. Market Data Inventory
-        log_file = self.output_dir / "data" / "watchlist_data_fetch_log.json"
-        if log_file.exists():
-            try:
-                with open(log_file, "r", encoding="utf-8") as f:
-                    fetch_log = json.load(f)
-                
-                categories = {
-                    "🪙 核心指數與 ETF 權值": [
-                        "0050.TW", "006208.TW", "00692.TW", "00635U.TW", "00981A.TW", "00403A.TW",
-                        "2330.TW", "2308.TW", "2454.TW", "2317.TW", "2382.TW", "2376.TW", "2383.TW"
-                    ],
-                    "💎 高價與 IC 設計龍頭": [
-                        "3034.TW", "3443.TW", "3661.TW", "3008.TW", "2408.TW", "2337.TW", "2344.TW",
-                        "3231.TW", "3293.TWO", "3450.TW", "3529.TWO", "3533.TW", "3711.TW", "6488.TWO",
-                        "6531.TW", "6669.TW", "6789.TW", "8046.TW", "8069.TWO", "8299.TWO"
-                    ],
-                    "🚢 航運與原物料傳產": [
-                        "2603.TW", "2609.TW", "2615.TW", "1234.TW", "1432.TW", "1815.TWO"
-                    ],
-                    "🏦 金融與租賃控股": [
-                        "2881.TW", "2882.TW", "2884.TW", "2886.TW", "2891.TW", "5871.TW", "5876.TW"
-                    ],
-                    "🌐 美股 AI 科技巨頭": [
-                        "NVDA", "TSLA", "AAPL", "MSFT", "AMD"
-                    ]
-                }
-
-                results_map = {r["symbol"]: r.get("timeframes", {}) for r in fetch_log.get("results", [])}
-                
-                cat_summary = []
-                for cat_name, syms in categories.items():
-                    items = []
-                    for s in syms:
-                        tf = results_map.get(s, {"1d": 35, "1h": 175, "2h": 105, "4h": 35})
-                        items.append({
-                            "symbol": s,
-                            "timeframes": tf,
-                            "db": f"{s.lower().replace('.', '_')}.db",
-                            "status": "PERSISTED"
-                        })
-                    cat_summary.append({
-                        "category": cat_name,
-                        "count": len(items),
-                        "items": items
-                    })
-
-                self.market_data_inventory = {
-                    "fetched_at": fetch_log.get("fetched_at", datetime.now().isoformat()),
-                    "total_symbols": fetch_log.get("total", len(results_map)),
-                    "database_engine": "SQLite 3 (data/db/*.db)",
-                    "schema_version": "v2 (timestamp, open, high, low, close, volume, available_at)",
-                    "jitter_delay": "1.0s ~ 2.2s (Anti-Blocking)",
-                    "categories": cat_summary
-                }
-            except Exception as e:
-                print(f"Error loading fetch log: {e}")
-
-        # 2. Blind Replay Matrix
-        replay_file = self.output_dir / "data" / "change045_case001_rts_a_replay.json"
-        if replay_file.exists():
-            try:
-                with open(replay_file, "r", encoding="utf-8") as f:
-                    replay_data = json.load(f)
-                
-                self.blind_replay_matrix = {
-                    "case_id": "Case-001",
-                    "symbol": "2330.TW",
-                    "dataset_manifest": "data/change045_raw/manifest.json",
-                    "zero_lookahead": True,
-                    "rts_policy": {
-                        "name": "RTS-A (Extreme Break / 極值轉折突破)",
-                        "trigger_x": 960.0,
-                        "stop_y": 930.0,
-                        "risk_r": 30.0
-                    },
-                    "s5_guards": [
-                        {"id": "G1", "name": "母級結構有效性 (HTF Alignment)", "status": "PASS", "detail": "1D/4H 處於看多波段"},
-                        {"id": "G2", "name": "關鍵 POI 未被跌破 (Unmitigated Stop)", "status": "PASS", "detail": "低點 Y=930.0 未破"},
-                        {"id": "G3", "name": "實體收盤突破 (Close Breakout)", "status": "PASS", "detail": "2H 收盤 962.0 > X=960.0"},
-                        {"id": "G4", "name": "盈虧比門檻 (RR >= 1.5R)", "status": "PASS", "detail": "目標 1030.0, 預期 RR = 2.33"},
-                        {"id": "G5", "name": "宏觀事件防禦 (No Red News)", "status": "PASS", "detail": "無重大地緣/央行風暴"},
-                        {"id": "G6", "name": "滑價與流動性容差 (Slippage Gate)", "status": "PASS", "detail": "流動性充裕"}
-                    ],
-                    "execution_summary": {
-                        "entry_bar": "2026-08-15 11:30:00",
-                        "entry_price": 962.0,
-                        "initial_stop": 930.0,
-                        "exit_bar": "2026-08-20 13:30:00",
-                        "exit_price": 990.0,
-                        "result_r": "+0.93R (50% TP1 @ +1.0R + BE Stop)",
-                        "status": "COMPLETED_PROFIT"
-                    }
-                }
-            except Exception as e:
-                print(f"Error loading replay file: {e}")
+        # Compatibility aliases for legacy dashboard renderers.
+        # Data now comes only from an explicitly enabled project adapter.
+        self.market_data_inventory = self.project_sections.get("market_data_inventory", {})
+        self.blind_replay_matrix = self.project_sections.get("blind_replay_matrix", {})
 
     def save(self):
         self._ensure_dynamic_sections()
