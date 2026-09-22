@@ -27,3 +27,13 @@ def collect_sections(root="."):
     if not adapter: return {}
     fn=getattr(adapter,"collect_sections",None)
     return fn(Path(root)) if fn else {}
+
+
+def render_sections(root=".", sections=None):
+    """Return adapter-owned markdown/html fragments. Core treats them as opaque UI."""
+    adapter=load_adapter(root)
+    if not adapter: return {"markdown":"","html":""}
+    fn=getattr(adapter,"render_sections",None)
+    if not fn: return {"markdown":"","html":""}
+    rendered=fn(Path(root), sections if sections is not None else collect_sections(root))
+    return {"markdown":rendered.get("markdown",""),"html":rendered.get("html","")}
