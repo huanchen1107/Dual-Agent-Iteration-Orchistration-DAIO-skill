@@ -11,7 +11,7 @@ Executable behavior and CI evidence are authoritative over documentation claims.
 Validated repository HEAD before this audit update:
 
 - Commit: `38341eeadc1aefab28084138b5ec3ced81966f01`
-- GitHub Actions run: `35689115948`
+- Code/config verification run: `35689115948`
 - Python 3.9: **PASS**
 - Python 3.11: **PASS**
 - Compile gate: **PASS**
@@ -48,8 +48,8 @@ The audit-document commit itself must also pass the same CI workflow before a re
 5. Core domain-neutrality regression guard — **PASS**
 6. README/SKILL executable-claim audit — **PASS**
 7. Example config executable-claim audit — **PASS**
-8. Audit-document HEAD CI — **PENDING**
+8. Audit-document HEAD CI — **PASS** (`28aad4bc78aaef092f186f88c38cdf113f6030a7`, run `35689157957`)
 
 ## Governance
 
-Do not tag/release while gate 8 is pending. After this audit-only commit passes the unchanged CI workflow, vNext may be tagged without additional feature work. Any code/config change after that point requires a fresh CI run and updated evidence.
+All release-candidate gates are satisfied. The verified audit HEAD `28aad4bc78aaef092f186f88c38cdf113f6030a7` passed the unchanged CI workflow in run `35689157957` on Python 3.9 and 3.11, including compile, pytest, and CLI recovery/sync/status smoke. A release tag may now be cut from the verified lineage. Any subsequent executable code/config change requires a fresh CI run and updated evidence.
