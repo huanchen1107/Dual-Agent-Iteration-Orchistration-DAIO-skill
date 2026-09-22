@@ -693,7 +693,7 @@ class TaskboardManager:
         .sync-health-card{padding:12px;border-radius:10px;border:1px solid #334155;background:#111827}
         .sync-health-name{font-weight:700}.sync-health-state{font-size:12px;margin:6px 0}.sync-health-meta,.sync-health-action{font-size:11px;color:#94a3b8;overflow-wrap:anywhere}
         .sync-synced .sync-health-name{color:#34d399}.sync-lagging .sync-health-name{color:#fbbf24}.sync-missing .sync-health-name{color:#f87171}
-        @media(max-width:800px){.sync-health-grid{grid-template-columns:1fr}.sync-health-header{flex-direction:column}}
+        @media(max-width:800px){{.sync-health-grid{{grid-template-columns:1fr}}.sync-health-header{{flex-direction:column}}}}
 </style>
     <script>
         function showToast(msg, duration = 3500) {{
