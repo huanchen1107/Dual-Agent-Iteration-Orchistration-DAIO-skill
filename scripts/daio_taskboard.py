@@ -687,12 +687,12 @@ class TaskboardManager:
         .decision-badge.revise {{ background: #f59e0b22; color: #fbbf24; }}
         .decision-badge.review {{ background: #ef444422; color: #f87171; }}
     
-        .sync-health-panel{margin:0 0 18px;padding:16px;border:1px solid #334155;border-radius:14px;background:#0f172a}
-        .sync-health-header{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;color:#e2e8f0}
-        .sync-health-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-        .sync-health-card{padding:12px;border-radius:10px;border:1px solid #334155;background:#111827}
-        .sync-health-name{font-weight:700}.sync-health-state{font-size:12px;margin:6px 0}.sync-health-meta,.sync-health-action{font-size:11px;color:#94a3b8;overflow-wrap:anywhere}
-        .sync-synced .sync-health-name{color:#34d399}.sync-lagging .sync-health-name{color:#fbbf24}.sync-missing .sync-health-name{color:#f87171}
+        .sync-health-panel{{margin:0 0 18px;padding:16px;border:1px solid #334155;border-radius:14px;background:#0f172a}}
+        .sync-health-header{{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;color:#e2e8f0}}
+        .sync-health-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}
+        .sync-health-card{{padding:12px;border-radius:10px;border:1px solid #334155;background:#111827}}
+        .sync-health-name{{font-weight:700}}.sync-health-state{{font-size:12px;margin:6px 0}}.sync-health-meta,.sync-health-action{{font-size:11px;color:#94a3b8;overflow-wrap:anywhere}}
+        .sync-synced .sync-health-name{{color:#34d399}}.sync-lagging .sync-health-name{{color:#fbbf24}}.sync-missing .sync-health-name{{color:#f87171}}
         @media(max-width:800px){{.sync-health-grid{{grid-template-columns:1fr}}.sync-health-header{{flex-direction:column}}}}
 </style>
     <script>
@@ -716,7 +716,7 @@ class TaskboardManager:
             if (panel) panel.classList.add('active');
         }}
 
-        let currentUpdatedAt = "{self.updated_at}";
+        let currentUpdatedAt = "{{self.updated_at}}";
         let timerSeconds = 3;
 
         async function handleHumanDecision(action) {{
@@ -802,18 +802,18 @@ class TaskboardManager:
         </div>
     </header>
 
-    {sync_health_html}\n        {progress_html}
+    {{sync_health_html}}\n        {{progress_html}}
 
-    {inspector_html}
+    {{inspector_html}}
 
-    {dialogue_html}
+    {{dialogue_html}}
 
-    {adapter_html}
+    {{adapter_html}}
 
     
 
     <div class="board">
-        {cols_html}
+        {{cols_html}}
     </div>
 
     <div class="history-section">
@@ -830,7 +830,7 @@ class TaskboardManager:
                 </tr>
             </thead>
             <tbody>
-                {history_rows}
+                {{history_rows}}
             </tbody>
         </table>
     </div>
