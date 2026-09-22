@@ -2,7 +2,6 @@
 
 Generates:
 1. taskboard.json (Machine-readable state)
-2. TASKBOARD.md (Markdown Kanban table + Market Data Hub + Blind Replay Matrix)
 3. taskboard.html (Rich interactive Dark-Mode Kanban Dashboard + Live Inspector)
 """
 from __future__ import annotations
@@ -26,8 +25,6 @@ class TaskboardManager:
         self.active_turn: str = "Antigravity"
         self.active_turn_description: str = ""
         self.active_work_detail: Dict[str, Any] = {}
-        self.market_data_inventory: Dict[str, Any] = {}
-        self.blind_replay_matrix: Dict[str, Any] = {}
         self.sync_health: Dict[str, Any] = {}
         self.project_sections: Dict[str, Any] = {}
         self.updated_at: str = datetime.now().isoformat()
@@ -45,8 +42,6 @@ class TaskboardManager:
                     self.active_turn = data.get("active_turn", "Antigravity")
                     self.active_turn_description = data.get("active_turn_description", "")
                     self.active_work_detail = data.get("active_work_detail", {})
-                    self.market_data_inventory = data.get("market_data_inventory", {})
-                    self.blind_replay_matrix = data.get("blind_replay_matrix", {})
             except Exception:
                 pass
         self._ensure_dynamic_sections()
@@ -78,8 +73,6 @@ class TaskboardManager:
             "tasks": self.tasks,
             "history": self.history,
             "active_work_detail": self.active_work_detail,
-            "market_data_inventory": self.market_data_inventory,
-            "blind_replay_matrix": self.blind_replay_matrix,
             "sync_health": self.sync_health,
             "project_sections": self.project_sections,
         }
