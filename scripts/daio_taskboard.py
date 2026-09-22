@@ -790,18 +790,18 @@ class TaskboardManager:
         </div>
     </header>
 
-    {{sync_health_html}}\n        {{progress_html}}
+    {sync_health_html}\n        {progress_html}
 
-    {{inspector_html}}
+    {inspector_html}
 
-    {{dialogue_html}}
+    {dialogue_html}
 
-    {{adapter_html}}
+    {adapter_html}
 
     
 
     <div class="board">
-        {{cols_html}}
+        {cols_html}
     </div>
 
     <div class="history-section">
@@ -818,7 +818,7 @@ class TaskboardManager:
                 </tr>
             </thead>
             <tbody>
-                {{history_rows}}
+                {history_rows}
             </tbody>
         </table>
     </div>
