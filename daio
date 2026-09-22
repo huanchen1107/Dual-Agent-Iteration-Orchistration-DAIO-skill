@@ -4,7 +4,7 @@
 Usage:
     ./daio          # Start autonomous dual-agent iteration loop
     ./daio board    # Open visual live taskboard in browser
-    ./daio status   # Print current phase, taskboard state & safety breaker metrics\n    ./daio recover  # Diagnose/recover stale or missing cross-session context\n    ./daio checkpoint # Refresh durable recovery checkpoint
+    ./daio status   # Print current phase, taskboard state & safety breaker metrics\n    ./daio recover  # Diagnose/recover stale or missing cross-session context\n    ./daio checkpoint # Refresh durable recovery checkpoint\n    ./daio sync       # Show Git/Engineer/Architect synchronization health
 """
 import argparse
 import asyncio
@@ -88,9 +88,19 @@ def recover_context(write_checkpoint=False):
         print("\nRecovery required: reconcile repository evidence before execution.")
     return d
 
+def show_sync():
+    from scripts.daio_sync import sync_status
+    s=sync_status(os.getcwd())
+    print("=" * 70)
+    print(f"🔄 DAIO Three-Party Sync: {s['overall']} | HEAD {s['head']}")
+    print("=" * 70)
+    for name,item in s["participants"].items():
+        print(f"{name:<10} {item['state']:<8} checkpoint={item.get('checkpoint_head','NONE')}")
+    return s
+
 def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI")
-    parser.add_argument("action", nargs="?", default="run", choices=["run", "board", "status", "recover", "checkpoint"],
+    parser.add_argument("action", nargs="?", default="run", choices=["run", "board", "status", "recover", "checkpoint", "sync"],
                         help="Action to perform: run (default), board (open browser), status (print state)")
     parser.add_argument("--open-board", "-b", action="store_true", help="Automatically open live taskboard in browser when running loop")
     args = parser.parse_args()
@@ -103,6 +113,8 @@ def main():
         recover_context(False)
     elif args.action == "checkpoint":
         recover_context(True)
+    elif args.action == "sync":
+        show_sync()
     else:
         # Check if running interactively in terminal
         should_open = args.open_board
