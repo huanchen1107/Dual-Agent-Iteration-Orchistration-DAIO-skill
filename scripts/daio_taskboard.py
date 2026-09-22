@@ -28,6 +28,7 @@ class TaskboardManager:
         self.active_work_detail: Dict[str, Any] = {}
         self.market_data_inventory: Dict[str, Any] = {}
         self.blind_replay_matrix: Dict[str, Any] = {}
+        self.sync_health: Dict[str, Any] = {}
         self.updated_at: str = datetime.now().isoformat()
         self.load()
 
@@ -51,6 +52,14 @@ class TaskboardManager:
 
     def _ensure_dynamic_sections(self):
         """Populate or update market data inventory and blind replay matrix if available."""
+        # 0. DAIO three-party sync health
+        try:
+            from daio_sync import sync_status, healing_plan
+            self.sync_health = sync_status(self.output_dir)
+            self.sync_health["healing_plan"] = healing_plan(self.output_dir)
+        except Exception:
+            self.sync_health = {}
+
         # 1. Market Data Inventory
         log_file = self.output_dir / "data" / "watchlist_data_fetch_log.json"
         if log_file.exists():
@@ -160,6 +169,7 @@ class TaskboardManager:
             "active_work_detail": self.active_work_detail,
             "market_data_inventory": self.market_data_inventory,
             "blind_replay_matrix": self.blind_replay_matrix,
+            "sync_health": self.sync_health,
         }
         with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -238,6 +248,12 @@ class TaskboardManager:
         lines = [
             "# 📋 DAIO Dual-Agent Interactive Taskboard & System Status",
             f"*Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n",
+            "## 🔄 DAIO Sync Health\n",
+            f"- Overall: `{self.sync_health.get('overall', 'UNKNOWN')}` | Canonical HEAD: `{self.sync_health.get('head', 'UNKNOWN')}`\n",
+            "| Participant | State | Checkpoint HEAD | Last Heartbeat |",
+            "| :--- | :---: | :--- | :--- |",
+            *[f"| {name} | `{item.get('state','UNKNOWN')}` | `{item.get('checkpoint_head','NONE')}` | {item.get('heartbeat_at','-')} |" for name,item in self.sync_health.get("participants",{}).items()],
+            "",
             "## 🎯 專案里程碑與看板狀態 (Kanban Status)\n",
             "| ID | Phase | Task Title | Status | Agent | Last Update |",
             "| :--- | :--- | :--- | :---: | :---: | :--- |",
@@ -340,6 +356,31 @@ class TaskboardManager:
                 </div>
             </div>
             """
+
+
+        # DAIO three-party synchronization health panel
+        sync_cards = ""
+        state_symbol = {"SYNCED":"●","LAGGING":"●","MISSING":"●"}
+        for name,item in self.sync_health.get("participants",{}).items():
+            state=item.get("state","UNKNOWN")
+            action=next((a.get("action") for a in self.sync_health.get("healing_plan",{}).get("actions",[]) if a.get("participant")==name),"NONE")
+            sync_cards += f"""
+            <div class="sync-health-card sync-{state.lower()}">
+                <div class="sync-health-name">{state_symbol.get(state,"●")} {name.upper()}</div>
+                <div class="sync-health-state">{state}</div>
+                <div class="sync-health-meta">HEAD: {str(item.get('checkpoint_head','NONE'))[:12]}</div>
+                <div class="sync-health-meta">Heartbeat: {item.get('heartbeat_at','-')}</div>
+                <div class="sync-health-action">Healing: {action}</div>
+            </div>"""
+        sync_health_html = f"""
+        <div class="sync-health-panel">
+            <div class="sync-health-header">
+                <strong>🔄 DAIO Three-Party Sync Health</strong>
+                <span>Overall: {self.sync_health.get('overall','UNKNOWN')} · Canonical HEAD: {str(self.sync_health.get('head','UNKNOWN'))[:12]}</span>
+            </div>
+            <div class="sync-health-grid">{sync_cards}</div>
+        </div>
+        """
 
         # Compute progress metrics dynamically
         review_task = next((t for t in self.tasks if t.get("status") in ["REVIEW", "BLOCKED"]), None)
@@ -877,7 +918,15 @@ class TaskboardManager:
         .decision-badge.approved {{ background: #10b98122; color: #34d399; }}
         .decision-badge.revise {{ background: #f59e0b22; color: #fbbf24; }}
         .decision-badge.review {{ background: #ef444422; color: #f87171; }}
-    </style>
+    
+        .sync-health-panel{margin:0 0 18px;padding:16px;border:1px solid #334155;border-radius:14px;background:#0f172a}
+        .sync-health-header{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;color:#e2e8f0}
+        .sync-health-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+        .sync-health-card{padding:12px;border-radius:10px;border:1px solid #334155;background:#111827}
+        .sync-health-name{font-weight:700}.sync-health-state{font-size:12px;margin:6px 0}.sync-health-meta,.sync-health-action{font-size:11px;color:#94a3b8;overflow-wrap:anywhere}
+        .sync-synced .sync-health-name{color:#34d399}.sync-lagging .sync-health-name{color:#fbbf24}.sync-missing .sync-health-name{color:#f87171}
+        @media(max-width:800px){.sync-health-grid{grid-template-columns:1fr}.sync-health-header{flex-direction:column}}
+</style>
     <script>
         function showToast(msg, duration = 3500) {{
             let toast = document.getElementById('daio-toast');
@@ -985,7 +1034,7 @@ class TaskboardManager:
         </div>
     </header>
 
-    {progress_html}
+    {sync_health_html}\n        {progress_html}
 
     {inspector_html}
 
