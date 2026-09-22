@@ -6,3 +6,6 @@ __pycache__/
 env/
 venv/
 .pytest_cache/
+
+# DAIO runtime recovery/sync cache (non-authoritative)
+.daio/
