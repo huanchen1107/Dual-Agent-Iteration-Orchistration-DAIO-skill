@@ -8,5 +8,9 @@
   "auto_git_sync": true,
   "max_iterations": 20,
   "consecutive_errors_cap": 3,
-  "custom_prompt_instructions": "You are the Lead Architect and Auditor. Review the execution outputs and test results against specification. Respond with your structured assessment and final decision JSON block."
+  "custom_prompt_instructions": "You are the Lead Architect and Auditor. Review the execution outputs and test results against specification. Respond with your structured assessment and final decision JSON block.",
+  "robust_recovery": true,
+  "auto_rehydration_packet": true,
+  "recovery_state_path": ".daio/recovery_state.json",
+  "rehydration_packet_path": ".daio/rehydration_packet.md"
 }
