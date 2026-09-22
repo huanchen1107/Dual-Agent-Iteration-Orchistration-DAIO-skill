@@ -41,3 +41,25 @@ def _replay(root):
 def collect_sections(project_root):
     return {"market_data_inventory":_market(project_root),
             "blind_replay_matrix":_replay(project_root)}
+
+
+def render_sections(project_root, sections):
+    market=sections.get("market_data_inventory",{})
+    replay=sections.get("blind_replay_matrix",{})
+    md=[]; html=[]
+    if market:
+        md += ["## Project Adapter - Market Data","",
+               "- Total symbols: "+str(market.get("total_symbols",0)),
+               "- Engine: "+str(market.get("database_engine","")),""]
+        rows=[]
+        for cat in market.get("categories",[]):
+            rows.append("<div><strong>"+cat["category"]+"</strong> - "+str(cat["count"])+" symbols</div>")
+        html.append('<section class="project-adapter-section"><h2>Market Data</h2>'+"".join(rows)+"</section>")
+    if replay:
+        data=replay.get("data",{})
+        md += ["## Project Adapter - Blind Replay","",
+               "- Source: "+replay.get("source",""),
+               "- Evidence keys: "+", ".join(sorted(data.keys())),""]
+        html.append('<section class="project-adapter-section"><h2>Blind Replay Evidence</h2><code>'+
+                    replay.get("source","")+'</code></section>')
+    return {"markdown":"\n".join(md)+"\n" if md else "","html":"\n".join(html)}
