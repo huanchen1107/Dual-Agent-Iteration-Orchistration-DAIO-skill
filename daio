@@ -33,7 +33,7 @@ def open_board():
 
 def show_status():
     """Show current taskboard status."""
-    from skills.daio.scripts.daio_taskboard import TaskboardManager
+    from scripts.daio_taskboard import TaskboardManager
     tb = TaskboardManager(str(PROJECT_ROOT))
     print("=" * 70)
     print("🤖 DAIO Dual-Agent System Status")
@@ -51,7 +51,7 @@ def show_status():
 
 def run_loop(auto_open_board: bool = False):
     """Run DAIO Autonomous Loop."""
-    from skills.daio.scripts.daio_orchestrator import UniversalDAIO
+    from scripts.daio_orchestrator import UniversalDAIO
     from skills.daio.scripts.daio_taskboard import TaskboardManager
     
     # Refresh board state first
@@ -62,10 +62,21 @@ def run_loop(auto_open_board: bool = False):
         open_board()
     
     print("🚀 Starting DAIO Autonomous Orchestration Loop...")
+    import json
+    cfg_path = PROJECT_ROOT / "daio_config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
     orchestrator = UniversalDAIO(
-        config_path=str(PROJECT_ROOT / "daio_config.json") if (PROJECT_ROOT / "daio_config.json").exists() else None
+        url_pattern=cfg.get("target_browser_url", "chatgpt.com"),
+        initial_phase=cfg.get("current_phase", "PHASE_1"),
+        exec_cmd=cfg.get("execution_command"),
+        test_cmd=cfg.get("test_gate_command", "pytest tests/"),
+        report_file=cfg.get("report_file_path"),
+        project_root=cfg.get("project_root", str(PROJECT_ROOT)),
+        max_iterations=cfg.get("max_iterations", 15),
+        consecutive_errors_cap=cfg.get("consecutive_errors_cap", 3),
+        auto_git=cfg.get("auto_git_sync", True),
     )
-    asyncio.run(orchestrator.run_autonomous_loop())
+    asyncio.run(orchestrator.run_loop())
 
 def recover_context(write_checkpoint=False):
     """Diagnose cross-session state; optionally refresh checkpoint."""
