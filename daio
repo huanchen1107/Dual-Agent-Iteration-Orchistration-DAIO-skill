@@ -4,7 +4,7 @@
 Usage:
     ./daio          # Start autonomous dual-agent iteration loop
     ./daio board    # Open visual live taskboard in browser
-    ./daio status   # Print current phase, taskboard state & safety breaker metrics
+    ./daio status   # Print current phase, taskboard state & safety breaker metrics\n    ./daio recover  # Diagnose/recover stale or missing cross-session context\n    ./daio checkpoint # Refresh durable recovery checkpoint
 """
 import argparse
 import asyncio
@@ -67,9 +67,30 @@ def run_loop(auto_open_board: bool = False):
     )
     asyncio.run(orchestrator.run_autonomous_loop())
 
+def recover_context(write_checkpoint=False):
+    """Diagnose cross-session state; optionally refresh checkpoint."""
+    from scripts.daio_recovery import diagnose, checkpoint
+    d = diagnose(os.getcwd())
+    print("=" * 70)
+    print("♻️ DAIO Robust Recovery")
+    print("=" * 70)
+    print(f"Project : {d['project_root']}")
+    print(f"Health  : {d['health']}")
+    print(f"HEAD    : {d['head']}")
+    print(f"Cached  : {d['checkpoint_head'] or 'NONE'}")
+    if d["recent_commits"]:
+        print("\nCommits since cached checkpoint:")
+        for line in d["recent_commits"]: print(f"  {line}")
+    if write_checkpoint:
+        s=checkpoint(d["project_root"], agent="DAIO-CLI")
+        print(f"\n✓ Checkpoint refreshed at {s['checkpoint_head']}")
+    elif d["health"] != "SYNCED":
+        print("\nRecovery required: reconcile repository evidence before execution.")
+    return d
+
 def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI")
-    parser.add_argument("action", nargs="?", default="run", choices=["run", "board", "status"],
+    parser.add_argument("action", nargs="?", default="run", choices=["run", "board", "status", "recover", "checkpoint"],
                         help="Action to perform: run (default), board (open browser), status (print state)")
     parser.add_argument("--open-board", "-b", action="store_true", help="Automatically open live taskboard in browser when running loop")
     args = parser.parse_args()
@@ -78,6 +99,10 @@ def main():
         open_board()
     elif args.action == "status":
         show_status()
+    elif args.action == "recover":
+        recover_context(False)
+    elif args.action == "checkpoint":
+        recover_context(True)
     else:
         # Check if running interactively in terminal
         should_open = args.open_board
