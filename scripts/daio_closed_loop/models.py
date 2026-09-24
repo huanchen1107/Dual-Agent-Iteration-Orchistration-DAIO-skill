@@ -1,0 +1,71 @@
+"""
+Domain Models for DAIO Autonomous Closed Loop (Generic Core).
+"""
+
+from __future__ import annotations
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+import datetime
+import uuid
+
+
+class DAIOGate(str, Enum):
+    CONTRACT_GATE = "CONTRACT_GATE"
+    IMPLEMENTATION_GATE = "IMPLEMENTATION_GATE"
+    ENGINEERING_TASK = "ENGINEERING_TASK"
+    FREEZE_GATE = "FREEZE_GATE"
+    HUMAN_GATE = "HUMAN_GATE"
+
+
+class DAIORole(str, Enum):
+    LEAD_ARCHITECT_REVIEW = "LEAD_ARCHITECT_REVIEW"
+    ENGINEERING_EXECUTION = "ENGINEERING_EXECUTION"
+    EVIDENCE_AUDIT = "EVIDENCE_AUDIT"
+    HUMAN_PROJECT_OWNER = "HUMAN_PROJECT_OWNER"
+
+
+class DAIOStatus(str, Enum):
+    QUEUED = "QUEUED"
+    IN_PROGRESS = "IN_PROGRESS"
+    AWAITING_REVIEW = "AWAITING_REVIEW"
+    BLOCKED = "BLOCKED"
+    COMPLETED = "COMPLETED"
+    HUMAN_GATE_REQUIRED = "HUMAN_GATE_REQUIRED"
+
+
+@dataclass
+class ArchitectDecision:
+    decision: str  # APPROVE, REVISE, REJECT, HUMAN_REVIEW, STOP
+    current_phase: str
+    next_phase: Optional[str] = None
+    action: str = "RUN"
+    human_approval_required: bool = False
+    instruction: str = ""
+    raw_text: str = ""
+
+
+@dataclass
+class DAIOWorkItem:
+    work_id: str
+    project_root: str
+    change_id: str
+    current_stage: str = "S3"
+    current_gate: DAIOGate = DAIOGate.CONTRACT_GATE
+    assigned_role: DAIORole = DAIORole.LEAD_ARCHITECT_REVIEW
+    requested_action: str = ""
+    allowed_scope: List[str] = field(default_factory=list)
+    base_sha: str = ""
+    head_sha: str = ""
+    status: DAIOStatus = DAIOStatus.QUEUED
+    attempt_count: int = 0
+    max_attempts: int = 3
+    lease_id: Optional[str] = None
+    lease_expires_at: Optional[str] = None
+    next_role: Optional[DAIORole] = None
+    human_gate_reason: Optional[str] = None
+    human_relay_count: int = 0
+    architect_endpoint: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)

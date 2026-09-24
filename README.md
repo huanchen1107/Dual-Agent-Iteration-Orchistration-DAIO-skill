@@ -61,7 +61,7 @@ DAIO features a **rich visual Kanban Taskboard & Live Conversation Hub** (`daio_
 
 1. **🚀 Animated Progress Bar & 10-Step Milestone Stepper**:
    - Dynamic glow progress fill showing real-time pipeline completion percentage (e.g. `100% Complete`).
-   - Interactive milestone stepper driven by the active project's phases and milestones.
+   - Interactive milestone stepper tracking `P4 Freeze` $\rightarrow$ `P5 Canonical` $\rightarrow$ `P6 Runtime` $\rightarrow$ `OOS-1/2/3A/3B` $\rightarrow$ `CE-1/2` $\rightarrow$ `P7 Release`.
 2. **⚖️ Interactive Human Governance Action Bar (Dual-Button Sync)**:
    - **One-Click Quick Approve (Top Bar) & Full Governance Gate (Inspector Card)**.
    - **Full Synchronized Lifecycle**:
@@ -80,13 +80,16 @@ DAIO features a **rich visual Kanban Taskboard & Live Conversation Hub** (`daio_
 DAIO comes with an all-in-one executable root CLI:
 
 ```bash
-# 1. Start autonomous dual-agent iteration loop (with interactive browser prompt)
+# 1. Start autonomous closed loop (reads _daio/daio_config.json)
+./daio loop
+
+# 2. Start autonomous dual-agent iteration loop (with interactive browser prompt)
 ./daio
 
-# 2. Open live visual taskboard & dialogue stage in your browser
+# 3. Open live visual taskboard & dialogue stage in your browser
 ./daio board
 
-# 3. View terminal status, active turn, and safety metrics
+# 4. View terminal status, active turn, and safety metrics
 ./daio status
 ```
 
@@ -98,13 +101,13 @@ DAIO comes with an all-in-one executable root CLI:
 Launch Google Chrome with remote debugging port `9222` enabled:
 ```bash
 # macOS
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="$HOME/Library/Application Support/Google/Chrome-CDP"
 
 # Linux
-google-chrome --remote-debugging-port=9222
+google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.config/google-chrome-cdp"
 
 # Windows
-chrome.exe --remote-debugging-port=9222
+chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome-CDP"
 ```
 Navigate to your desired **ChatGPT Project**, **Claude Artifact**, or custom **Web LLM** tab in that Chrome browser.
 
@@ -113,21 +116,10 @@ Navigate to your desired **ChatGPT Project**, **Claude Artifact**, or custom **W
 pip install -r requirements.txt
 ```
 
-### Step 3: Launch DAIO
+### Step 3: Configure `_daio/daio_config.json` & Launch
+Copy `daio_config.example.json` to `_daio/daio_config.json` in your repository root, configure the `architect_endpoint`, and run:
 ```bash
-# Option A: One-click CLI launch
-./daio
-
-# Option B: Run with custom CLI arguments
-python3 scripts/daio_orchestrator.py \
-  --url "https://chatgpt.com/g/g-p-your-project-id" \
-  --phase "PHASE_1_SCAFFOLDING" \
-  --cmd "python3 src/main.py" \
-  --test "pytest tests/" \
-  --max-iterations 20
-
-# Option C: Run with declarative configuration file
-python3 scripts/daio_orchestrator.py --config daio_config.example.json
+./daio loop
 ```
 
 Open `taskboard.html` in your browser (or run `./daio board`) to monitor the live dual-agent loop in real-time!
@@ -136,17 +128,17 @@ Open `taskboard.html` in your browser (or run `./daio board`) to monitor the liv
 
 ## 🛡️ 4 Enterprise Safety Breakers
 
-1. **`TEST_INTEGRITY_GATE`**:
-   - Before any report is submitted to the Architect, all unit tests must pass (`pytest` exit code = 0).
+1. **`DAIO-001 (Test Integrity Gate)`**:
+   - Before any report or deliverable is transmitted to the Architect, all unit tests must pass (`pytest` exit code = 0).
    - If tests fail, report transmission is immediately blocked to maintain strict codebase integrity.
-2. **Project parameter-freeze policy (project-owned, not enforced by DAIO Core)**:
+2. **`DAIO-002 (Scope & Safety Guardrail)`**:
    - Canonical parameters and frozen specifications cannot be modified automatically.
-   - If an Architect instruction suggests modifying frozen parameters, DAIO immediately halts and triggers `HUMAN_REVIEW`.
-3. **`CONSECUTIVE_ERRORS_CAP`**:
-   - Maximum 3 consecutive errors (execution errors, communication timeouts, unparseable decisions).
-   - Exceeding the threshold safely halts the loop and alerts the human operator.
-4. **`MAX_ITERATIONS`**:
-   - Default safety limit (e.g., 20 rounds) to prevent runaway infinite loops.
+   - If an Architect instruction suggests modifying frozen parameters or out-of-scope files, DAIO immediately halts and triggers `HUMAN_GATE_REQUIRED`.
+3. **`DAIO-003 (Autonomous Recovery Cap & Safety Breaker)`**:
+   - Maximum 3 consecutive errors or 10 iteration rounds before safely transitioning to `HUMAN_GATE_REQUIRED`.
+4. **`DAIO-004 (Conversation Routing Contract & Tab Isolation)`**:
+   - Enforces strict exact-conversation routing via `architect_endpoint`.
+   - Never falls back to arbitrary ChatGPT tabs or login/redirect pages (Fail-closed).
 
 ---
 
@@ -169,9 +161,9 @@ The external Architect Agent is prompted to provide a machine-readable JSON cont
 | Decision | Meaning | Orchestrator Action |
 | :--- | :--- | :--- |
 | **`APPROVE`** | Milestone accepted & verified | Advances to `next_phase` and triggers execution engine |
-| **`REVISE`** | Modifications / corrections requested | Re-executes current phase with new adjustments |
+| **`REVISE`** | Modifications / corrections requested | Re-executes current phase with bounded adjustments |
 | **`REJECT`** | Critical failure identified | Halts loop for complete re-implementation |
-| **`HUMAN_REVIEW`** | Ambiguity, parameter freeze, or high-risk decision | Halts and yields control to the human user |
+| **`HUMAN_GATE_REQUIRED`** | Ambiguity, parameter freeze, or error budget exhausted | Halts and yields control to the human user |
 | **`STOP`** | Research/engineering cycle complete | Loop terminates cleanly |
 
 ---
@@ -184,11 +176,21 @@ The external Architect Agent is prompted to provide a machine-readable JSON cont
 ├── SKILL.md                       # Antigravity / AI Agent Universal Skill Specification
 ├── requirements.txt               # Dependencies (websockets, pytest)
 ├── LICENSE                        # MIT Open Source License
+├── daio                           # All-in-one executable CLI wrapper
 ├── daio_config.example.json       # Declarative configuration template
 └── scripts/
-    ├── daio_bridge.py             # Universal Chrome CDP Bridge (URL discovery, stream detection)
+    ├── daio_bridge.py             # Universal Chrome CDP Bridge
     ├── daio_taskboard.py          # Visual Taskboard State & HTML/Markdown Generator
-    └── daio_orchestrator.py       # Persistent Iterative Loop CLI Engine
+    ├── daio_orchestrator.py       # Classic Persistent Iterative Loop Engine
+    └── daio_closed_loop/          # DAIO v2.1 Modular Closed-Loop Architecture
+        ├── models.py              # DAIOWorkItem & Domain Enums
+        ├── store.py               # SqliteDAIOWorkStore (Durable persistence & leases)
+        ├── router.py              # DAIORoleRouter (Gate authority transitions)
+        ├── orchestrator.py        # DAIOClosedLoopOrchestrator (Safety breakers DAIO-001..004)
+        ├── runner.py              # Standalone CLI entrypoint
+        └── adapters/
+            ├── executor.py        # SubprocessWorkspaceExecutor
+            └── bridge.py          # ChromeCDPBridgeAdapter (Exact routing & stream detection)
 ```
 
 ---

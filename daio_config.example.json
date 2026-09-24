@@ -1,12 +1,17 @@
 {
-  "target_browser_url": "https://chatgpt.com/g/g-p-your-project-id",
+  "architect_endpoint": {
+    "provider": "CHATGPT_WEB",
+    "project_id": "g-p-your-project-id",
+    "conversation_id": "your-conversation-uuid-optional",
+    "canonical_url": "https://chatgpt.com/g/g-p-your-project-id/c/your-conversation-uuid",
+    "routing_policy": "EXACT_CONVERSATION"
+  },
   "project_root": ".",
-  "current_phase": "PHASE_1_INITIAL_IMPLEMENTATION",
+  "current_phase": "M1_IMPLEMENTATION",
   "execution_command": "python3 src/main.py",
-  "test_gate_command": "pytest tests/ --maxfail=1",
+  "test_gate_command": "pytest tests/",
   "report_file_path": "reports/latest_phase_summary.md",
-  "auto_git_sync": true,
-  "max_iterations": 20,
-  "consecutive_errors_cap": 3,
-  "custom_prompt_instructions": "You are the Lead Architect and Auditor. Review the execution outputs and test results against specification. Respond with your structured assessment and final decision JSON block."
+  "cdp_port": 9222,
+  "max_rounds": 15,
+  "consecutive_errors_cap": 3
 }

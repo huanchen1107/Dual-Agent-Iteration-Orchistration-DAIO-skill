@@ -1,0 +1,105 @@
+"""
+Role Router & Gate Authority Engine for Generic DAIO Closed Loop.
+"""
+
+from __future__ import annotations
+import datetime
+from typing import Optional
+
+from .models import (
+    ArchitectDecision,
+    DAIOGate,
+    DAIORole,
+    DAIOStatus,
+    DAIOWorkItem,
+)
+
+
+class DAIORoleRouter:
+    """
+    Enforces Gate Authority Matrix and routes work to authorized roles.
+    Prevents unauthorized self-promotion across architecture gates.
+    """
+
+    @staticmethod
+    def process_architect_review(work: DAIOWorkItem, decision: ArchitectDecision, acting_role: DAIORole) -> DAIOWorkItem:
+        """Route work item following Architect review decision."""
+        if acting_role not in {DAIORole.LEAD_ARCHITECT_REVIEW, DAIORole.HUMAN_PROJECT_OWNER}:
+            raise PermissionError(f"Role '{acting_role.value}' is not authorized to perform Architect Gate review.")
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        work.updated_at = now
+
+        if decision.human_approval_required or decision.decision == "HUMAN_REVIEW":
+            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
+            work.current_gate = DAIOGate.HUMAN_GATE
+            work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
+            work.human_gate_reason = decision.instruction or "Architect requested Human Project Owner review."
+            return work
+
+        if decision.decision == "APPROVE":
+            if work.current_gate == DAIOGate.CONTRACT_GATE:
+                # Contract Gate passed -> advance to Engineering Task
+                work.current_gate = DAIOGate.ENGINEERING_TASK
+                work.assigned_role = DAIORole.ENGINEERING_EXECUTION
+                work.status = DAIOStatus.IN_PROGRESS
+                work.requested_action = decision.instruction or "Execute approved engineering milestones."
+                work.attempt_count = 0
+            elif work.current_gate == DAIOGate.IMPLEMENTATION_GATE:
+                # Implementation Gate passed -> Complete or advance phase
+                work.status = DAIOStatus.COMPLETED
+                work.requested_action = decision.instruction or "Implementation verified and approved."
+            return work
+
+        if decision.decision == "REVISE":
+            # Revision requested -> loop back to engineering
+            work.current_gate = DAIOGate.ENGINEERING_TASK
+            work.assigned_role = DAIORole.ENGINEERING_EXECUTION
+            work.status = DAIOStatus.IN_PROGRESS
+            work.requested_action = decision.instruction or "Implement requested revisions."
+            work.attempt_count += 1
+            return work
+
+        if decision.decision == "REJECT" or decision.decision == "STOP":
+            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
+            work.current_gate = DAIOGate.HUMAN_GATE
+            work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
+            work.human_gate_reason = f"Architect issued {decision.decision}: {decision.instruction}"
+            return work
+
+        raise ValueError(f"Unknown architect decision value: '{decision.decision}'")
+
+    @staticmethod
+    def process_engineering_completion(
+        work: DAIOWorkItem,
+        acting_role: DAIORole,
+        test_passed: bool,
+        commit_sha: str,
+        execution_error: Optional[str] = None,
+    ) -> DAIOWorkItem:
+        """Route work item following engineering task execution."""
+        if acting_role != DAIORole.ENGINEERING_EXECUTION:
+            raise PermissionError(f"Role '{acting_role.value}' is not authorized to execute engineering tasks.")
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        work.updated_at = now
+        work.head_sha = commit_sha
+
+        if not test_passed:
+            work.attempt_count += 1
+            if work.attempt_count >= work.max_attempts:
+                # Exhausted recovery budget -> escalate to human
+                work.status = DAIOStatus.HUMAN_GATE_REQUIRED
+                work.current_gate = DAIOGate.HUMAN_GATE
+                work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
+                work.human_gate_reason = f"Test integrity gate failed max attempts ({work.max_attempts}). Detail: {execution_error or 'Tests failed'}"
+            else:
+                work.status = DAIOStatus.BLOCKED
+            return work
+
+        # Engineering success -> advance to Lead Architect review
+        work.current_gate = DAIOGate.IMPLEMENTATION_GATE
+        work.assigned_role = DAIORole.LEAD_ARCHITECT_REVIEW
+        work.status = DAIOStatus.AWAITING_REVIEW
+        work.requested_action = "Review engineering deliverables and test evidence."
+        return work

@@ -9,51 +9,54 @@ description: >-
   Use when the user asks for dual agent orchestration, DAIO, ChatGPT iteration, iterative browser sync, or /daio.
 ---
 
-# Dual-Agent Iteration Orchestrator (DAIO)
+# Dual-Agent Iteration Orchestrator (DAIO) v2.1
 
-## 🎯 Overview: The Persistent Engineer-Architect Autonomous Loop
+## 🎯 Overview: The Persistent Engineer-Architect Autonomous Closed-Loop
 
-DAIO eliminates manual copy-pasting between Antigravity and external Web LLMs (ChatGPT Projects, Claude Artifacts, Custom Web LLM Auditors). It creates an automated, test-gated, safety-bounded persistent loop:
+DAIO eliminates manual copy-pasting between Antigravity (Local Execution/Engineer Agent) and external Web LLMs (ChatGPT Projects, Claude Artifacts, Custom Web LLM Auditors). It creates an automated, test-gated, exact-conversation-routed, durable SQLite-backed closed loop:
 
 ```text
-                  DAIO ORCHESTRATOR
-                          │
-                          ▼
-            ┌───────────────────────────┐
-            │  Antigravity / Engineer   │
-            │  Executes Task & Analysis │
-            └─────────────┬─────────────┘
-                          │
-                          ▼
-               Test Gate (Pytest 100%)
-               Git Commit & Remote Push
-                          │
-                          ▼
-            ┌───────────────────────────┐
-            │  External Web LLM Agent   │
-            │  (ChatGPT Project / Tab)  │
-            │  Chrome CDP Transmit      │
-            └─────────────┬─────────────┘
-                          │
-                          ▼
-                  WAIT_FOR_STREAM
-                 (Auto-detect completion)
-                          │
-                          ▼
-                Parse Decision Block
-                          │
-           ┌──────────────┼──────────────┐
-           ▼              ▼              ▼
-        APPROVE         REVISE       HUMAN_REVIEW / STOP
-           │              │              │
-           ▼              │              └──→ Pause & Yield to User
-       NEXT PHASE         │
-           │              │
-           └──────────────┘
-                  ↓
-         Re-invoke Engineer
-                  ↓
-             Next Iteration ↻
+                  DAIO CLOSED-LOOP ORCHESTRATOR
+                               │
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+   ┌──────────────────┐                  ┌──────────────────┐
+   │ Antigravity /    │                  │  SqliteDAIOWork  │
+   │ WorkspaceEngine  │                  │  Durable State   │
+   │ Code, Test, Run  │                  │  Lease & Lock    │
+   └────────┬─────────┘                  └────────┬─────────┘
+            │                                     │
+            ▼                                     │
+     Test Integrity Gate                          │
+     Git Commit & Remote Push                     │
+            │                                     │
+            ▼                                     │
+   ┌──────────────────┐                           │
+   │  External LLM    │                           │
+   │  Architect Agent │                           │
+   │  (ChatGPT / Web) │                           │
+   │  Exact Tab Route │                           │
+   └────────┬─────────┘                           │
+            │                                     │
+            ▼                                     │
+     WAIT_FOR_STREAM                              │
+    (Auto-completion)                             │
+            │                                     │
+            ▼                                     │
+    Parse Decision Block ─────────────────────────┘
+            │
+   ┌────────┼────────┐
+   ▼        ▼        ▼
+APPROVE  REVISE  HUMAN_GATE / STOP
+   │        │        └──→ Yield to Human Operator
+   ▼        │
+NEXT PHASE  │
+   │        │
+   └────────┘
+        ↓
+  Re-invoke Engineer
+        ↓
+   Next Iteration ↻ (human_relay_count == 0)
 ```
 
 ---
@@ -64,7 +67,7 @@ DAIO eliminates manual copy-pasting between Antigravity and external Web LLMs (C
 
 1. **Proactively Inquire & Offer UI Launch**:
    - Explicitly ask the user: *"是否需要為您在瀏覽器中自動開啟即時視覺對話看板 (Live Taskboard)？"*
-   - Resolve the active project's taskboard dynamically; never hard-code a project-specific local path.
+   - Provide clickable local file link: [taskboard.html](file:///Users/huanchen/Desktop/2026%20Projects/2026.8.26AwinFinTechSMCHybridSystemFolder/_AwinFinTechHybridSystem_/taskboard.html).
 2. **Report Active Turn & Dialogue State**:
    - Clearly state whose turn it is right now (`🟢 當前行動回合: 🛠️ Antigravity (執行工程師)` 或 `🟡 🏛️ ChatGPT (審計架構師)`).
    - Show the latest speech bubble exchange between both agents.
@@ -73,28 +76,12 @@ DAIO eliminates manual copy-pasting between Antigravity and external Web LLMs (C
 
 ---
 
-## ♻️ Robust Cross-Session Recovery
-
-DAIO MUST treat the Git repository as durable coordination state and browser/chat context as a replaceable cache.
-
-On activation, continuation, browser-tab replacement, ChatGPT Project thread switch, or Agent context loss:
-
-1. Resolve the actual project Git root and current HEAD.
-2. Run `./daio recover` (or the equivalent recovery preflight).
-3. Read `.daio/recovery_state.json` only as a non-authoritative checkpoint.
-4. If the checkpoint is missing, reconstruct from Git/project artifacts and continue.
-5. If checkpoint HEAD differs from actual HEAD, classify `STALE`, inspect intervening commits, rehydrate context, and continue automatically.
-6. Never require the human to paste an old conversation when repository evidence is sufficient.
-7. Only stop for a real semantic conflict, destructive/human approval gate, or irreconcilable ownership conflict.
-8. ChatGPT conversation URLs/IDs are optional navigation hints; they are never the source of truth and DAIO must not assume GitHub can enumerate private ChatGPT conversations.
-
-Recovery health states: `SYNCED`, `STALE`, `CHECKPOINT_MISSING`, `DEGRADED`, `BLOCKED`.
-
 ## 🚀 Quick Start & Usage
 
 ### 1. One-Click CLI (`./daio`)
 In the workspace root, use the unified executable CLI:
 ```bash
+./daio loop     # Start autonomous closed loop (reads _daio/daio_config.json)
 ./daio board    # Open live visual taskboard in browser
 ./daio status   # Check current active turn, tasks, and audit log
 ./daio          # Start autonomous dual-agent iteration loop (with interactive UI prompt)
@@ -103,36 +90,42 @@ In the workspace root, use the unified executable CLI:
 ### 2. Launch Chrome in Debugging Mode
 Ensure Google Chrome is open with remote debugging enabled on port `9222`:
 ```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="$HOME/Library/Application Support/Google/Chrome-CDP"
 ```
 
-### 2. Run Universal DAIO CLI
-Pass the target ChatGPT / Web LLM URL (or part of the URL) along with the execution command and test command:
-
-```bash
-python3 /Users/huanchen/.gemini/config/skills/daio/scripts/daio_orchestrator.py \
-  --url "https://chatgpt.com/g/g-p-6a7b02e338b8819182fa5b270ed91354" \
-  --phase "OOS-3A" \
-  --cmd "python3 research/run_phase.py" \
-  --test "pytest tests/" \
-  --max-iterations 15
+### 3. Declarative Exact-Conversation Configuration (`_daio/daio_config.json`)
+```json
+{
+  "project_name": "MyProject",
+  "architect_endpoint": {
+    "provider": "CHATGPT_WEB",
+    "project_id": "g-p-6a7b02e338b8819182fa5b270ed91354",
+    "conversation_id": "6ab4c10a-38a8-83e8-a71d-64199b27393f",
+    "canonical_url": "https://chatgpt.com/g/g-p-6a7b02e338b8819182fa5b270ed91354/c/6ab4c10a-38a8-83e8-a71d-64199b27393f",
+    "routing_policy": "EXACT_CONVERSATION"
+  },
+  "cdp_url": "http://127.0.0.1:9222",
+  "workspace_path": ".",
+  "test_command": "pytest tests/ -q",
+  "max_iterations": 10
+}
 ```
 
 ---
 
-## 🛡️ Built-in Safety Breakers
+## 🛡️ Built-in Safety Breakers (DAIO-001 .. DAIO-004)
 
-1. **`TEST_INTEGRITY_GATE`**:
-   - Before any report is sent to the Architect, all unit tests must pass (`pytest` exit code = 0).
+1. **`DAIO-001 (Test Integrity Gate)`**:
+   - Before any report or deliverable is transmitted to the Architect, all test suites must pass (`pytest` exit code = 0).
    - If tests fail, report transmission is blocked immediately.
-2. **Project parameter-freeze policy (project-owned, not enforced by DAIO Core)**:
-   - Canonical strategy parameters (e.g. S1–S7 frozen contracts) are strictly locked.
-   - If an Architect instruction suggests tweaking frozen parameters, DAIO immediately halts and triggers `HUMAN_REVIEW`.
-3. **`CONSECUTIVE_ERRORS_CAP`**:
-   - Max 3 consecutive errors (execution errors, communication timeouts, unparseable decisions).
-   - Exceeding the threshold safely halts the loop and alerts the human operator.
-4. **`MAX_ITERATIONS`**:
-   - Default safety limit (e.g., 15 rounds) to prevent runaway infinite loops.
+2. **`DAIO-002 (Scope & Safety Guardrail)`**:
+   - Enforces workspace scope protection and frozen parameter lock.
+   - Out-of-scope file modifications or frozen policy changes trigger `HUMAN_GATE_REQUIRED`.
+3. **`DAIO-003 (Autonomous Recovery Cap & Safety Breaker)`**:
+   - Max 3 consecutive errors or 10 iteration rounds before safely transitioning to `HUMAN_GATE_REQUIRED`.
+4. **`DAIO-004 (Conversation Routing Contract & Tab Isolation)`**:
+   - Enforces strict exact-conversation routing via `architect_endpoint`.
+   - Never falls back to arbitrary ChatGPT tabs or login/redirect pages (Fail-closed).
 
 ---
 
@@ -143,17 +136,17 @@ The external Architect Agent is prompted to provide a machine-readable JSON cont
 ```json
 {
   "decision": "APPROVE",
-  "current_phase": "OOS-3A",
-  "next_phase": "OOS-3B",
-  "action": "RUN",
+  "current_phase": "PHASE-1",
+  "next_phase": "PHASE-2",
+  "action": "PROCEED",
   "human_approval_required": false,
   "instruction": "Summary of next objectives and guidelines"
 }
 ```
 
 ### Supported Decision States:
-- **`APPROVE`**: Milestone accepted. Orchestrator advances to `next_phase`.
-- **`REVISE`**: Modification requested. Re-runs current phase with new adjustments.
-- **`REJECT`**: Failure identified. Requires reimplementation.
-- **`HUMAN_REVIEW`**: Ambiguity, freeze decision, or high-risk decision. Halts and yields control to the human user.
-- **`STOP`**: Research/engineering cycle is complete. Loop terminates cleanly.
+- **`APPROVE`**: Milestone/proposal accepted. Orchestrator advances to next milestone or completes work.
+- **`REVISE`**: Modification requested. Re-invokes workspace executor with bounded adjustments.
+- **`REJECT`**: Failure identified. Requires fundamental redesign.
+- **`HUMAN_GATE_REQUIRED` / `HUMAN_REVIEW`**: Ambiguity, freeze decision, or high-risk decision. Halts and yields control to the human user.
+- **`STOP`**: Work completed cleanly.
