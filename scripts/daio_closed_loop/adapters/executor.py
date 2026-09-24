@@ -1,9 +1,11 @@
 """
 Replaceable Engineering Executor Adapter for Generic DAIO Closed Loop.
+Implements Two-Tier Policy Enforcement and Pluggable Coding Agent Integration.
 """
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import dataclass, field
 import datetime
 import fnmatch
@@ -14,6 +16,13 @@ import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import DAIOWorkItem
+from .agent_contract import (
+    AgentTaskRequest,
+    AgentTaskProposal,
+    ProposedFileEdit,
+    EngineeringAgentAdapter,
+    MockEngineeringAgentAdapter
+)
 
 
 @dataclass
@@ -25,6 +34,7 @@ class ExecutionResult:
     output: str = ""
     error_message: Optional[str] = None
     scope_violation: bool = False
+    proposal: Optional[AgentTaskProposal] = None
 
 
 class EngineeringExecutorAdapter(ABC):
@@ -47,8 +57,9 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
     Enforces test integrity gates, scope guardrails (DAIO-002), and Git deliverables sync.
     """
 
-    def __init__(self, project_root: Optional[str] = None) -> None:
+    def __init__(self, project_root: Optional[str] = None, agent_adapter: Optional[EngineeringAgentAdapter] = None) -> None:
         self.project_root = project_root or os.getcwd()
+        self.agent_adapter = agent_adapter
 
     def run_cmd(self, cmd: str) -> Tuple[int, str]:
         env = os.environ.copy()
@@ -75,9 +86,12 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             return []
         files = []
         for line in out.splitlines():
-            line = line.strip()
-            if len(line) > 3:
-                files.append(line[3:])
+            clean = line.strip()
+            if not clean:
+                continue
+            parts = clean.split(maxsplit=1)
+            if len(parts) == 2:
+                files.append(parts[1].strip())
         return files
 
     def check_scope_violations(self, work: DAIOWorkItem, diff_files: List[str]) -> bool:
@@ -92,6 +106,20 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                         return True
         return False
 
+    def _gather_context_files(self, allowed_scope: List[str]) -> Dict[str, str]:
+        """Read existing files in allowed_scope to provide context to the agent."""
+        context = {}
+        root = Path(self.project_root)
+        for pattern in allowed_scope:
+            for p in root.glob(pattern):
+                if p.is_file() and not any(p.match(fp) for fp in [".env*", "secrets/*", "*/.git/*"]):
+                    try:
+                        rel = str(p.relative_to(root))
+                        context[rel] = p.read_text(encoding="utf-8")
+                    except Exception:
+                        continue
+        return context
+
     def execute_task(
         self,
         work: DAIOWorkItem,
@@ -99,9 +127,58 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         test_command: Optional[str] = None,
         commit_message: Optional[str] = None,
     ) -> ExecutionResult:
-        # 1. Execute task command (if provided) or perform safe bounded revision artifact
         out_logs = []
-        if command:
+        proposal = None
+
+        # 1. If an agent adapter is configured and requested_action is provided, invoke Coding Agent
+        if self.agent_adapter and work.requested_action:
+            context_files = self._gather_context_files(work.allowed_scope)
+            req = AgentTaskRequest(
+                work_id=work.work_id,
+                change_id=work.change_id,
+                requested_action=work.requested_action,
+                project_root=self.project_root,
+                allowed_scope=work.allowed_scope,
+                frozen_paths=getattr(work, "frozen_paths", ["src/frozen/*", ".env", "secrets/*"]),
+                context_files=context_files,
+            )
+            # Run async agent proposal
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            proposal = loop.run_until_complete(self.agent_adapter.propose_task_solution(req))
+            if not proposal.success:
+                return ExecutionResult(
+                    success=False,
+                    test_passed=False,
+                    commit_sha=self.get_current_head(),
+                    output=f"Agent proposal failed: {proposal.error_message}",
+                    error_message=proposal.error_message,
+                    proposal=proposal
+                )
+
+            # DAIO Policy Guard: Validate proposed edits before applying
+            root_path = Path(self.project_root)
+            for edit in proposal.proposed_edits:
+                target_file = root_path / edit.file_path
+                # Check scope
+                if work.allowed_scope and not any(fnmatch.fnmatch(edit.file_path, pat) for pat in work.allowed_scope):
+                    return ExecutionResult(
+                        success=False,
+                        test_passed=False,
+                        commit_sha=self.get_current_head(),
+                        scope_violation=True,
+                        error_message=f"Agent proposed edit violates allowed_scope: {edit.file_path}",
+                        proposal=proposal
+                    )
+                # Apply authorized edit
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                target_file.write_text(edit.new_content, encoding="utf-8")
+
+        elif command:
             code, out = self.run_cmd(command)
             out_logs.append(out)
             if code != 0:
@@ -113,7 +190,7 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                     error_message=f"Command '{command}' failed with exit code {code}",
                 )
         else:
-            # If revision requested, create safe evidence progress artifact
+            # Fallback progress artifact
             evidence_dir = Path(self.project_root) / "_daio" / "evidence"
             evidence_dir.mkdir(parents=True, exist_ok=True)
             progress_file = evidence_dir / f"revision-progress-{work.work_id}.json"
@@ -136,33 +213,37 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 output="\n".join(out_logs),
                 error_message="DAIO-002 Scope Violation: modified files violate allowed_scope.",
                 scope_violation=True,
+                proposal=proposal
             )
 
-        # 3. Run Test Integrity Gate
-        if test_command:
-            test_code, test_out = self.run_cmd(test_command)
-            out_logs.append(test_out)
-            if test_code != 0:
-                return ExecutionResult(
-                    success=False,
-                    test_passed=False,
-                    commit_sha=self.get_current_head(),
-                    diff_files=diff_files,
-                    output="\n".join(out_logs),
-                    error_message=f"Test Integrity Gate '{test_command}' failed with exit code {test_code}",
-                )
+        # 3. Run Test Integrity Gate (DAIO-001)
+        test_cmd = test_command or "pytest tests/ -q"
+        code, test_out = self.run_cmd(test_cmd)
+        out_logs.append(test_out)
+        test_passed = (code == 0)
 
-        # 4. Commit and Push to remote
-        msg = commit_message or f"feat(daio): automated execution for work {work.work_id}"
+        if not test_passed:
+            return ExecutionResult(
+                success=False,
+                test_passed=False,
+                commit_sha=self.get_current_head(),
+                diff_files=diff_files,
+                output="\n".join(out_logs),
+                error_message=f"Test Integrity Gate Failed (exit code {code}):\n{test_out}",
+                proposal=proposal
+            )
+
+        # 4. If tests pass, commit deliverable
         self.run_cmd("git add .")
-        self.run_cmd(f'git commit -m "{msg}"')
-        self.run_cmd("git push origin main")
-        new_head = self.get_current_head()
+        msg = commit_message or f"feat(daio): automated execution for {work.change_id}"
+        self.run_cmd(f"git commit -m '{msg}'")
+        head_sha = self.get_current_head()
 
         return ExecutionResult(
             success=True,
             test_passed=True,
-            commit_sha=new_head,
+            commit_sha=head_sha,
             diff_files=diff_files,
             output="\n".join(out_logs),
+            proposal=proposal
         )
