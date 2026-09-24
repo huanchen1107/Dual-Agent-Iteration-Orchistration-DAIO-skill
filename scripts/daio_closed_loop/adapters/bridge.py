@@ -186,17 +186,35 @@ def discover_tab_by_endpoint(
     endpoint: Optional[Dict[str, Any]] = None,
     url_pattern: str = "chatgpt.com",
     cdp_port: int = 9222,
+    max_retries: int = 3,
+    raw_tabs: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, str, str]:
     """
     Discover Chrome tab matching exact Architect Endpoint.
-    Enforces 'EXACT_CONVERSATION' routing policy and fail-closed safety.
+    Enforces 'EXACT_CONVERSATION' routing policy and fail-closed safety with bounded retry budget.
     """
     import urllib.request
-    try:
-        req = urllib.request.urlopen(f"http://localhost:{cdp_port}/json/list", timeout=5)
-        tabs = json.loads(req.read().decode("utf-8"))
-    except Exception as e:
-        raise RuntimeError(f"Could not connect to Chrome CDP at port {cdp_port}. Is Chrome running with --remote-debugging-port={cdp_port}? Error: {e}")
+    import time
+
+    tabs: List[Dict[str, Any]] = []
+    if raw_tabs is not None:
+        tabs = raw_tabs
+    else:
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                req = urllib.request.urlopen(f"http://localhost:{cdp_port}/json/list", timeout=3)
+                tabs = json.loads(req.read().decode("utf-8"))
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < max_retries:
+                    time.sleep(0.5)
+        if not tabs and last_err is not None:
+            raise RuntimeError(
+                f"Could not connect to Chrome CDP at port {cdp_port} after {max_retries} attempts. "
+                f"Is Chrome running with --remote-debugging-port={cdp_port}? Error: {last_err}"
+            )
 
     ep = endpoint or {}
     proj_id = ep.get("project_id")
@@ -257,10 +275,12 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
         endpoint: Optional[Dict[str, Any]] = None,
         url_pattern: str = "chatgpt.com",
         cdp_port: int = 9222,
+        max_discovery_retries: int = 3,
     ) -> None:
         self.endpoint = endpoint or {}
         self.url_pattern = url_pattern
         self.cdp_port = cdp_port
+        self.max_discovery_retries = max_discovery_retries
 
     def _get_cdp_client_class(self):
         """Robustly import UniversalCDPClient across module and standalone packaging layouts."""
@@ -295,6 +315,7 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
             endpoint=effective_endpoint,
             url_pattern=self.url_pattern,
             cdp_port=self.cdp_port,
+            max_retries=self.max_discovery_retries,
         )
         client = UniversalCDPClient(ws_url)
         await client.connect()

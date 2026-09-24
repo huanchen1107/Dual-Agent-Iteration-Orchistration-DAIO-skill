@@ -158,3 +158,32 @@ def test_cdp_bridge_client_resolution_with_clean_sys_path(monkeypatch):
     assert hasattr(cls, "close")
 
 
+def test_discover_tab_by_endpoint_exact_match():
+    from scripts.daio_closed_loop.adapters.bridge import discover_tab_by_endpoint
+    mock_tabs = [
+        {"type": "page", "id": "tab-1", "title": "Random Page", "url": "https://example.com", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/tab-1"},
+        {"type": "page", "id": "tab-2", "title": "ChatGPT Target", "url": "https://chatgpt.com/g/p-123/c/conv-abc-456", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/tab-2"},
+    ]
+    ws, tab_id, title = discover_tab_by_endpoint(
+        endpoint={"conversation_id": "conv-abc-456", "routing_policy": "EXACT_CONVERSATION"},
+        raw_tabs=mock_tabs,
+    )
+    assert tab_id == "tab-2"
+    assert ws == "ws://127.0.0.1:9222/devtools/page/tab-2"
+
+
+def test_discover_tab_by_endpoint_fail_closed_on_missing_conversation():
+    from scripts.daio_closed_loop.adapters.bridge import discover_tab_by_endpoint
+    mock_tabs = [
+        {"type": "page", "id": "tab-1", "title": "Another Project", "url": "https://chatgpt.com/g/p-999/c/conv-xyz-789", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/tab-1"},
+    ]
+    with pytest.raises(RuntimeError) as exc_info:
+        discover_tab_by_endpoint(
+            endpoint={"conversation_id": "conv-needed-000", "routing_policy": "EXACT_CONVERSATION"},
+            raw_tabs=mock_tabs,
+        )
+    assert "DAIO-004 Exact Conversation Routing Failed" in str(exc_info.value)
+    assert "Fail-closed policy prevented dispatch" in str(exc_info.value)
+
+
+
