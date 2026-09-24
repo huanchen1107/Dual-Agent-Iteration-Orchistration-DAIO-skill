@@ -80,9 +80,11 @@ Current Workspace Context:
 {context_str if context_str else "(No initial context files provided)"}
 
 Instructions:
-1. Determine all necessary file modifications or additions to fulfill the task objective.
-2. Only modify or create files that strictly adhere to the Allowed Scope patterns. Do not touch Frozen paths.
-3. Output MUST be a valid JSON object matching this schema:
+1. You are in pure proposal generation mode. Do NOT invoke, call, or attempt to execute tools or commands.
+2. Determine all necessary file modifications or additions to fulfill the task objective.
+3. Only modify or create files that strictly adhere to the Allowed Scope patterns. Do not touch Frozen paths.
+4. Output MUST be a valid JSON object matching this schema:
+```json
 {{
   "reasoning_summary": "Brief summary of implementation decisions",
   "proposed_edits": [
@@ -93,35 +95,62 @@ Instructions:
     }}
   ]
 }}
-Ensure the response is wrapped in a ```json code fence.
+```
+Ensure the entire response is wrapped in a ```json code fence.
 """
         return prompt
 
+    def _extract_outer_envelope(self, stdout_str: str) -> Dict[str, Any]:
+        """Extract the outer JSON envelope from CLI stdout, handling potential prefix/suffix logs."""
+        # Try direct parse
+        try:
+            return json.loads(stdout_str.strip())
+        except Exception:
+            pass
+
+        # Look for the outermost balanced JSON object in stdout
+        start_idx = stdout_str.find("{")
+        end_idx = stdout_str.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            candidate = stdout_str[start_idx:end_idx + 1]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+        raise ValueError(f"Could not locate valid outer JSON envelope in CLI stdout: {stdout_str[:300]}")
+
     def _parse_proposal_from_response(self, text: str) -> Dict[str, Any]:
         """Extract structured JSON proposal from CLI response text."""
+        clean_text = text.strip()
+        if not clean_text:
+            raise ValueError("Empty model response received from Antigravity CLI.")
+
         # 1. Look for fenced markdown code block
-        fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-        if fence_match:
+        fence_matches = re.findall(r"```(?:json)?\s*\n?(.*?)\n?```", clean_text, re.DOTALL)
+        for fence_content in reversed(fence_matches):
             try:
-                data = json.loads(fence_match.group(1).strip(), strict=False)
-                if isinstance(data, dict) and "proposed_edits" in data:
+                data = json.loads(fence_content.strip(), strict=False)
+                if isinstance(data, dict) and "proposed_edits" in data and isinstance(data["proposed_edits"], list):
                     return data
             except Exception:
-                pass
+                continue
 
         # 2. Look for outermost balanced JSON object
-        start_idx = text.find("{")
-        end_idx = text.rfind("}")
+        start_idx = clean_text.find("{")
+        end_idx = clean_text.rfind("}")
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            candidate = clean_text[start_idx:end_idx + 1]
             try:
-                candidate = text[start_idx:end_idx + 1]
                 data = json.loads(candidate, strict=False)
-                if isinstance(data, dict) and "proposed_edits" in data:
+                if isinstance(data, dict) and "proposed_edits" in data and isinstance(data["proposed_edits"], list):
                     return data
             except Exception:
                 pass
 
-        raise ValueError("Could not parse structured proposed_edits JSON from Antigravity CLI output.")
+        raise ValueError(
+            f"Could not parse structured proposed_edits JSON from Antigravity CLI output. Response preview: {clean_text[:250]}"
+        )
 
     async def propose_task_solution(self, request: AgentTaskRequest) -> AgentTaskProposal:
         started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -169,26 +198,52 @@ Ensure the response is wrapped in a ```json code fence.
                     success=False,
                     backend_identity="ANTIGRAVITY_CLI",
                     model_name=self.model_name,
-                    error_message=f"CLI execution failed with code {proc.returncode}: {stderr_str or stdout_str}",
+                    error_message=f"CLI execution failed with exit code {proc.returncode}: {stderr_str or stdout_str[:300]}",
                     started_at=started_at,
                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     raw_response=stdout_str
                 )
 
-            # Parse the outer CLI JSON envelope
-            cli_envelope = json.loads(stdout_str)
+            # 1. Parse outer CLI JSON envelope
+            cli_envelope = self._extract_outer_envelope(stdout_str)
+            cli_status = cli_envelope.get("status", "UNKNOWN")
+
+            if cli_status != "SUCCESS":
+                denied = cli_envelope.get("denied_actions", [])
+                err_msg = f"CLI returned non-success status '{cli_status}'"
+                if denied:
+                    err_msg += f" with denied actions: {denied}"
+                return AgentTaskProposal(
+                    work_id=request.work_id,
+                    success=False,
+                    backend_identity="ANTIGRAVITY_CLI",
+                    model_name=self.model_name,
+                    error_message=err_msg,
+                    started_at=started_at,
+                    completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    raw_response=stdout_str
+                )
+
             response_text = cli_envelope.get("response", "")
 
+            # 2. Parse inner structured proposal from response payload
             parsed = self._parse_proposal_from_response(response_text)
-            edits = [
-                ProposedFileEdit(
-                    file_path=e["file_path"],
-                    new_content=e["new_content"],
-                    description=e.get("description", ""),
-                    is_deletion=e.get("is_deletion", False)
+            raw_edits = parsed.get("proposed_edits", [])
+            if not isinstance(raw_edits, list):
+                raise ValueError(f"Expected 'proposed_edits' to be a list, got {type(raw_edits).__name__}")
+
+            edits = []
+            for e in raw_edits:
+                if not isinstance(e, dict) or "file_path" not in e or "new_content" not in e:
+                    raise ValueError(f"Malformed edit object in proposed_edits: {e}")
+                edits.append(
+                    ProposedFileEdit(
+                        file_path=e["file_path"],
+                        new_content=e["new_content"],
+                        description=e.get("description", ""),
+                        is_deletion=e.get("is_deletion", False)
+                    )
                 )
-                for e in parsed.get("proposed_edits", [])
-            ]
 
             return AgentTaskProposal(
                 work_id=request.work_id,
@@ -218,7 +273,9 @@ Ensure the response is wrapped in a ```json code fence.
                 success=False,
                 backend_identity="ANTIGRAVITY_CLI",
                 model_name=self.model_name,
-                error_message=f"Antigravity CLI adapter encountered exception: {str(e)}",
+                error_message=f"Antigravity CLI adapter parse/execution failure: {str(e)}",
                 started_at=started_at,
-                completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat()
+                completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                raw_response=locals().get("stdout_str", "")
             )
+
