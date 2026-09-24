@@ -170,3 +170,97 @@ def test_provenance_preservation(tmp_path):
     assert new_work.allowed_scope == ["src/core/*", "tests/core/*"]
     assert new_work.metadata["authorization_source"] == "ARCHITECT_POST_COMPLETION_HANDOFF"
     assert new_work.metadata["parent_head_sha"] == "commit-sha-provenance-123"
+
+
+def test_root_work_contract_gate_revise_run_full_execution_callback_and_recovery(tmp_path):
+    """
+    Scenario 6 (Regression):
+    Durable root work -> autonomous claim -> CONTRACT_GATE -> Architect REVISE/RUN
+    -> durable transition -> worker resumes/executes -> callback to Architect (IMPLEMENTATION_GATE)
+    -> Architect APPROVE -> durable COMPLETED status.
+    Verifies duplicate claim protection and restart recovery across turns.
+    """
+    db_file = str(tmp_path / "daio_full_cycle.db")
+    store = SqliteDAIOWorkStore(db_path=db_file)
+
+    # 1. Setup canned Architect decisions:
+    # Turn 1: CONTRACT_GATE -> REVISE / RUN (with arbitrary preflight instruction)
+    # Turn 2: IMPLEMENTATION_GATE -> APPROVE (with next_phase=None)
+    decisions = [
+        ArchitectDecision(
+            decision="REVISE",
+            current_phase="CHANGE_051_PREFLIGHT",
+            action="RUN",
+            instruction="Perform read-only preflight and verify contracts",
+            human_approval_required=False
+        ),
+        ArchitectDecision(
+            decision="APPROVE",
+            current_phase="CHANGE_051_PREFLIGHT",
+            action="PROCEED",
+            instruction="Preflight report verified and approved",
+            human_approval_required=False
+        )
+    ]
+    bridge = MockArchitectBridgeAdapter(canned_decisions=decisions)
+
+    # 2. Setup mock executor
+    mock_executor = MagicMock()
+    mock_executor.execute_task.return_value = ExecutionResult(
+        success=True,
+        test_passed=True,
+        base_sha="sha-base-051",
+        head_sha="sha-base-051",
+        generated_commit_sha="sha-base-051",
+        output="Preflight check completed successfully. All contracts verified."
+    )
+
+    orchestrator = DAIOClosedLoopOrchestrator(
+        store=store,
+        executor=mock_executor,
+        bridge=bridge,
+        max_rounds=10
+    )
+
+    # 3. Create root production work item
+    root_work = DAIOWorkItem(
+        work_id="daio-root-change_051_preflight",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_PREFLIGHT",
+        current_stage="CHANGE_051_PREFLIGHT",
+        current_gate=DAIOGate.CONTRACT_GATE,
+        assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+        status=DAIOStatus.AWAITING_REVIEW,
+        parent_work_id="daio-stage5-acceptance-final",
+        allowed_scope=["src/*", "tests/*"],
+        base_sha="sha-base-051",
+        head_sha="sha-base-051"
+    )
+    store.save_work_item(root_work)
+
+    # 4. Verify duplicate claim protection: Worker Alpha claims, Worker Beta gets None
+    claim_alpha = store.claim_next_available_work_item(worker_id="worker-alpha", ttl_seconds=300)
+    assert claim_alpha is not None
+    assert claim_alpha.work_id == "daio-root-change_051_preflight"
+    assert claim_alpha.claimed_by == "worker-alpha"
+
+    claim_beta = store.claim_next_available_work_item(worker_id="worker-beta", ttl_seconds=300)
+    assert claim_beta is None, "Duplicate worker claimed an active leased item!"
+
+    # 5. Worker Alpha executes the autonomous closed loop
+    final_work = asyncio.run(orchestrator.run_autonomous_loop(claim_alpha.work_id))
+
+    # 6. Verify completed state, full state transitions, and evidence callback
+    assert final_work.status == DAIOStatus.COMPLETED
+    assert final_work.last_decision == "APPROVE"
+    assert len(bridge.call_history) == 2, f"Expected 2 turns with Architect (CONTRACT_GATE and IMPLEMENTATION_GATE), got {len(bridge.call_history)}"
+    assert "CONTRACT_GATE" in bridge.call_history[0]
+    assert "IMPLEMENTATION_GATE" in bridge.call_history[1]
+    assert "Preflight check completed successfully" in bridge.call_history[1]
+
+    # 7. Verify process restart recovery: reloading from DB shows terminal COMPLETED
+    reloaded = store.load_work_item("daio-root-change_051_preflight")
+    assert reloaded is not None
+    assert reloaded.status == DAIOStatus.COMPLETED
+    assert reloaded.parent_work_id == "daio-stage5-acceptance-final"
+

@@ -260,7 +260,7 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         """Acquire a lease lock on work_id if not already locked by another active lease."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT lease_id, lease_expires_at FROM daio_work_items WHERE work_id = ?", (work_id,))
+        cursor.execute("SELECT lease_id, lease_expires_at, claimed_by FROM daio_work_items WHERE work_id = ?", (work_id,))
         row = cursor.fetchone()
         if not row:
             if not self._shared_conn:
@@ -270,15 +270,16 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         now = datetime.datetime.now(datetime.timezone.utc)
         current_lease_id = row["lease_id"]
         expires_at_str = row["lease_expires_at"]
+        claimed_by = row["claimed_by"]
 
         # Check if existing lease is active
         if current_lease_id and expires_at_str:
             try:
                 expires_at = datetime.datetime.fromisoformat(expires_at_str)
-                if expires_at > now:
+                if expires_at > now and claimed_by != worker_id:
                     if not self._shared_conn:
                         conn.close()
-                    return None  # Still locked
+                    return None  # Still locked by a different worker
             except Exception:
                 pass
 

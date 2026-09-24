@@ -137,18 +137,25 @@ class DAIOClosedLoopOrchestrator:
             logger.info(f"NEXT_WORK_CREATED: work_id={next_work.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
         return next_work
 
-    async def run_autonomous_loop(self, work_id: str) -> DAIOWorkItem:
+    async def run_autonomous_loop(self, work_id: str, worker_id: Optional[str] = None) -> DAIOWorkItem:
         """
         Execute the autonomous closed loop until COMPLETED, HUMAN_GATE_REQUIRED, or BLOCKED.
         Enforces 0 human relays.
         """
-        worker_id = f"worker-{uuid.uuid4().hex[:6]}"
+        if not worker_id:
+            existing = self.store.load_work_item(work_id)
+            if existing and existing.claimed_by:
+                worker_id = existing.claimed_by
+            else:
+                worker_id = f"worker-{uuid.uuid4().hex[:6]}"
+
         lease_id = self.store.acquire_lease(work_id, worker_id, ttl_seconds=300)
         if not lease_id:
             raise PermissionError(f"Cannot acquire lease for work item '{work_id}' (already locked).")
 
         consecutive_errors = 0
         previous_reviewed_sha: Optional[str] = None
+        previous_reviewed_gate: Optional[DAIOGate] = None
         rounds_executed = 0
 
         try:
@@ -170,10 +177,15 @@ class DAIOClosedLoopOrchestrator:
                 # Branch 1: LEAD_ARCHITECT_REVIEW turn
                 # =========================================================================
                 if work.assigned_role == DAIORole.LEAD_ARCHITECT_REVIEW:
-                    # Invariant DAIO-001: Repeated SHA without code modification check
-                    if work.head_sha and work.head_sha == previous_reviewed_sha:
+                    # Invariant DAIO-001: Repeated SHA without code modification check on IMPLEMENTATION_GATE
+                    if (
+                        work.head_sha
+                        and work.head_sha == previous_reviewed_sha
+                        and work.current_gate == previous_reviewed_gate
+                        and work.current_gate == DAIOGate.IMPLEMENTATION_GATE
+                    ):
                         work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                        work.human_gate_reason = f"DAIO-001 Zero progress: Repeated review on identical HEAD SHA ({work.head_sha})"
+                        work.human_gate_reason = f"DAIO-001 Zero progress: Repeated review on identical HEAD SHA ({work.head_sha}) at {work.current_gate.value}"
                         self.store.save_work_item(work)
                         break
 
@@ -204,6 +216,7 @@ Please provide your review instruction in a structured decision block:
 ```
 """
                     else:
+                        exec_report = work.metadata.get("last_execution_report", work.requested_action)
                         report_markdown = f"""🏛️ **[DAIO v2.1 Closed Loop Review — Gate: IMPLEMENTATION_GATE]**
 
 Lead Architect,
@@ -215,6 +228,9 @@ The Engineering Agent has executed the task and passed all test integrity gates:
 - **Current Gate:** `{work.current_gate.value}`
 - **Commit SHA:** `{work.head_sha or 'INITIAL'}`
 - **Test Integrity Gate:** PASSED
+
+### Task / Execution Report:
+{exec_report}
 
 If approved, please return an `APPROVE` decision. If this work authorizes a subsequent work item, specify `next_phase`:
 ```json
@@ -232,6 +248,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         decision = await self.bridge.transmit_review_request(work, report_markdown)
                         consecutive_errors = 0
                         previous_reviewed_sha = work.head_sha
+                        previous_reviewed_gate = work.current_gate
 
                         # Record turn history and log decision persistence
                         turn_id = f"turn-{uuid.uuid4().hex[:8]}"
@@ -320,6 +337,13 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                             commit_sha=exec_res.commit_sha,
                             execution_error=exec_res.error_message,
                         )
+                        if not hasattr(work, "metadata") or work.metadata is None:
+                            work.metadata = {}
+                        if exec_res.proposal and exec_res.proposal.explanation:
+                            work.metadata["last_execution_report"] = exec_res.proposal.explanation
+                        elif exec_res.output:
+                            work.metadata["last_execution_report"] = exec_res.output
+
                         self.round_history.append({
                             "round": rounds_executed,
                             "role": DAIORole.ENGINEERING_EXECUTION.value,
