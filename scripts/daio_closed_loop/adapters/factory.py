@@ -41,8 +41,8 @@ def create_engineering_agent_adapter(config: Optional[Dict[str, Any]] = None) ->
     if provider == "MOCK":
         return MockEngineeringAgentAdapter()
 
-    # Auto-detection when provider is not explicitly set
-    if not provider:
+    # Auto-detection when provider is not explicitly set or set to AUTO
+    if not provider or provider == "AUTO":
         cli_bin = find_antigravity_cli_path()
         if cli_bin:
             return AntigravityCLIAdapter(

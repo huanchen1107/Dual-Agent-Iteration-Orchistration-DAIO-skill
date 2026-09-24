@@ -25,9 +25,12 @@ def test_find_antigravity_cli_path():
 
 
 def test_factory_capability_detection(monkeypatch):
-    # When agy exists, factory should auto-select AntigravityCLIAdapter by default
+    # When agy exists, factory should auto-select AntigravityCLIAdapter by default or with provider AUTO
     adapter = create_engineering_agent_adapter()
     assert isinstance(adapter, AntigravityCLIAdapter)
+
+    adapter_auto = create_engineering_agent_adapter({"provider": "AUTO"})
+    assert isinstance(adapter_auto, AntigravityCLIAdapter)
 
     # When explicit GEMINI provider requested
     adapter_gemini = create_engineering_agent_adapter({"provider": "GEMINI"})
