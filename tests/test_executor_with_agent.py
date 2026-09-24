@@ -65,3 +65,64 @@ def test_executor_with_agent_proposal_flow():
         assert res.scope_violation is False
         assert len(res.diff_files) == 2
         assert "sub" in (src / "math_lib.py").read_text()
+
+
+def test_executor_async_inside_event_loop():
+    """Verify execute_task_async runs seamlessly inside an already-active event loop without RuntimeError."""
+    import asyncio
+
+    async def _run_async_test():
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "AsyncTester"], cwd=tmp_path, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "async@test.io"], cwd=tmp_path, check=True, capture_output=True)
+
+            src = tmp_path / "src"
+            tests = tmp_path / "tests"
+            src.mkdir(); tests.mkdir()
+            (src / "__init__.py").write_text("", encoding="utf-8")
+            (tests / "__init__.py").write_text("", encoding="utf-8")
+            (src / "service.py").write_text("def run(): return 1\n", encoding="utf-8")
+            (tests / "test_service.py").write_text("from src.service import run\ndef test_run(): assert run() == 1\n", encoding="utf-8")
+
+            subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "chore: baseline"], cwd=tmp_path, check=True, capture_output=True)
+
+            mock_agent = MockEngineeringAgentAdapter(canned_proposals=[
+                AgentTaskProposal(
+                    work_id="work-async-01",
+                    success=True,
+                    backend_identity="TEST_ASYNC_LLM",
+                    model_name="mock-async-v1",
+                    proposed_edits=[
+                        ProposedFileEdit(
+                            file_path="src/service.py",
+                            new_content="def run(): return 2\n"
+                        ),
+                        ProposedFileEdit(
+                            file_path="tests/test_service.py",
+                            new_content="from src.service import run\ndef test_run(): assert run() == 2\n"
+                        )
+                    ]
+                )
+            ])
+
+            executor = SubprocessWorkspaceExecutor(project_root=str(tmp_path), agent_adapter=mock_agent)
+            work = DAIOWorkItem(
+                work_id="work-async-01",
+                project_root=str(tmp_path),
+                change_id="CHG-ASYNC-01",
+                requested_action="Update service return to 2",
+                allowed_scope=["src/*", "tests/*"]
+            )
+
+            # Await execute_task_async directly inside the running loop
+            res = await executor.execute_task_async(work, test_command="pytest tests/ -q", commit_message="feat(service): return 2")
+            assert res.success is True
+            assert res.test_passed is True
+            assert res.scope_violation is False
+            assert "return 2" in (src / "service.py").read_text()
+
+    asyncio.run(_run_async_test())
+

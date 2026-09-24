@@ -50,6 +50,16 @@ class EngineeringExecutorAdapter(ABC):
     ) -> ExecutionResult:
         raise NotImplementedError
 
+    @abstractmethod
+    async def execute_task_async(
+        self,
+        work: DAIOWorkItem,
+        command: Optional[str] = None,
+        test_command: Optional[str] = None,
+        commit_message: Optional[str] = None,
+    ) -> ExecutionResult:
+        raise NotImplementedError
+
 
 class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
     """
@@ -120,13 +130,14 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                         continue
         return context
 
-    def execute_task(
+    async def execute_task_async(
         self,
         work: DAIOWorkItem,
         command: Optional[str] = None,
         test_command: Optional[str] = None,
         commit_message: Optional[str] = None,
     ) -> ExecutionResult:
+        """Asynchronous execution path: directly awaits agent proposal without nested event loops."""
         out_logs = []
         proposal = None
 
@@ -142,14 +153,8 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 frozen_paths=getattr(work, "frozen_paths", ["src/frozen/*", ".env", "secrets/*"]),
                 context_files=context_files,
             )
-            # Run async agent proposal
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
             
-            proposal = loop.run_until_complete(self.agent_adapter.propose_task_solution(req))
+            proposal = await self.agent_adapter.propose_task_solution(req)
             if not proposal.success:
                 return ExecutionResult(
                     success=False,
@@ -247,3 +252,32 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             output="\n".join(out_logs),
             proposal=proposal
         )
+
+    def execute_task(
+        self,
+        work: DAIOWorkItem,
+        command: Optional[str] = None,
+        test_command: Optional[str] = None,
+        commit_message: Optional[str] = None,
+    ) -> ExecutionResult:
+        """Synchronous wrapper for callers not running an async event loop."""
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            raise RuntimeError(
+                "Cannot call synchronous execute_task() from an active event loop. Use 'await execute_task_async()' instead."
+            )
+
+        return loop.run_until_complete(
+            self.execute_task_async(
+                work=work,
+                command=command,
+                test_command=test_command,
+                commit_message=commit_message,
+            )
+        )
+

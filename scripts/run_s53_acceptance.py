@@ -128,7 +128,7 @@ Please provide your **real arbitrary engineering task** in the `REVISE` decision
 
     # --- Step 2: Real Coding Agent Consumes Arbitrary Instruction ---
     print(f"🤖 [Step 2] {agent_name} generating autonomous proposal for instruction...")
-    res = executor.execute_task(
+    res = await executor.execute_task_async(
         w,
         test_command="pytest tests/ -q",
         commit_message=f"feat(s5.3): {w.requested_action[:60]}"
