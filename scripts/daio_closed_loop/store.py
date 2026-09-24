@@ -10,7 +10,14 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 import uuid
 
-from .models import DAIOGate, DAIORole, DAIOStatus, DAIOWorkItem
+from .models import (
+    DAIOGate,
+    DAIORole,
+    DAIOStatus,
+    DAIOWorkItem,
+    HandoffState,
+    HandoffWatch,
+)
 
 
 class DAIOWorkStore(ABC):
@@ -38,6 +45,26 @@ class DAIOWorkStore(ABC):
 
     @abstractmethod
     def claim_next_available_work_item(self, worker_id: str, ttl_seconds: int = 300) -> Optional[DAIOWorkItem]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_handoff_watch(self, watch: HandoffWatch) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def load_handoff_watch(self, watch_id: str) -> Optional[HandoffWatch]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_active_handoff_watches(self) -> List[HandoffWatch]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_handoff_watch_by_parent(self, parent_work_id: str) -> Optional[HandoffWatch]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_handoff_watch_by_successor(self, successor_work_id: str) -> Optional[HandoffWatch]:
         raise NotImplementedError
 
 
@@ -106,6 +133,25 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 created_at TEXT NOT NULL,
                 payload TEXT NOT NULL,
                 FOREIGN KEY(work_id) REFERENCES daio_work_items(work_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daio_handoff_watches (
+                watch_id TEXT PRIMARY KEY,
+                parent_work_id TEXT NOT NULL,
+                successor_work_id TEXT,
+                expected_next_phase TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                discovery_deadline TEXT NOT NULL,
+                claim_deadline TEXT NOT NULL,
+                first_heartbeat_deadline TEXT NOT NULL,
+                progress_deadline TEXT NOT NULL,
+                current_state TEXT NOT NULL,
+                last_progress_at TEXT NOT NULL,
+                recovery_attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_recovery_attempts INTEGER NOT NULL DEFAULT 3,
+                escalation_state TEXT,
+                metadata TEXT NOT NULL
             )
         """)
         # Auto-migration for schema evolutions
@@ -396,4 +442,112 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             updated_at=row["updated_at"],
             metadata=json.loads(row["metadata"]),
         )
+
+    def save_handoff_watch(self, watch: HandoffWatch) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO daio_handoff_watches (
+                watch_id, parent_work_id, successor_work_id, expected_next_phase,
+                created_at, discovery_deadline, claim_deadline, first_heartbeat_deadline,
+                progress_deadline, current_state, last_progress_at, recovery_attempt_count,
+                max_recovery_attempts, escalation_state, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(watch_id) DO UPDATE SET
+                successor_work_id=excluded.successor_work_id,
+                expected_next_phase=excluded.expected_next_phase,
+                discovery_deadline=excluded.discovery_deadline,
+                claim_deadline=excluded.claim_deadline,
+                first_heartbeat_deadline=excluded.first_heartbeat_deadline,
+                progress_deadline=excluded.progress_deadline,
+                current_state=excluded.current_state,
+                last_progress_at=excluded.last_progress_at,
+                recovery_attempt_count=excluded.recovery_attempt_count,
+                max_recovery_attempts=excluded.max_recovery_attempts,
+                escalation_state=excluded.escalation_state,
+                metadata=excluded.metadata
+        """, (
+            watch.watch_id,
+            watch.parent_work_id,
+            watch.successor_work_id,
+            watch.expected_next_phase,
+            watch.created_at,
+            watch.discovery_deadline,
+            watch.claim_deadline,
+            watch.first_heartbeat_deadline,
+            watch.progress_deadline,
+            watch.current_state.value if hasattr(watch.current_state, "value") else str(watch.current_state),
+            watch.last_progress_at,
+            watch.recovery_attempt_count,
+            watch.max_recovery_attempts,
+            watch.escalation_state,
+            json.dumps(watch.metadata),
+        ))
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
+    def load_handoff_watch(self, watch_id: str) -> Optional[HandoffWatch]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM daio_handoff_watches WHERE watch_id = ?", (watch_id,))
+        row = cursor.fetchone()
+        res = self._row_to_handoff_watch(row) if row else None
+        if not self._shared_conn:
+            conn.close()
+        return res
+
+    def list_active_handoff_watches(self) -> List[HandoffWatch]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM daio_handoff_watches
+            WHERE current_state NOT IN ('COMPLETED', 'STALLED_ESCALATED')
+            ORDER BY created_at ASC
+        """)
+        rows = cursor.fetchall()
+        res = [self._row_to_handoff_watch(r) for r in rows]
+        if not self._shared_conn:
+            conn.close()
+        return res
+
+    def find_handoff_watch_by_parent(self, parent_work_id: str) -> Optional[HandoffWatch]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM daio_handoff_watches WHERE parent_work_id = ? ORDER BY created_at DESC LIMIT 1", (parent_work_id,))
+        row = cursor.fetchone()
+        res = self._row_to_handoff_watch(row) if row else None
+        if not self._shared_conn:
+            conn.close()
+        return res
+
+    def find_handoff_watch_by_successor(self, successor_work_id: str) -> Optional[HandoffWatch]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM daio_handoff_watches WHERE successor_work_id = ? ORDER BY created_at DESC LIMIT 1", (successor_work_id,))
+        row = cursor.fetchone()
+        res = self._row_to_handoff_watch(row) if row else None
+        if not self._shared_conn:
+            conn.close()
+        return res
+
+    def _row_to_handoff_watch(self, row: sqlite3.Row) -> HandoffWatch:
+        return HandoffWatch(
+            watch_id=row["watch_id"],
+            parent_work_id=row["parent_work_id"],
+            successor_work_id=row["successor_work_id"],
+            expected_next_phase=row["expected_next_phase"],
+            created_at=row["created_at"],
+            discovery_deadline=row["discovery_deadline"],
+            claim_deadline=row["claim_deadline"],
+            first_heartbeat_deadline=row["first_heartbeat_deadline"],
+            progress_deadline=row["progress_deadline"],
+            current_state=HandoffState(row["current_state"]),
+            last_progress_at=row["last_progress_at"],
+            recovery_attempt_count=row["recovery_attempt_count"],
+            max_recovery_attempts=row["max_recovery_attempts"],
+            escalation_state=row["escalation_state"],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+        )
+
 

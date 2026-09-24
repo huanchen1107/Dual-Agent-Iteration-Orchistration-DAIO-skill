@@ -102,7 +102,7 @@ def do_doctor():
 
 
 def do_status():
-    """Print current DAIO work item status with full S5.5 observability."""
+    """Print current DAIO work item status with full S5.5 & Handoff Watchdog observability."""
     db_path = PROJECT_ROOT / "_daio" / "daio_work.db"
     if not db_path.exists():
         db_path = PROJECT_ROOT / "_daio" / "daio_work_state.db"
@@ -113,8 +113,12 @@ def do_status():
     try:
         from daio_closed_loop.store import SqliteDAIOWorkStore
         from daio_closed_loop.models import DAIOStatus, DAIOGate
+        from daio_closed_loop.watchdog import DAIOHandoffWatchdog
+
         store = SqliteDAIOWorkStore(db_path=str(db_path))
+        watchdog = DAIOHandoffWatchdog(store=store, project_root=str(PROJECT_ROOT))
         items = store.list_all_work_items()
+
         print("=" * 75)
         print("🤖 DAIO Work Board & Continuous Orchestration Status")
         print("=" * 75)
@@ -137,18 +141,20 @@ def do_status():
             if w.requested_action:
                 print(f"    action_summary           : {w.requested_action[:75]}")
             print("-" * 75)
+
+        print("\n" + watchdog.get_status_summary())
         print("=" * 75)
     except Exception as e:
         print(f"❌ Error reading status: {e}")
 
 
 def do_start():
-    """Start DAIO Autonomous Closed-Loop Persistent Worker."""
+    """Start DAIO Autonomous Supervisor with Queue Poller & Handoff Watchdog."""
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    print(f"🚀 Starting DAIO Autonomous Persistent Worker in: {PROJECT_ROOT}")
-    from daio_closed_loop.worker import run_persistent_worker
-    asyncio.run(run_persistent_worker(project_root=str(PROJECT_ROOT)))
+    print(f"🚀 Starting DAIO Autonomous Supervisor in: {PROJECT_ROOT}")
+    from daio_closed_loop.supervisor import run_supervisor
+    asyncio.run(run_supervisor(project_root=str(PROJECT_ROOT)))
 
 
 def main():

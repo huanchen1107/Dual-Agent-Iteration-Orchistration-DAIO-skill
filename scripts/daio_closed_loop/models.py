@@ -99,3 +99,34 @@ class DAIOWorkItem:
     created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class HandoffState(str, Enum):
+    SUCCESSOR_EXPECTED = "SUCCESSOR_EXPECTED"
+    SUCCESSOR_CREATED = "SUCCESSOR_CREATED"
+    WAITING_FOR_CLAIM = "WAITING_FOR_CLAIM"
+    CLAIMED = "CLAIMED"
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    STALLED_DIAGNOSING = "STALLED_DIAGNOSING"
+    STALLED_ESCALATED = "STALLED_ESCALATED"
+
+
+@dataclass
+class HandoffWatch:
+    watch_id: str
+    parent_work_id: str
+    expected_next_phase: str
+    successor_work_id: Optional[str] = None
+    created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    discovery_deadline: str = ""
+    claim_deadline: str = ""
+    first_heartbeat_deadline: str = ""
+    progress_deadline: str = ""
+    current_state: HandoffState = HandoffState.SUCCESSOR_EXPECTED
+    last_progress_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    recovery_attempt_count: int = 0
+    max_recovery_attempts: int = 3
+    escalation_state: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
