@@ -35,16 +35,29 @@ class DAIOStatus(str, Enum):
 
 
 TERMINAL_PHASES = {
+    "STAGE_5_COMPLETE",
+    "STAGE_COMPLETE",
+    "STAGE_6_COMPLETE",
+    "COMPLETE",
+    "DONE",
+    "TERMINAL",
     "STOP",
     "HUMAN_REVIEW",
     "HUMAN_GATE",
-    "STAGE_5_COMPLETE",
-    "STAGE_COMPLETE",
-    "ALL_COMPLETE",
-    "COMPLETE",
-    "TERMINAL",
     "NONE",
+    "NULL",
+    "EXIT",
+    "ABORT",
 }
+
+
+def is_terminal_phase(phase: Optional[str]) -> bool:
+    """Check if a phase string represents an absolute terminal state that stops execution or indicates completion with no further work."""
+    if not phase or not isinstance(phase, str):
+        return True
+    clean = phase.strip().upper()
+    return clean in TERMINAL_PHASES or clean == ""
+
 
 
 @dataclass

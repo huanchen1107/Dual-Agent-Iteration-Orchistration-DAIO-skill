@@ -12,6 +12,7 @@ from .models import (
     DAIOStatus,
     DAIOWorkItem,
     TERMINAL_PHASES,
+    is_terminal_phase,
 )
 from .router import DAIORoleRouter
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
@@ -74,18 +75,29 @@ class DAIOClosedLoopOrchestrator:
         """
         Idempotently resolve or create the next WorkItem for an authorized next_phase.
         Never invents work for terminal, stop, or empty phases.
+        Preserves provenance linking successor/root work items to the authorization that created them.
         """
         if not next_phase or not isinstance(next_phase, str):
             return None
 
         clean_phase = next_phase.strip().upper()
-        if not clean_phase or clean_phase in TERMINAL_PHASES:
+        if not clean_phase or is_terminal_phase(clean_phase):
             return None
 
-        # Deterministic work identity
+        # Determine work identity and root status
         safe_parent = completed_work.work_id.replace(" ", "_")
         safe_phase = next_phase.strip().replace(" ", "_").replace("/", "_")
-        next_work_id = f"{safe_parent}__to__{safe_phase}"
+
+        is_production_root = (
+            next_phase.strip().startswith("CHANGE_")
+            or completed_work.current_stage.startswith("STAGE_")
+            or "COMPLETE" in completed_work.current_stage.upper()
+        )
+
+        if is_production_root:
+            next_work_id = f"daio-root-{safe_phase.lower()}"
+        else:
+            next_work_id = f"{safe_parent}__to__{safe_phase.lower()}"
 
         # Check if already exists in store (idempotency)
         existing = self.store.load_work_item(next_work_id)
@@ -93,7 +105,8 @@ class DAIOClosedLoopOrchestrator:
             logger.info(f"NEXT_WORK_RECOVERED: work_id={existing.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
             return existing
 
-        # Create new work item with authorized context
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # Create new work item with authorized context & provenance
         next_work = DAIOWorkItem(
             work_id=next_work_id,
             parent_work_id=completed_work.work_id,
@@ -111,10 +124,17 @@ class DAIOClosedLoopOrchestrator:
             metadata={
                 "derived_from_work_id": completed_work.work_id,
                 "authorized_next_phase": next_phase.strip(),
+                "authorization_source": "ARCHITECT_POST_COMPLETION_HANDOFF" if is_production_root else "IN_CHAIN_SUCCESSOR",
+                "is_production_root": is_production_root,
+                "authorized_at": now_iso,
+                "parent_head_sha": completed_work.head_sha,
             }
         )
         self.store.save_work_item(next_work)
-        logger.info(f"NEXT_WORK_CREATED: work_id={next_work.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
+        if is_production_root:
+            logger.info(f"NEW_ROOT_WORK_ITEM_CREATED: work_id={next_work.work_id}, change_id={next_phase}, parent_id={completed_work.work_id}")
+        else:
+            logger.info(f"NEXT_WORK_CREATED: work_id={next_work.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
         return next_work
 
     async def run_autonomous_loop(self, work_id: str) -> DAIOWorkItem:
@@ -349,16 +369,25 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
             # Check if current work completed successfully and authorized a next phase
             if final_work.status == DAIOStatus.COMPLETED and final_work.last_decision == "APPROVE":
                 next_phase = final_work.authorized_next_phase
-                if next_phase and next_phase.strip().upper() not in TERMINAL_PHASES:
+                if next_phase and not is_terminal_phase(next_phase):
                     logger.info(f"NEXT_PHASE_AUTHORIZED: phase={next_phase}, authorized_by_work={final_work.work_id}")
                     next_work = self.resolve_next_work_item(final_work, next_phase)
                     if next_work and next_work.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
-                        # Claim lease for next item
+                        # Atomically claim the next work item
                         worker_id = f"worker-{uuid.uuid4().hex[:6]}"
-                        lease_id = self.store.acquire_lease(next_work.work_id, worker_id, ttl_seconds=300)
-                        if lease_id:
-                            logger.info(f"NEXT_WORK_CLAIMED: work_id={next_work.work_id}, worker={worker_id}, lease={lease_id}")
-                            self.store.release_lease(next_work.work_id, lease_id)
+                        claimed = None
+                        if hasattr(self.store, "claim_next_available_work_item"):
+                            claimed = self.store.claim_next_available_work_item(worker_id=worker_id, ttl_seconds=300)
+
+                        if claimed and claimed.work_id == next_work.work_id:
+                            logger.info(f"ROOT_WORK_CLAIMED: work_id={claimed.work_id}, worker={worker_id}, lease={claimed.lease_id}")
+                            # Release the queue lock so run_autonomous_loop can manage its own lease
+                            self.store.release_lease(claimed.work_id, claimed.lease_id)
+                            current_work_id = claimed.work_id
+                            continue
+                        elif self.store.acquire_lease(next_work.work_id, worker_id, ttl_seconds=300):
+                            logger.info(f"NEXT_WORK_CLAIMED: work_id={next_work.work_id}, worker={worker_id}")
+                            self.store.release_lease(next_work.work_id, worker_id)
                             current_work_id = next_work.work_id
                             continue
                         else:

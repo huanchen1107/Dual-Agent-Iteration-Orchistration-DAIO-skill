@@ -36,6 +36,10 @@ class DAIOWorkStore(ABC):
     def release_lease(self, work_id: str, lease_id: str) -> bool:
         raise NotImplementedError
 
+    @abstractmethod
+    def claim_next_available_work_item(self, worker_id: str, ttl_seconds: int = 300) -> Optional[DAIOWorkItem]:
+        raise NotImplementedError
+
 
 class SqliteDAIOWorkStore(DAIOWorkStore):
     """
@@ -304,6 +308,62 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         if not self._shared_conn:
             conn.close()
         return affected
+
+    def claim_next_available_work_item(self, worker_id: str, ttl_seconds: int = 300) -> Optional[DAIOWorkItem]:
+        """
+        Atomically claim the next runnable work item from the durable queue using SQLite transaction locking.
+        Guarantees exactly-once claim across concurrent workers (duplicate_work_claim_count == 0).
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        now_iso = now.isoformat()
+        new_lease_id = f"lease-{uuid.uuid4().hex[:8]}"
+        new_expires_at = (now + datetime.timedelta(seconds=ttl_seconds)).isoformat()
+
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+
+            # Find next runnable item (FIFO)
+            cursor.execute("""
+                SELECT work_id FROM daio_work_items
+                WHERE status IN ('QUEUED', 'AWAITING_REVIEW', 'IN_PROGRESS')
+                  AND (lease_id IS NULL OR lease_expires_at < ?)
+                ORDER BY created_at ASC
+                LIMIT 1
+            """, (now_iso,))
+            row = cursor.fetchone()
+            if not row:
+                conn.commit()
+                if not self._shared_conn:
+                    conn.close()
+                return None
+
+            claimed_work_id = row["work_id"]
+
+            cursor.execute("""
+                UPDATE daio_work_items
+                SET lease_id = ?, lease_expires_at = ?, claimed_by = ?, updated_at = ?
+                WHERE work_id = ?
+            """, (new_lease_id, new_expires_at, worker_id, now_iso, claimed_work_id))
+            conn.commit()
+
+            cursor.execute("SELECT * FROM daio_work_items WHERE work_id = ?", (claimed_work_id,))
+            claimed_row = cursor.fetchone()
+            res = self._row_to_work_item(claimed_row) if claimed_row else None
+            if not self._shared_conn:
+                conn.close()
+            return res
+
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            if not self._shared_conn:
+                conn.close()
+            logger.error(f"Error during claim_next_available_work_item: {e}")
+            return None
 
     def _row_to_work_item(self, row: sqlite3.Row) -> DAIOWorkItem:
         keys = row.keys()

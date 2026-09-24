@@ -117,21 +117,26 @@ async def run_daio_loop(
             logger.info(f"🔄 Resuming existing work item: {work.work_id}")
 
     if not work:
-        # Check if there is an existing pending or recoverable work item
-        existing_items = store.list_all_work_items()
-        for it in existing_items:
-            if it.status in {DAIOStatus.AWAITING_REVIEW, DAIOStatus.IN_PROGRESS, DAIOStatus.QUEUED}:
-                work = it
-                logger.info(f"🔄 NEXT_WORK_RECOVERED: Resuming pending work item: {work.work_id}")
-                break
-            elif it.status == DAIOStatus.COMPLETED and it.authorized_next_phase:
-                next_p = it.authorized_next_phase.strip().upper()
-                if next_p not in TERMINAL_PHASES:
-                    candidate = orchestrator.resolve_next_work_item(it, it.authorized_next_phase)
-                    if candidate and candidate.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
-                        work = candidate
-                        logger.info(f"🔄 NEXT_WORK_RECOVERED: Found uncompleted successor work item: {work.work_id}")
-                        break
+        # Check if there is an existing pending or recoverable work item from durable queue
+        claimed = store.claim_next_available_work_item(worker_id=f"worker-{uuid.uuid4().hex[:6]}", ttl_seconds=300)
+        if claimed:
+            work = claimed
+            store.release_lease(work.work_id, work.lease_id)
+            logger.info(f"🔄 ROOT_WORK_CLAIMED (from durable queue): {work.work_id}")
+        else:
+            existing_items = store.list_all_work_items()
+            for it in existing_items:
+                if it.status in {DAIOStatus.AWAITING_REVIEW, DAIOStatus.IN_PROGRESS, DAIOStatus.QUEUED}:
+                    work = it
+                    logger.info(f"🔄 NEXT_WORK_RECOVERED: Resuming pending work item: {work.work_id}")
+                    break
+                elif it.status == DAIOStatus.COMPLETED and it.authorized_next_phase:
+                    if not is_terminal_phase(it.authorized_next_phase):
+                        candidate = orchestrator.resolve_next_work_item(it, it.authorized_next_phase)
+                        if candidate and candidate.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
+                            work = candidate
+                            logger.info(f"🔄 NEXT_WORK_RECOVERED: Found uncompleted successor work item: {work.work_id}")
+                            break
 
     if not work:
         work = orchestrator.create_work_item(
