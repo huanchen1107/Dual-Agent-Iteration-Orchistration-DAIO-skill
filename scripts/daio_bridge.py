@@ -12,15 +12,10 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.request
 try:
-    try:
     import websockets
 except ImportError:
     import subprocess
-    subprocess.run([sys.executable, -m, pip, install, websockets, -q], check=False)
-    import websockets
-except ImportError:
-    import subprocess
-    subprocess.run([sys.executable, -m, pip, install, websockets, -q], check=False)
+    subprocess.run([sys.executable, "-m", "pip", "install", "websockets", "-q"], check=False)
     import websockets
 
 logger = logging.getLogger("DAIO_Bridge")

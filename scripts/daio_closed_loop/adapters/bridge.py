@@ -1,5 +1,5 @@
 """
-Architect Bridge Adapters for Generic DAIO Closed Loop.
+Architect Bridge Adapters for DAIO Closed Loop (Change 050 Milestone 3 & Generic DAIO v2.1).
 Connects to external Web LLM / ChatGPT Project tab via Chrome CDP WebSocket.
 """
 
@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -84,6 +86,14 @@ def parse_decision_from_text(response_text: str) -> ArchitectDecision:
     raise ValueError("Could not parse structured ArchitectDecision block from response text.")
 
 
+class ArchitectBridgeAdapter(ABC):
+    """Abstract interface for transmitting review requests to external Architect and receiving decisions."""
+
+    @abstractmethod
+    async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
+        raise NotImplementedError
+
+
 def discover_tab_by_endpoint(
     endpoint: Optional[Dict[str, Any]] = None,
     url_pattern: str = "chatgpt.com",
@@ -100,25 +110,27 @@ def discover_tab_by_endpoint(
     except Exception as e:
         raise RuntimeError(f"Could not connect to Chrome CDP at port {cdp_port}. Is Chrome running with --remote-debugging-port={cdp_port}? Error: {e}")
 
-    endpoint = endpoint or {}
-    conv_id = endpoint.get("conversation_id")
-    proj_id = endpoint.get("project_id")
-    canonical_url = endpoint.get("canonical_url")
-    routing_policy = endpoint.get("routing_policy", "EXACT_CONVERSATION")
+    ep = endpoint or {}
+    proj_id = ep.get("project_id")
+    conv_id = ep.get("conversation_id")
+    canonical_url = ep.get("canonical_url")
+    routing_policy = ep.get("routing_policy", "EXACT_CONVERSATION")
 
-    # 1. Exact match on conversation_id (Highest Priority)
+    # 1. Match on exact conversation_id
     if conv_id:
         for t in tabs:
-            if t.get("type") == "page" and conv_id in t.get("url", ""):
-                logger.info(f"Matched exact conversation tab: {t.get('title')} ({t.get('url')})")
-                return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+            if t.get("type") == "page":
+                tab_url = t.get("url", "")
+                if conv_id in tab_url and not ("auth/login" in tab_url or "api/auth" in tab_url):
+                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
 
-    # 2. Exact match on canonical_url
+    # 2. Match on canonical_url
     if canonical_url:
         for t in tabs:
-            if t.get("type") == "page" and canonical_url in t.get("url", ""):
-                logger.info(f"Matched exact canonical URL tab: {t.get('title')}")
-                return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+            if t.get("type") == "page":
+                tab_url = t.get("url", "")
+                if canonical_url in tab_url:
+                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
 
     # 3. Match on project_id if routing_policy allows PROJECT_LEVEL
     if proj_id and routing_policy == "PROJECT_LEVEL":
@@ -146,14 +158,6 @@ def discover_tab_by_endpoint(
     raise RuntimeError(f"No tab matched pattern '{url_pattern}'. Available tabs:\n" + "\n".join(available))
 
 
-class ArchitectBridgeAdapter(ABC):
-    """Abstract interface for transmitting review requests to external Architect and receiving decisions."""
-
-    @abstractmethod
-    async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
-        raise NotImplementedError
-
-
 class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
     """
     Live Chrome CDP WebSocket Bridge Adapter with Conversation-Aware Routing.
@@ -170,16 +174,29 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
         self.url_pattern = url_pattern
         self.cdp_port = cdp_port
 
-    async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
-        # Import CDP bridge client
+    def _get_cdp_client_class(self):
+        """Robustly import UniversalCDPClient across module and standalone packaging layouts."""
         try:
-            from ..daio_bridge import UniversalCDPClient
-        except Exception:
-            import sys
-            skill_scripts = str(Path(__file__).resolve().parents[1])
-            if skill_scripts not in sys.path:
-                sys.path.insert(0, skill_scripts)
-            from daio_bridge import UniversalCDPClient
+            from ...daio_bridge import UniversalCDPClient
+            return UniversalCDPClient
+        except (ImportError, ValueError):
+            pass
+
+        try:
+            from scripts.daio_bridge import UniversalCDPClient
+            return UniversalCDPClient
+        except (ImportError, ValueError):
+            pass
+
+        import sys
+        scripts_dir = str(Path(__file__).resolve().parent.parent.parent)
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from daio_bridge import UniversalCDPClient
+        return UniversalCDPClient
+
+    async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
+        UniversalCDPClient = self._get_cdp_client_class()
 
         # Combine work item endpoint with adapter endpoint
         effective_endpoint = dict(self.endpoint)
