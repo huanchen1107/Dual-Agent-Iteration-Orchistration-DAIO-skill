@@ -29,12 +29,22 @@ from .agent_contract import (
 class ExecutionResult:
     success: bool
     test_passed: bool
-    commit_sha: str = ""
+    base_sha: str = ""
+    head_sha: str = ""
+    generated_commit_sha: Optional[str] = None
     diff_files: List[str] = field(default_factory=list)
+    target_workspace_diff: List[str] = field(default_factory=list)
+    daio_control_plane_diff: List[str] = field(default_factory=list)
+    unauthorized_diff: List[str] = field(default_factory=list)
     output: str = ""
     error_message: Optional[str] = None
     scope_violation: bool = False
     proposal: Optional[AgentTaskProposal] = None
+
+    @property
+    def commit_sha(self) -> str:
+        """Backward-compatible alias: returns generated_commit_sha or empty string."""
+        return self.generated_commit_sha or ""
 
 
 class EngineeringExecutorAdapter(ABC):
@@ -104,17 +114,64 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 files.append(parts[1].strip())
         return files
 
+    def classify_diff_files(
+        self,
+        diff_files: List[str],
+        allowed_scope: List[str],
+        frozen_paths: Optional[List[str]] = None,
+    ) -> Tuple[List[str], List[str], List[str]]:
+        """
+        Classifies modified files into:
+        1. target_workspace_diff (files belonging to target application source/tests)
+        2. daio_control_plane_diff (DAIO runtime state, DB, configs, launcher)
+        3. unauthorized_diff (files that violate allowed_scope or touch frozen_paths)
+        """
+        target_ws: List[str] = []
+        control_plane: List[str] = []
+        unauthorized: List[str] = []
+
+        daio_control_patterns = [
+            "_daio/*", "_daio", ".daio/*", ".daio", "daio",
+            "_myplan_*", ".maomao*", "reports/*"
+        ]
+        frozen_patterns = frozen_paths or [".env*", "secrets/*"]
+
+        for f in diff_files:
+            norm_f = f.replace("\\", "/")
+            # Check if control plane
+            if any(
+                fnmatch.fnmatch(norm_f, pat)
+                or fnmatch.fnmatch(Path(norm_f).name, pat)
+                or norm_f.startswith("_daio/")
+                or norm_f.startswith(".daio/")
+                for pat in daio_control_patterns
+            ):
+                control_plane.append(norm_f)
+                continue
+
+            target_ws.append(norm_f)
+
+            # Check if in frozen paths
+            if any(fnmatch.fnmatch(norm_f, pat) or fnmatch.fnmatch(Path(norm_f).name, pat) for pat in frozen_patterns):
+                unauthorized.append(norm_f)
+                continue
+
+            # Check allowed scope
+            if allowed_scope:
+                matched = any(fnmatch.fnmatch(norm_f, pat) or fnmatch.fnmatch(Path(norm_f).name, pat) for pat in allowed_scope)
+                if not matched:
+                    unauthorized.append(norm_f)
+
+        return target_ws, control_plane, unauthorized
+
     def check_scope_violations(self, work: DAIOWorkItem, diff_files: List[str]) -> bool:
         """Enforce DAIO-002: Ensure modified files stay within allowed_scope."""
-        for f in diff_files:
-            # If allowed_scope is defined, check wildcard match
-            if work.allowed_scope:
-                matched = any(fnmatch.fnmatch(f, pat) or fnmatch.fnmatch(Path(f).name, pat) for pat in work.allowed_scope)
-                if not matched:
-                    # Allow internal metadata and docs
-                    if not (f.startswith("_myplan_") or f.startswith(".maomao") or f.startswith("_daio") or f.startswith("reports")):
-                        return True
-        return False
+        target_ws, control_plane, unauthorized = self.classify_diff_files(
+            diff_files,
+            work.allowed_scope,
+            getattr(work, "frozen_paths", None)
+        )
+        return len(unauthorized) > 0
 
     def _gather_context_files(self, allowed_scope: List[str]) -> Dict[str, str]:
         """Read existing files in allowed_scope to provide context to the agent."""
@@ -130,6 +187,7 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                         continue
         return context
 
+
     async def execute_task_async(
         self,
         work: DAIOWorkItem,
@@ -140,6 +198,7 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         """Asynchronous execution path: directly awaits agent proposal without nested event loops."""
         out_logs = []
         proposal = None
+        base_sha = self.get_current_head()
 
         # 1. If an agent adapter is configured and requested_action is provided, invoke Coding Agent
         if self.agent_adapter and work.requested_action:
@@ -153,13 +212,15 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 frozen_paths=getattr(work, "frozen_paths", ["src/frozen/*", ".env", "secrets/*"]),
                 context_files=context_files,
             )
-            
+
             proposal = await self.agent_adapter.propose_task_solution(req)
             if not proposal.success:
                 return ExecutionResult(
                     success=False,
                     test_passed=False,
-                    commit_sha=self.get_current_head(),
+                    base_sha=base_sha,
+                    head_sha=base_sha,
+                    generated_commit_sha=None,
                     output=f"Agent proposal failed: {proposal.error_message}",
                     error_message=proposal.error_message,
                     proposal=proposal
@@ -169,13 +230,17 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             root_path = Path(self.project_root)
             for edit in proposal.proposed_edits:
                 target_file = root_path / edit.file_path
+                norm_edit_path = edit.file_path.replace("\\", "/")
                 # Check scope
-                if work.allowed_scope and not any(fnmatch.fnmatch(edit.file_path, pat) for pat in work.allowed_scope):
+                if work.allowed_scope and not any(fnmatch.fnmatch(norm_edit_path, pat) or fnmatch.fnmatch(Path(norm_edit_path).name, pat) for pat in work.allowed_scope):
                     return ExecutionResult(
                         success=False,
                         test_passed=False,
-                        commit_sha=self.get_current_head(),
+                        base_sha=base_sha,
+                        head_sha=base_sha,
+                        generated_commit_sha=None,
                         scope_violation=True,
+                        unauthorized_diff=[norm_edit_path],
                         error_message=f"Agent proposed edit violates allowed_scope: {edit.file_path}",
                         proposal=proposal
                     )
@@ -190,7 +255,9 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 return ExecutionResult(
                     success=False,
                     test_passed=False,
-                    commit_sha=self.get_current_head(),
+                    base_sha=base_sha,
+                    head_sha=base_sha,
+                    generated_commit_sha=None,
                     output="\n".join(out_logs),
                     error_message=f"Command '{command}' failed with exit code {code}",
                 )
@@ -209,14 +276,25 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
 
         # 2. Check modified files & Scope Violations
         diff_files = self.get_modified_files()
-        if self.check_scope_violations(work, diff_files):
+        target_ws, control_plane, unauthorized = self.classify_diff_files(
+            diff_files,
+            work.allowed_scope,
+            getattr(work, "frozen_paths", None)
+        )
+
+        if unauthorized:
             return ExecutionResult(
                 success=False,
                 test_passed=False,
-                commit_sha=self.get_current_head(),
+                base_sha=base_sha,
+                head_sha=base_sha,
+                generated_commit_sha=None,
                 diff_files=diff_files,
+                target_workspace_diff=target_ws,
+                daio_control_plane_diff=control_plane,
+                unauthorized_diff=unauthorized,
                 output="\n".join(out_logs),
-                error_message="DAIO-002 Scope Violation: modified files violate allowed_scope.",
+                error_message=f"DAIO-002 Scope Violation: unauthorized workspace modifications: {unauthorized}",
                 scope_violation=True,
                 proposal=proposal
             )
@@ -231,8 +309,13 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             return ExecutionResult(
                 success=False,
                 test_passed=False,
-                commit_sha=self.get_current_head(),
+                base_sha=base_sha,
+                head_sha=base_sha,
+                generated_commit_sha=None,
                 diff_files=diff_files,
+                target_workspace_diff=target_ws,
+                daio_control_plane_diff=control_plane,
+                unauthorized_diff=[],
                 output="\n".join(out_logs),
                 error_message=f"Test Integrity Gate Failed (exit code {code}):\n{test_out}",
                 proposal=proposal
@@ -242,13 +325,18 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         self.run_cmd("git add .")
         msg = commit_message or f"feat(daio): automated execution for {work.change_id}"
         self.run_cmd(f"git commit -m '{msg}'")
-        head_sha = self.get_current_head()
+        new_head = self.get_current_head()
 
         return ExecutionResult(
             success=True,
             test_passed=True,
-            commit_sha=head_sha,
+            base_sha=base_sha,
+            head_sha=new_head,
+            generated_commit_sha=new_head,
             diff_files=diff_files,
+            target_workspace_diff=target_ws,
+            daio_control_plane_diff=control_plane,
+            unauthorized_diff=[],
             output="\n".join(out_logs),
             proposal=proposal
         )
@@ -280,4 +368,5 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 commit_message=commit_message,
             )
         )
+
 

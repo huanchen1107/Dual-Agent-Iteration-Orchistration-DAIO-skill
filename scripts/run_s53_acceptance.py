@@ -44,7 +44,6 @@ subprocess.run(["git", "config", "user.email", "worker@daio.io"], cwd=SANDBOX, c
 subprocess.run(["git", "add", "."], cwd=SANDBOX, check=True, capture_output=True)
 subprocess.run(["git", "commit", "-m", "chore: baseline data pipeline project"], cwd=SANDBOX, check=True, capture_output=True)
 base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SANDBOX, capture_output=True, text=True).stdout.strip()
-
 # 3. Install DAIO into Sandbox via canonical installer
 subprocess.run(["bash", str(REPO_ROOT / "install.sh"), str(SANDBOX)], check=True, capture_output=True)
 
@@ -63,6 +62,11 @@ daio_cfg = {
     "test_gate_command": "pytest tests/ -q"
 }
 (SANDBOX / "_daio" / "daio_config.json").write_text(json.dumps(daio_cfg, indent=2), encoding="utf-8")
+
+# Establish clean engineering baseline AFTER Generic DAIO installation/bootstrap
+subprocess.run(["git", "add", "."], cwd=SANDBOX, check=True, capture_output=True)
+subprocess.run(["git", "commit", "-m", "chore: baseline project with DAIO control plane initialized"], cwd=SANDBOX, check=True, capture_output=True)
+base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SANDBOX, capture_output=True, text=True).stdout.strip()
 
 print(f"🚀 HEADLESS_RUNTIME_STARTED: Phase S5.3 Acceptance Worker Active at {SANDBOX}")
 
@@ -137,11 +141,12 @@ Please provide your **real arbitrary engineering task** in the `REVISE` decision
     proposal = res.proposal
     print(f'📄 Agent Backend: {proposal.backend_identity if proposal else "UNKNOWN"}, Model: {proposal.model_name if proposal else "UNKNOWN"}')
     print(f'🔍 Proposed Edits: {[e.file_path for e in proposal.proposed_edits] if proposal else []}')
-    print(f'🛡️ DAIO Scope Guard: violation={res.scope_violation}, Modified Files: {res.diff_files}')
-    print(f'🧪 Test Integrity Gate: passed={res.test_passed}, Commit SHA: {res.commit_sha}')
+    print(f'🛡️ DAIO Scope Guard: violation={res.scope_violation}, Target Files: {res.target_workspace_diff}, Control Plane: {res.daio_control_plane_diff}')
+    print(f'🧪 Test Integrity Gate: passed={res.test_passed}, Commit SHA: {res.generated_commit_sha}')
 
     assert res.test_passed is True, f"Test gate failed: {res.error_message}"
-    assert res.scope_violation is False, "DAIO scope violation detected!"
+    assert res.scope_violation is False, f"DAIO scope violation detected: {res.unauthorized_diff}"
+    assert res.generated_commit_sha is not None, "Generated commit SHA must exist on success!"
 
     # --- Step 3: Record Observed Machine-Readable Evidence ---
     evidence = {
@@ -151,19 +156,23 @@ Please provide your **real arbitrary engineering task** in the `REVISE` decision
         "backend_identity": proposal.backend_identity if proposal else "UNKNOWN",
         "model_name": proposal.model_name if proposal else "UNKNOWN",
         "reasoning_summary": proposal.reasoning_summary if proposal else "",
-        "proposed_files": [e.file_path for e in proposal.proposed_edits] if proposal else [],
-        "accepted_diff_files": res.diff_files,
+        "proposed_agent_files": [e.file_path for e in proposal.proposed_edits] if proposal else [],
+        "applied_agent_files": [e.file_path for e in proposal.proposed_edits if not e.is_deletion] if proposal else [],
+        "target_workspace_diff": res.target_workspace_diff,
+        "daio_control_plane_diff": res.daio_control_plane_diff,
+        "unauthorized_diff": res.unauthorized_diff,
         "test_gate_passed": res.test_passed,
         "git_state": {
-            "base_sha": base_sha,
-            "commit_sha": res.commit_sha
+            "base_sha": res.base_sha,
+            "head_sha": res.head_sha,
+            "generated_commit_sha": res.generated_commit_sha
         },
         "metrics": {
             "human_relay_count": 0,
             "routine_permission_intervention_count": 0,
             "human_continue_count": 0,
             "hardcoded_solution_count": 0,
-            "unauthorized_scope_changes": 0
+            "unauthorized_scope_changes": len(res.unauthorized_diff)
         },
         "verdict": "PHASE_S5_3_PASS"
     }
@@ -184,9 +193,10 @@ The genuine **{agent_name}** (`/Users/huanchen/.local/bin/agy`) has autonomously
 - **Architect Instruction**: "{dec1.instruction}"
 - **Agent Backend**: `{proposal.backend_identity if proposal else 'UNKNOWN'}` (`{proposal.model_name if proposal else 'UNKNOWN'}`)
 - **Reasoning Summary**: "{proposal.reasoning_summary if proposal else ''}"
-- **Modified Files**: `{res.diff_files}`
+- **Target Workspace Diff**: `{res.target_workspace_diff}`
+- **DAIO Control Plane Diff**: `{res.daio_control_plane_diff}`
 - **Test Integrity Gate**: `pytest tests/ -q` $\\rightarrow$ 100% PASS
-- **Commit SHA**: `{res.commit_sha}`
+- **Generated Commit SHA**: `{res.generated_commit_sha}`
 
 ### 🛡️ Verified Invariants:
 - `human_relay_count`: 0
