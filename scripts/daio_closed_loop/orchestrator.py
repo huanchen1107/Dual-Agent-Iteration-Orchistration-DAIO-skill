@@ -285,6 +285,9 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
 
                         if work.status == DAIOStatus.COMPLETED:
                             logger.info(f"CURRENT_WORK_COMPLETED: work_id={work.work_id}, stage={work.current_stage}")
+                            if decision.next_phase and not is_terminal_phase(decision.next_phase):
+                                self.resolve_next_work_item(work, decision.next_phase)
+                            break
 
                     except Exception as ex:
                         consecutive_errors += 1

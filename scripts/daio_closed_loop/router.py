@@ -12,6 +12,7 @@ from .models import (
     DAIORole,
     DAIOStatus,
     DAIOWorkItem,
+    is_terminal_phase,
 )
 
 
@@ -51,6 +52,19 @@ class DAIORoleRouter:
             return work
 
         if decision.decision == "APPROVE":
+            # Check if this APPROVE authorized a distinct next phase
+            if (
+                decision.next_phase
+                and isinstance(decision.next_phase, str)
+                and decision.next_phase.strip()
+                and decision.next_phase.strip().upper() != work.current_stage.strip().upper()
+                and decision.next_phase.strip().upper() != work.change_id.strip().upper()
+                and not is_terminal_phase(decision.next_phase)
+            ):
+                work.status = DAIOStatus.COMPLETED
+                work.requested_action = decision.instruction or f"Completed {work.change_id} -> authorized {decision.next_phase}"
+                return work
+
             if work.current_gate == DAIOGate.CONTRACT_GATE:
                 # Contract Gate passed -> advance to Engineering Task
                 work.current_gate = DAIOGate.ENGINEERING_TASK

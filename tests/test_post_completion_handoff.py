@@ -25,6 +25,7 @@ from scripts.daio_closed_loop.models import (
 )
 from scripts.daio_closed_loop.store import SqliteDAIOWorkStore
 from scripts.daio_closed_loop.orchestrator import DAIOClosedLoopOrchestrator
+from scripts.daio_closed_loop.worker import DAIOPersistentWorker
 from scripts.daio_closed_loop.adapters.executor import ExecutionResult
 from scripts.daio_closed_loop.adapters.bridge import MockArchitectBridgeAdapter
 
@@ -370,5 +371,130 @@ def test_worker_kill_restart_between_contract_gate_and_decision_resumes_automati
     assert len(bridge2.call_history) == 1
     assert "IMPLEMENTATION_GATE" in bridge2.call_history[0]
     assert "Preflight analysis complete" in bridge2.call_history[0]
+
+
+def test_autonomous_continuation_on_approve_with_next_phase(tmp_path):
+    """
+    Scenario 8 (Regression test for DAIO-DEFECT-AUTONOMOUS-CONTINUATION-002):
+    Reproduces:
+    CHANGE_051_PREFLIGHT -> Architect APPROVE (next_phase='CHANGE_051_OPENSPEC_SCAFFOLD', action='RUN')
+    -> Successor work item daio-root-change_051_openspec_scaffold is created exactly once
+    -> Persistent worker autonomously claims and begins CHANGE_051_OPENSPEC_SCAFFOLD without human intervention.
+    """
+    db_file = str(tmp_path / "daio_continuation.db")
+    store = SqliteDAIOWorkStore(db_path=db_file)
+
+    # 1. Initial preflight root work item
+    preflight_work = DAIOWorkItem(
+        work_id="daio-root-change_051_preflight",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_PREFLIGHT",
+        current_stage="CHANGE_051_PREFLIGHT",
+        current_gate=DAIOGate.CONTRACT_GATE,
+        assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+        requested_action="Perform canonical preflight audit",
+        status=DAIOStatus.AWAITING_REVIEW,
+        architect_endpoint={"provider": "CHATGPT_WEB", "conversation_id": "test-conv-051"},
+        allowed_scope=["openspec/*"],
+    )
+    store.save_work_item(preflight_work)
+
+    # 2. Canned decisions:
+    # Turn 1: Architect APPROVE on preflight with next_phase=CHANGE_051_OPENSPEC_SCAFFOLD
+    # Turn 2: Architect REVISE/RUN on scaffold CONTRACT_GATE
+    # Turn 3: Architect APPROVE on scaffold IMPLEMENTATION_GATE
+    bridge = MockArchitectBridgeAdapter(canned_decisions=[
+        ArchitectDecision(
+            decision="APPROVE",
+            current_phase="CHANGE_051_PREFLIGHT",
+            next_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+            action="RUN",
+            human_approval_required=False,
+            instruction="Preflight verified. Proceed to OpenSpec scaffolding."
+        ),
+        ArchitectDecision(
+            decision="REVISE",
+            current_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+            next_phase=None,
+            action="RUN",
+            human_approval_required=False,
+            instruction="Create proposal.md, design.md, and tasks.md for Change 051."
+        ),
+        ArchitectDecision(
+            decision="APPROVE",
+            current_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+            next_phase=None,
+            action="PROCEED",
+            human_approval_required=False,
+            instruction="OpenSpec scaffolding verified."
+        ),
+    ])
+
+    mock_executor = MagicMock()
+    mock_executor.execute_task.return_value = ExecutionResult(
+        success=True,
+        test_passed=True,
+        base_sha="sha-init",
+        head_sha="sha-scaffold-pass",
+        generated_commit_sha="sha-scaffold-pass",
+        output="Created openspec/changes/051-0050-financial-research-assistant-e2e-vertical-slice scaffold."
+    )
+
+    worker = DAIOPersistentWorker(
+        project_root=str(tmp_path),
+        store=store,
+        executor=mock_executor,
+        bridge=bridge,
+        worker_id="worker-continuation-002",
+        poll_interval_seconds=0.05,
+    )
+
+    # 3. Iteration 1: Worker claims and completes preflight work item
+    completed_preflight = asyncio.run(worker.run_once())
+    assert completed_preflight is not None
+    assert completed_preflight.work_id == "daio-root-change_051_preflight"
+    assert completed_preflight.status == DAIOStatus.COMPLETED
+    assert completed_preflight.last_decision == "APPROVE"
+    assert completed_preflight.authorized_next_phase == "CHANGE_051_OPENSPEC_SCAFFOLD"
+
+    # 4. Verify successor work item was created and persisted in SQLite
+    successor_work = store.load_work_item("daio-root-change_051_openspec_scaffold")
+    assert successor_work is not None
+    assert successor_work.work_id == "daio-root-change_051_openspec_scaffold"
+    assert successor_work.change_id == "CHANGE_051_OPENSPEC_SCAFFOLD"
+    assert successor_work.parent_work_id == "daio-root-change_051_preflight"
+    assert successor_work.metadata["is_production_root"] is True
+    assert successor_work.metadata["derived_from_work_id"] == "daio-root-change_051_preflight"
+    assert successor_work.status == DAIOStatus.AWAITING_REVIEW
+
+    # 5. Iteration 2: Worker autonomously claims and executes successor work item
+    completed_scaffold = asyncio.run(worker.run_once())
+    assert completed_scaffold is not None
+    assert completed_scaffold.work_id == "daio-root-change_051_openspec_scaffold"
+    assert completed_scaffold.status == DAIOStatus.COMPLETED
+    assert completed_scaffold.last_decision == "APPROVE"
+
+    # 6. Verify zero-intervention invariants and database state
+    all_items = store.list_all_work_items()
+    assert len(all_items) == 2
+    item_ids = {it.work_id for it in all_items}
+    assert item_ids == {"daio-root-change_051_preflight", "daio-root-change_051_openspec_scaffold"}
+
+    for it in all_items:
+        assert it.human_relay_count == 0
+        assert it.status == DAIOStatus.COMPLETED
+
+    # 7. Verify call history to Lead Architect bridge
+    assert len(bridge.call_history) == 3
+    # Call 1: CONTRACT_GATE for preflight
+    assert "daio-root-change_051_preflight" in bridge.call_history[0]
+    assert "CONTRACT_GATE" in bridge.call_history[0]
+    # Call 2: CONTRACT_GATE for scaffold
+    assert "daio-root-change_051_openspec_scaffold" in bridge.call_history[1]
+    assert "CONTRACT_GATE" in bridge.call_history[1]
+    # Call 3: IMPLEMENTATION_GATE for scaffold
+    assert "daio-root-change_051_openspec_scaffold" in bridge.call_history[2]
+    assert "IMPLEMENTATION_GATE" in bridge.call_history[2]
+
 
 
