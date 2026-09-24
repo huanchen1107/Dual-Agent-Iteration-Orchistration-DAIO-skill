@@ -339,8 +339,9 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         )
                         if not hasattr(work, "metadata") or work.metadata is None:
                             work.metadata = {}
-                        if exec_res.proposal and exec_res.proposal.explanation:
-                            work.metadata["last_execution_report"] = exec_res.proposal.explanation
+                        if exec_res.proposal:
+                            report = getattr(exec_res.proposal, "reasoning_summary", "") or getattr(exec_res.proposal, "raw_response", "") or exec_res.output
+                            work.metadata["last_execution_report"] = report
                         elif exec_res.output:
                             work.metadata["last_execution_report"] = exec_res.output
 
