@@ -171,6 +171,7 @@ Ensure the entire response is wrapped in a ```json code fence.
             self.cli_path,
             "--print", prompt_text,
             "--output-format", "json",
+            "--disable-slash-commands",
             "--add-dir", request.project_root,
         ]
         if self.model_name and self.model_name != "antigravity-cli-default":

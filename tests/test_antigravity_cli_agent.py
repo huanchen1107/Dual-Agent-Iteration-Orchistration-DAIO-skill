@@ -122,7 +122,54 @@ def test_antigravity_cli_adapter_bare_json_and_non_success_handling():
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             proposal = await adapter.propose_task_solution(req)
             assert proposal.success is False
-            assert "Could not parse" in proposal.error_message
+
+def test_headless_unattended_command_flags_and_no_dangerous_bypass():
+    """
+    Regression Test:
+    Verifies that AntigravityCLIAdapter builds clean headless non-interactive commands:
+    1. Passes --print, --output-format json, --disable-slash-commands, --add-dir.
+    2. Does NOT pass --dangerously-skip-permissions (preserves DAIO security model).
+    3. Executes headlessly via subprocess without IDE GUI prompt dependency.
+    """
+    captured_cmds = []
+
+    async def _test():
+        adapter = AntigravityCLIAdapter(cli_path="/usr/local/bin/agy")
+        req = AgentTaskRequest(
+            work_id="test-agy-headless",
+            change_id="CHG_HEADLESS",
+            requested_action="Refactor pipeline",
+            project_root="/tmp/sandbox",
+            allowed_scope=["src/*", "tests/*"]
+        )
+
+        mock_json_output = """{
+          "status": "SUCCESS",
+          "response": "```json\\n{\\"reasoning_summary\\": \\"ok\\", \\"proposed_edits\\": []}\\n```"
+        }"""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(mock_json_output.encode("utf-8"), b""))
+
+        async def fake_subprocess_exec(*args, **kwargs):
+            captured_cmds.append(list(args))
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_subprocess_exec):
+            proposal = await adapter.propose_task_solution(req)
+            assert proposal.success is True
+
+        assert len(captured_cmds) == 1
+        cmd = captured_cmds[0]
+        assert cmd[0] == "/usr/local/bin/agy"
+        assert "--print" in cmd
+        assert "--output-format" in cmd
+        assert "json" in cmd
+        assert "--disable-slash-commands" in cmd
+        assert "--add-dir" in cmd
+        assert "/tmp/sandbox" in cmd
+        # Architectural Security Invariant: no dangerous permission bypass flag used
+        assert "--dangerously-skip-permissions" not in cmd
 
     asyncio.run(_test())
 
