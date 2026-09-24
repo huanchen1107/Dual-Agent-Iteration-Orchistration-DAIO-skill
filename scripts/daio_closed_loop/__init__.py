@@ -13,6 +13,7 @@ from .models import (
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
 from .router import DAIORoleRouter
 from .orchestrator import DAIOClosedLoopOrchestrator
+from .worker import DAIOPersistentWorker, run_persistent_worker
 
 __all__ = [
     "ArchitectDecision",
@@ -24,4 +25,7 @@ __all__ = [
     "SqliteDAIOWorkStore",
     "DAIORoleRouter",
     "DAIOClosedLoopOrchestrator",
+    "DAIOPersistentWorker",
+    "run_persistent_worker",
 ]
+

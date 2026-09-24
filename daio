@@ -143,14 +143,10 @@ def do_status():
 
 
 def do_start():
-    """Start DAIO Autonomous Closed-Loop Worker."""
-    print(f"🚀 Starting DAIO Autonomous Worker in: {PROJECT_ROOT}")
-    from daio_closed_loop.runner import run_daio_loop
-    res = asyncio.run(run_daio_loop(
-        project_root=str(PROJECT_ROOT),
-        mock_fallback_if_no_cdp=False,
-    ))
-    print(json.dumps(res, indent=2, ensure_ascii=False))
+    """Start DAIO Autonomous Closed-Loop Persistent Worker."""
+    print(f"🚀 Starting DAIO Autonomous Persistent Worker in: {PROJECT_ROOT}")
+    from daio_closed_loop.worker import run_persistent_worker
+    asyncio.run(run_persistent_worker(project_root=str(PROJECT_ROOT)))
 
 
 def main():

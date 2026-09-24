@@ -264,3 +264,111 @@ def test_root_work_contract_gate_revise_run_full_execution_callback_and_recovery
     assert reloaded.status == DAIOStatus.COMPLETED
     assert reloaded.parent_work_id == "daio-stage5-acceptance-final"
 
+
+def test_worker_kill_restart_between_contract_gate_and_decision_resumes_automatically(tmp_path):
+    """
+    Scenario 7 (Integration):
+    Worker 1 processes CONTRACT_GATE -> Lead Architect returns REVISE / RUN -> decision is persisted.
+    Worker 1 is killed / crashes.
+    Worker 2 (persistent daemon) starts up, autonomously discovers the existing uncompleted work item,
+    claims it exactly once without creating a duplicate item, executes the engineering turn,
+    transmits the callback to the Lead Architect at IMPLEMENTATION_GATE, and completes.
+    """
+    from scripts.daio_closed_loop.worker import DAIOPersistentWorker
+    from scripts.daio_closed_loop.router import DAIORoleRouter
+
+    db_file = str(tmp_path / "daio_restart_cycle.db")
+    store = SqliteDAIOWorkStore(db_path=db_file)
+
+    # 1. Create durable root work item at CONTRACT_GATE
+    root_work = DAIOWorkItem(
+        work_id="daio-root-change_051_preflight",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_PREFLIGHT",
+        current_stage="CHANGE_051_PREFLIGHT",
+        current_gate=DAIOGate.CONTRACT_GATE,
+        assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+        status=DAIOStatus.AWAITING_REVIEW,
+        parent_work_id="daio-stage5-final",
+        allowed_scope=["src/*", "tests/*"],
+        base_sha="sha-init",
+        head_sha="sha-init"
+    )
+    store.save_work_item(root_work)
+
+    # 2. Worker 1 claims and transmits CONTRACT_GATE
+    claim1 = store.claim_next_available_work_item(worker_id="worker-1-instance", ttl_seconds=300)
+    assert claim1 is not None
+    assert claim1.work_id == "daio-root-change_051_preflight"
+
+    # Simulate Architect returning REVISE / RUN at CONTRACT_GATE
+    decision1 = ArchitectDecision(
+        decision="REVISE",
+        current_phase="CHANGE_051_PREFLIGHT",
+        action="RUN",
+        instruction="Perform read-only preflight analysis",
+        human_approval_required=False
+    )
+    routed_work = DAIORoleRouter.process_architect_review(claim1, decision1, DAIORole.LEAD_ARCHITECT_REVIEW)
+    store.save_work_item(routed_work)
+
+    # 3. Simulate Worker 1 CRASH / KILL:
+    # Release or expire lease to simulate process death
+    store.release_lease(routed_work.work_id, routed_work.lease_id)
+
+    # Verify state in database is IN_PROGRESS at ENGINEERING_TASK
+    persisted = store.load_work_item("daio-root-change_051_preflight")
+    assert persisted.status == DAIOStatus.IN_PROGRESS
+    assert persisted.current_gate == DAIOGate.ENGINEERING_TASK
+    assert persisted.assigned_role == DAIORole.ENGINEERING_EXECUTION
+
+    # 4. Worker 2 starts up (new process / daemon instance)
+    mock_executor = MagicMock()
+    mock_executor.execute_task.return_value = ExecutionResult(
+        success=True,
+        test_passed=True,
+        base_sha="sha-init",
+        head_sha="sha-init",
+        generated_commit_sha="sha-init",
+        output="Preflight analysis complete: all governance rules checked."
+    )
+
+    # Lead Architect returns APPROVE at IMPLEMENTATION_GATE
+    bridge2 = MockArchitectBridgeAdapter(canned_decisions=[
+        ArchitectDecision(
+            decision="APPROVE",
+            current_phase="CHANGE_051_PREFLIGHT",
+            action="PROCEED",
+            instruction="Preflight analysis verified and approved",
+            human_approval_required=False
+        )
+    ])
+
+    worker2 = DAIOPersistentWorker(
+        project_root=str(tmp_path),
+        store=store,
+        executor=mock_executor,
+        bridge=bridge2,
+        worker_id="worker-2-daemon",
+        poll_interval_seconds=0.1
+    )
+
+    # 5. Worker 2 executes one iteration of the persistent loop
+    completed_item = asyncio.run(worker2.run_once())
+
+    # 6. Verify assertions
+    assert completed_item is not None
+    assert completed_item.work_id == "daio-root-change_051_preflight"
+    assert completed_item.status == DAIOStatus.COMPLETED
+    assert completed_item.last_decision == "APPROVE"
+
+    # Verify that NO duplicate work items were created in the store
+    all_items = store.list_all_work_items()
+    assert len(all_items) == 1, f"Expected exactly 1 work item in database, but found {len(all_items)}: {[it.work_id for it in all_items]}"
+
+    # Verify that the callback to Architect included the preflight execution report
+    assert len(bridge2.call_history) == 1
+    assert "IMPLEMENTATION_GATE" in bridge2.call_history[0]
+    assert "Preflight analysis complete" in bridge2.call_history[0]
+
+

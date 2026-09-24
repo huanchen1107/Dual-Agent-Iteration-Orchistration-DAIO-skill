@@ -325,14 +325,14 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         try:
             cursor.execute("BEGIN IMMEDIATE")
 
-            # Find next runnable item (FIFO)
+            # Find next runnable item (FIFO): unassigned, lease expired, or re-claimed by same worker
             cursor.execute("""
                 SELECT work_id FROM daio_work_items
                 WHERE status IN ('QUEUED', 'AWAITING_REVIEW', 'IN_PROGRESS')
-                  AND (lease_id IS NULL OR lease_expires_at < ?)
+                  AND (lease_id IS NULL OR lease_expires_at < ? OR claimed_by = ?)
                 ORDER BY created_at ASC
                 LIMIT 1
-            """, (now_iso,))
+            """, (now_iso, worker_id))
             row = cursor.fetchone()
             if not row:
                 conn.commit()
