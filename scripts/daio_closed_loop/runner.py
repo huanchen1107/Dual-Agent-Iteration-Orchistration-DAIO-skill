@@ -60,9 +60,10 @@ async def run_daio_loop(
     start_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     # 1. Initialize SQLite store & Executor
-    db_file = str(root_path / "_daio" / "daio_work_state.db")
-    store = SqliteDAIOWorkStore(db_file)
-    executor = SubprocessWorkspaceExecutor(project_root=str(root_path))
+    db_file = root_path / "_daio" / "daio_work.db"
+    if not db_file.exists():
+        db_file = root_path / "_daio" / "daio_work_state.db"
+    store = SqliteDAIOWorkStore(str(db_file))
 
     # Load local daio_config.json if available
     config_file = root_path / "_daio" / "daio_config.json"
@@ -71,15 +72,21 @@ async def run_daio_loop(
 
     endpoint_config = {}
     default_test_cmd = None
+    agent_provider = "AUTO"
     if config_file.exists():
         try:
             cfg = json.loads(config_file.read_text(encoding="utf-8"))
             endpoint_config = cfg.get("architect_endpoint", {})
             cdp_port = cfg.get("cdp_port", cdp_port)
             default_test_cmd = cfg.get("test_gate_command")
-            logger.info(f"Loaded config from {config_file.name}: conv_id={endpoint_config.get('conversation_id')}")
+            agent_provider = cfg.get("provider", "AUTO")
+            logger.info(f"Loaded config from {config_file.name}: conv_id={endpoint_config.get('conversation_id')}, provider={agent_provider}")
         except Exception as ex:
             logger.warning(f"Could not load {config_file}: {ex}")
+
+    from .adapters.factory import create_engineering_agent_adapter
+    agent = create_engineering_agent_adapter({"provider": agent_provider})
+    executor = SubprocessWorkspaceExecutor(project_root=str(root_path), agent_adapter=agent)
 
     # Initialize Bridge
     bridge = None
