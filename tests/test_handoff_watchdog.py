@@ -295,3 +295,126 @@ def test_supervisor_end_to_end_regression_stall_and_recovery(tmp_path):
     assert final_scaffold.status == DAIOStatus.COMPLETED
     assert final_scaffold.last_decision == "APPROVE"
     assert final_scaffold.human_relay_count == 0
+
+
+def test_deliberate_unrecoverable_stall_causes_handoff_stalled_without_ide(tmp_path):
+    """
+    Proves that when a successor is genuinely unrecoverable (e.g. invalid state and exhausted recovery budget),
+    the watchdog automatically transitions to STALLED_ESCALATED and emits HANDOFF_STALLED report without IDE intervention.
+    """
+    db_file = str(tmp_path / "daio_stall_test.db")
+    store = SqliteDAIOWorkStore(db_path=db_file)
+
+    parent = DAIOWorkItem(
+        work_id="parent-unrecoverable",
+        project_root=str(tmp_path),
+        change_id="PHASE_PREV",
+        status=DAIOStatus.COMPLETED,
+        authorized_next_phase="PHASE_UNRECOVERABLE",
+    )
+    store.save_work_item(parent)
+
+    watchdog = DAIOHandoffWatchdog(
+        store=store,
+        project_root=str(tmp_path),
+        discovery_timeout_seconds=0.01,
+        claim_timeout_seconds=0.01,
+        max_recovery_attempts=1,
+    )
+
+    watch = watchdog.register_handoff(parent, "PHASE_UNRECOVERABLE")
+
+    # Pass 1: Stall detected -> attempt 1
+    future1 = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1)
+    res1 = watchdog.evaluate_watches(now=future1)
+    assert len(res1) == 1
+
+    # Pass 2: Recovery exhausted -> escalate
+    future2 = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2)
+    res2 = watchdog.evaluate_watches(now=future2)
+    assert len(res2) == 1
+    assert res2[0]["status"] == "ESCALATED"
+    assert res2[0]["escalation"]["event"] == "HANDOFF_STALLED"
+    assert res2[0]["escalation"]["expected_next_phase"] == "PHASE_UNRECOVERABLE"
+
+
+def test_supervisor_antigravity_cli_contract_stage_closed_loop(tmp_path):
+    """
+    Proves that Lead Architect APPROVE/REVISE is ingested, existing CHANGE_051_OPENSPEC_SCAFFOLD
+    is claimed by the supervisor/worker, executed via AntigravityCLIAdapter / Mock executor,
+    and returns verified deliverables back to the Lead Architect.
+    """
+    db_file = str(tmp_path / "daio_agy_loop.db")
+    store = SqliteDAIOWorkStore(db_path=db_file)
+
+    # Preflight parent completed
+    preflight = DAIOWorkItem(
+        work_id="daio-root-change_051_preflight",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_PREFLIGHT",
+        status=DAIOStatus.COMPLETED,
+        authorized_next_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+        last_decision="APPROVE",
+    )
+    store.save_work_item(preflight)
+
+    # Scaffold item in AWAITING_REVIEW
+    scaffold = DAIOWorkItem(
+        work_id="daio-root-change_051_openspec_scaffold",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_OPENSPEC_SCAFFOLD",
+        current_stage="CHANGE_051_OPENSPEC_SCAFFOLD",
+        current_gate=DAIOGate.CONTRACT_GATE,
+        assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+        status=DAIOStatus.AWAITING_REVIEW,
+        parent_work_id="daio-root-change_051_preflight",
+        allowed_scope=["openspec/**"],
+    )
+    store.save_work_item(scaffold)
+
+    bridge = MockArchitectBridgeAdapter(canned_decisions=[
+        ArchitectDecision(
+            decision="REVISE",
+            current_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+            action="RUN",
+            instruction="Author OpenSpec scaffold for Change 051",
+            human_approval_required=False,
+        ),
+        ArchitectDecision(
+            decision="APPROVE",
+            current_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+            action="PROCEED",
+            instruction="OpenSpec scaffold accepted",
+            human_approval_required=False,
+        ),
+    ])
+
+    mock_executor = MagicMock()
+    mock_executor.execute_task.return_value = ExecutionResult(
+        success=True,
+        test_passed=True,
+        base_sha="sha-init",
+        head_sha="sha-scaffold-051",
+        generated_commit_sha="sha-scaffold-051",
+        diff_files=["openspec/changes/051-0050-financial-research-assistant-e2e-vertical-slice/proposal.md"],
+        output="Created Change 051 OpenSpec scaffold proposal.",
+    )
+
+    supervisor = DAIOSupervisor(
+        project_root=str(tmp_path),
+        store=store,
+        executor=mock_executor,
+        bridge=bridge,
+        supervisor_id="supervisor-prod-e2e",
+        poll_interval_seconds=0.01,
+    )
+
+    # Tick 1 processes the work item through REVISE -> RUN -> Execution -> IMPLEMENTATION_GATE -> APPROVE -> COMPLETED
+    tick_res = asyncio.run(supervisor.run_tick())
+    assert tick_res["worker_processed_item"] == "daio-root-change_051_openspec_scaffold"
+
+    final_item = store.load_work_item("daio-root-change_051_openspec_scaffold")
+    assert final_item.status == DAIOStatus.COMPLETED
+    assert final_item.last_decision == "APPROVE"
+    assert len(bridge.call_history) == 2
+

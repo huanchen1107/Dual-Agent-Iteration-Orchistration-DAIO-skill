@@ -333,6 +333,19 @@ class DAIOHandoffWatchdog:
                 recovered = True
                 logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Released stale lease on {successor.work_id} to re-enable queue claiming")
 
+        # Action 3: Reset BLOCKED status if recovery budget allows
+        if diagnostics.get("successor_found") and not recovered:
+            successor = self.store.load_work_item(watch.successor_work_id)
+            if successor and successor.status == DAIOStatus.BLOCKED and successor.attempt_count < successor.max_attempts:
+                successor.status = DAIOStatus.IN_PROGRESS
+                successor.lease_id = None
+                successor.lease_expires_at = None
+                successor.claimed_by = None
+                self.store.save_work_item(successor)
+                watch.current_state = HandoffState.WAITING_FOR_CLAIM
+                recovered = True
+                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Reset BLOCKED status on {successor.work_id} for retry")
+
         return recovered
 
     def escalate_stall(self, watch: HandoffWatch, diagnostics: Dict[str, Any]) -> Dict[str, Any]:
@@ -356,6 +369,42 @@ class DAIOHandoffWatchdog:
         }
 
         logger.error(f"🚨 HANDOFF_STALLED_ESCALATION: {json.dumps(report, indent=2)}")
+
+        # Transmit to Architect conversation over bridge if available
+        if self.bridge and hasattr(self.bridge, "transmit_review_request"):
+            try:
+                stall_msg = f"""🚨 **[DAIO HANDOFF STALLED ESCALATION]**
+
+- **Stalled Work ID:** `{watch.successor_work_id or watch.parent_work_id}`
+- **Expected Next Phase:** `{watch.expected_next_phase}`
+- **Elapsed Duration:** `{elapsed_seconds}s`
+- **Diagnosed Root Cause:** `{diagnostics.get('stall_reason', 'UNKNOWN_STALL')}`
+- **Recovery Attempts:** `{watch.recovery_attempt_count}/{watch.max_recovery_attempts}`
+
+```json
+{json.dumps(report, indent=2)}
+```
+"""
+                # Schedule bridge dispatch if in event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    if loop.is_running():
+                        fake_work = DAIOWorkItem(
+                            work_id=watch.successor_work_id or watch.parent_work_id,
+                            project_root=str(self.project_root),
+                            change_id=watch.expected_next_phase,
+                            current_stage=watch.expected_next_phase,
+                            current_gate=DAIOGate.HUMAN_GATE,
+                            assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+                            requested_action="HANDOFF_STALLED ESCALATION",
+                            allowed_scope=[],
+                        )
+                        loop.create_task(self.bridge.transmit_review_request(fake_work, stall_msg))
+                except RuntimeError:
+                    pass
+            except Exception as ex:
+                logger.warning(f"Could not transmit stall escalation via bridge: {ex}")
+
         return report
 
     def get_status_summary(self) -> str:
