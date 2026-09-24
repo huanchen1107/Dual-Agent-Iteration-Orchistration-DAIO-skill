@@ -1,109 +1,163 @@
 #!/usr/bin/env python3
-"""DAIO (Dual-Agent Iteration Orchestrator) One-Click CLI.
+"""DAIO (Dual-Agent Iteration Orchestrator) Productized CLI (Generic DAIO v2.1).
 
 Usage:
-    ./daio          # Start autonomous dual-agent iteration loop
-    ./daio board    # Open visual live taskboard in browser
-    ./daio status   # Print current phase, taskboard state & safety breaker metrics
+    daio init       # Initialize DAIO environment in current project
+    daio start      # Start autonomous dual-agent closed-loop worker
+    daio doctor     # Diagnose environment, CLI backend, and CDP connectivity
+    daio status     # Print current active work items, stage, and metrics
+    daio board      # Open visual live taskboard in browser
 """
 import argparse
 import asyncio
+import json
 import os
+from pathlib import Path
+import shutil
 import subprocess
 import sys
-from pathlib import Path
+import urllib.request
 
-# Add project root to sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(PROJECT_ROOT))
+PROJECT_ROOT = Path.cwd()
 
-def open_board():
-    """Open taskboard.html in default system browser."""
-    board_path = PROJECT_ROOT / "taskboard.html"
-    if not board_path.exists():
-        print(f"❌ taskboard.html not found at {board_path}")
+# Add script resolution paths
+for p in [
+    PROJECT_ROOT / "_daio" / "scripts",
+    PROJECT_ROOT / "scripts",
+    Path(__file__).resolve().parent / "scripts",
+    PROJECT_ROOT
+]:
+    if p.exists() and str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+
+def do_init():
+    """Initialize DAIO control-plane directory and configuration in target project."""
+    daio_dir = PROJECT_ROOT / "_daio"
+    daio_dir.mkdir(parents=True, exist_ok=True)
+    (daio_dir / "evidence").mkdir(parents=True, exist_ok=True)
+
+    cfg_file = daio_dir / "daio_config.json"
+    if not cfg_file.exists():
+        default_cfg = {
+            "project_name": PROJECT_ROOT.name,
+            "provider": "AUTO",
+            "architect_endpoint": {
+                "provider": "CHATGPT_WEB",
+                "routing_policy": "EXACT_CONVERSATION"
+            },
+            "cdp_url": "http://127.0.0.1:9222",
+            "test_gate_command": "pytest tests/ -q",
+            "allowed_scope": ["src/*", "tests/*"],
+            "frozen_paths": [".env*", "secrets/*"]
+        }
+        cfg_file.write_text(json.dumps(default_cfg, indent=2), encoding="utf-8")
+        print(f"📄 Created default configuration at: {cfg_file}")
+    else:
+        print(f"ℹ️ Existing configuration found at: {cfg_file}")
+
+    print(f"✅ DAIO initialized successfully in {PROJECT_ROOT}")
+
+
+def do_doctor():
+    """Diagnose local system environment, coding agent backends, and CDP."""
+    print("=" * 70)
+    print("🩺 DAIO Doctor — System & Backend Capability Diagnostics")
+    print("=" * 70)
+    print(f"📁 Project Root : {PROJECT_ROOT}")
+    print(f"🐍 Python Version: {sys.version.split()[0]} ({sys.executable})")
+
+    # 1. Check Antigravity CLI ('agy')
+    agy_path = shutil.which("agy") or str(Path.home() / ".local" / "bin" / "agy")
+    if agy_path and os.path.exists(agy_path) and os.access(agy_path, os.X_OK):
+        try:
+            ver = subprocess.run([agy_path, "--version"], capture_output=True, text=True, timeout=5).stdout.strip()
+            print(f"🤖 Antigravity CLI: FOUND ({agy_path}) -> Version {ver}")
+        except Exception as e:
+            print(f"🤖 Antigravity CLI: FOUND ({agy_path}) but failed checking version: {e}")
+    else:
+        print("🤖 Antigravity CLI: NOT FOUND (Install with: curl -fsSL https://antigravity.google/cli/install.sh | bash)")
+
+    # 2. Check Gemini Credentials
+    has_gemini = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    print(f"🔑 Gemini API Key : {'CONFIGURED' if has_gemini else 'NOT FOUND (Optional fallback)'}")
+
+    # 3. Check Chrome CDP Port 9222
+    try:
+        req = urllib.request.urlopen("http://localhost:9222/json/version", timeout=3)
+        data = json.loads(req.read().decode("utf-8"))
+        print(f"🌐 Chrome CDP Port 9222 : CONNECTED ({data.get('Browser', 'Chrome')})")
+    except Exception as e:
+        print(f"🌐 Chrome CDP Port 9222 : DISCONNECTED ({e})")
+        print("   (To enable: /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222)")
+
+    # 4. Check Git Status
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, capture_output=True, text=True).stdout.strip()
+        print(f"📦 Git Repository : READY (HEAD: {head[:8]})")
+    except Exception:
+        print("📦 Git Repository : NOT INITIALIZED (Run 'git init')")
+
+    print("=" * 70)
+
+
+def do_status():
+    """Print current DAIO work item status."""
+    db_path = PROJECT_ROOT / "_daio" / "daio_work.db"
+    if not db_path.exists():
+        print(f"ℹ️ No active DAIO database at {db_path}. Run 'daio init' first.")
         return
-    print(f"📊 Opening DAIO Live Taskboard: {board_path}")
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(board_path)])
-    elif sys.platform.startswith("linux"):
-        subprocess.run(["xdg-open", str(board_path)])
-    elif sys.platform == "win32":
-        os.startfile(str(board_path))
 
-def show_status():
-    """Show current taskboard status."""
-    from skills.daio.scripts.daio_taskboard import TaskboardManager
-    tb = TaskboardManager(str(PROJECT_ROOT))
-    print("=" * 70)
-    print("🤖 DAIO Dual-Agent System Status")
-    print("=" * 70)
-    print(f"📁 Project Root : {PROJECT_ROOT.name}")
-    print(f"📋 Total Tasks  : {len(tb.tasks)}")
-    print(f"📜 Audit Events : {len(tb.history)}")
-    print("\n--- Tasks State ---")
-    for t in tb.tasks:
-        st = t.get("status", "TODO")
-        sym = "✅" if st == "DONE" else ("⚙️" if st == "IN_PROGRESS" else ("🧐" if st == "REVIEW" else "📝"))
-        phase = t.get("phase", "N/A")
-        print(f" {sym} [{st:<12}] {phase:<12} : {t.get('title')}")
-    print("=" * 70)
+    try:
+        from daio_closed_loop.store import SqliteDAIOWorkStore
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+        items = store.list_all_work_items()
+        print("=" * 70)
+        print("🤖 DAIO Work Board Status")
+        print("=" * 70)
+        print(f"Total Work Items: {len(items)}")
+        for w in items:
+            sym = "✅" if w.status == "COMPLETED" else "⚙️"
+            print(f" {sym} [{w.status:<14}] Gate: {w.current_gate.value:<16} | Work ID: {w.work_id} | Stage: {w.current_stage}")
+            if w.requested_action:
+                print(f"    Action: {w.requested_action[:80]}")
+        print("=" * 70)
+    except Exception as e:
+        print(f"❌ Error reading status: {e}")
 
-def run_loop(auto_open_board: bool = False):
-    """Run DAIO Autonomous Loop."""
-    from skills.daio.scripts.daio_orchestrator import UniversalDAIO
-    from skills.daio.scripts.daio_taskboard import TaskboardManager
-    
-    # Refresh board state first
-    tb = TaskboardManager(str(PROJECT_ROOT))
-    tb.save()
-    
-    if auto_open_board:
-        open_board()
-    
-    print("🚀 Starting DAIO Autonomous Orchestration Loop...")
-    orchestrator = UniversalDAIO(
-        config_path=str(PROJECT_ROOT / "daio_config.json") if (PROJECT_ROOT / "daio_config.json").exists() else None
-    )
-    asyncio.run(orchestrator.run_autonomous_loop())
 
-def run_closed_loop():
-    """Run Generic DAIO Autonomous Closed Loop (v2.1)."""
-    # Import generic closed loop runner
-    skill_dir = Path(__file__).resolve().parent
-    sys.path.insert(0, str(skill_dir / "scripts"))
+def do_start():
+    """Start DAIO Autonomous Closed-Loop Worker."""
+    print(f"🚀 Starting DAIO Autonomous Worker in: {PROJECT_ROOT}")
     from daio_closed_loop.runner import run_daio_loop
-    print("🚀 Starting DAIO Autonomous Closed Loop Engine...")
     res = asyncio.run(run_daio_loop(
         project_root=str(PROJECT_ROOT),
         mock_fallback_if_no_cdp=False,
     ))
     print(json.dumps(res, indent=2, ensure_ascii=False))
 
+
 def main():
-    parser = argparse.ArgumentParser(description="DAIO One-Click CLI")
-    parser.add_argument("action", nargs="?", default="run", choices=["run", "loop", "board", "status"],
-                        help="Action to perform: run (legacy v1), loop (closed-loop v2.1), board (open browser), status (print state)")
-    parser.add_argument("--open-board", "-b", action="store_true", help="Automatically open live taskboard in browser when running loop")
+    parser = argparse.ArgumentParser(description="DAIO One-Click CLI (Generic DAIO v2.1)")
+    parser.add_argument("action", nargs="?", default="start", choices=["start", "init", "doctor", "status", "board", "run", "loop"],
+                        help="Action to perform: start, init, doctor, status, board")
     args = parser.parse_args()
 
-    if args.action == "board":
-        open_board()
+    if args.action == "init":
+        do_init()
+    elif args.action == "doctor":
+        do_doctor()
     elif args.action == "status":
-        show_status()
-    elif args.action == "loop":
-        run_closed_loop()
-    else:
-        # Check if running interactively in terminal
-        should_open = args.open_board
-        if not should_open and sys.stdin.isatty():
-            try:
-                ans = input("📊 是否要在瀏覽器中開啟即時對話看板 (Live Taskboard)？[Y/n]: ").strip().lower()
-                if ans in ["", "y", "yes"]:
-                    open_board()
-            except (EOFError, KeyboardInterrupt):
-                pass
-        run_loop(auto_open_board=False)
+        do_status()
+    elif args.action in ["start", "loop", "run"]:
+        do_start()
+    elif args.action == "board":
+        board_path = PROJECT_ROOT / "taskboard.html"
+        if board_path.exists():
+            subprocess.run(["open", str(board_path)])
+        else:
+            print(f"❌ Taskboard not found at {board_path}")
+
 
 if __name__ == "__main__":
     main()

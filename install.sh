@@ -14,10 +14,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cp "${SCRIPT_DIR}/daio" "${TARGET_DIR}/daio"
 chmod +x "${TARGET_DIR}/daio"
 
+# Copy internal scripts for standalone portability
+mkdir -p "${TARGET_DIR}/_daio/scripts"
+cp -r "${SCRIPT_DIR}/scripts/"* "${TARGET_DIR}/_daio/scripts/"
+
 # Copy default config if none exists
 if [ ! -f "${TARGET_DIR}/_daio/daio_config.json" ]; then
     cp "${SCRIPT_DIR}/daio_config.example.json" "${TARGET_DIR}/_daio/daio_config.json"
     echo "📄 Created template configuration: _daio/daio_config.json"
 fi
 
-echo "✨ DAIO v2.1 successfully installed! Run './daio loop' to start autonomous orchestration."
+echo "✨ DAIO v2.1 successfully installed! Run './daio start' to begin autonomous orchestration."
+
