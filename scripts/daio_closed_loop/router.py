@@ -29,6 +29,19 @@ class DAIORoleRouter:
 
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         work.updated_at = now
+        work.last_decision = decision.decision
+        work.authorized_next_phase = decision.next_phase
+        if not hasattr(work, "metadata") or work.metadata is None:
+            work.metadata = {}
+        work.metadata["last_architect_decision"] = {
+            "decision": decision.decision,
+            "current_phase": decision.current_phase,
+            "next_phase": decision.next_phase,
+            "action": decision.action,
+            "human_approval_required": decision.human_approval_required,
+            "instruction": decision.instruction,
+            "timestamp": now,
+        }
 
         if decision.human_approval_required or decision.decision == "HUMAN_REVIEW":
             work.status = DAIOStatus.HUMAN_GATE_REQUIRED

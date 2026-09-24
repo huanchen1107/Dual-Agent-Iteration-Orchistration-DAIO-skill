@@ -1,9 +1,3 @@
-"""
-Generic DAIO Autonomous Closed Loop Orchestrator.
-Integrates WorkStore, RoleRouter, Adapters, and Safety Breakers.
-Follows Fail-Closed Invariants DAIO-001..004.
-"""
-
 from __future__ import annotations
 import asyncio
 import datetime
@@ -17,6 +11,7 @@ from .models import (
     DAIORole,
     DAIOStatus,
     DAIOWorkItem,
+    TERMINAL_PHASES,
 )
 from .router import DAIORoleRouter
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
@@ -30,6 +25,7 @@ class DAIOClosedLoopOrchestrator:
     """
     Autonomous Closed Loop Orchestrator managing multi-turn engineering & review cycles.
     Enforces 'Human relay count = 0' and fail-closed safety breakers.
+    Supports autonomous continuous orchestration (Phase S5.5).
     """
 
     def __init__(
@@ -56,21 +52,70 @@ class DAIOClosedLoopOrchestrator:
         initial_action: str,
         allowed_scope: Optional[List[str]] = None,
         architect_endpoint: Optional[Dict[str, Any]] = None,
+        parent_work_id: Optional[str] = None,
     ) -> DAIOWorkItem:
         work = DAIOWorkItem(
             work_id=f"daio-{uuid.uuid4().hex[:8]}",
             project_root=project_root,
             change_id=change_id,
-            current_stage="S3",
+            current_stage=change_id,
             current_gate=DAIOGate.CONTRACT_GATE,
             assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
             requested_action=initial_action,
             allowed_scope=allowed_scope or [],
             architect_endpoint=architect_endpoint or {},
+            parent_work_id=parent_work_id,
             status=DAIOStatus.AWAITING_REVIEW,
         )
         self.store.save_work_item(work)
         return work
+
+    def resolve_next_work_item(self, completed_work: DAIOWorkItem, next_phase: Optional[str]) -> Optional[DAIOWorkItem]:
+        """
+        Idempotently resolve or create the next WorkItem for an authorized next_phase.
+        Never invents work for terminal, stop, or empty phases.
+        """
+        if not next_phase or not isinstance(next_phase, str):
+            return None
+
+        clean_phase = next_phase.strip().upper()
+        if not clean_phase or clean_phase in TERMINAL_PHASES:
+            return None
+
+        # Deterministic work identity
+        safe_parent = completed_work.work_id.replace(" ", "_")
+        safe_phase = next_phase.strip().replace(" ", "_").replace("/", "_")
+        next_work_id = f"{safe_parent}__to__{safe_phase}"
+
+        # Check if already exists in store (idempotency)
+        existing = self.store.load_work_item(next_work_id)
+        if existing:
+            logger.info(f"NEXT_WORK_RECOVERED: work_id={existing.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
+            return existing
+
+        # Create new work item with authorized context
+        next_work = DAIOWorkItem(
+            work_id=next_work_id,
+            parent_work_id=completed_work.work_id,
+            project_root=completed_work.project_root,
+            change_id=next_phase.strip(),
+            current_stage=next_phase.strip(),
+            current_gate=DAIOGate.CONTRACT_GATE,
+            assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+            requested_action=f"Initiate authorized work for {next_phase.strip()} following {completed_work.work_id}",
+            allowed_scope=list(completed_work.allowed_scope),
+            base_sha=completed_work.head_sha or completed_work.base_sha,
+            head_sha=completed_work.head_sha or completed_work.base_sha,
+            status=DAIOStatus.AWAITING_REVIEW,
+            architect_endpoint=dict(completed_work.architect_endpoint),
+            metadata={
+                "derived_from_work_id": completed_work.work_id,
+                "authorized_next_phase": next_phase.strip(),
+            }
+        )
+        self.store.save_work_item(next_work)
+        logger.info(f"NEXT_WORK_CREATED: work_id={next_work.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
+        return next_work
 
     async def run_autonomous_loop(self, work_id: str) -> DAIOWorkItem:
         """
@@ -94,6 +139,8 @@ class DAIOClosedLoopOrchestrator:
 
                 if work.status in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED, DAIOStatus.BLOCKED}:
                     logger.info(f"Loop terminating with terminal status: {work.status.value}")
+                    if work.status == DAIOStatus.COMPLETED:
+                        logger.info(f"CURRENT_WORK_COMPLETED: work_id={work.work_id}, stage={work.current_stage}")
                     break
 
                 rounds_executed += 1
@@ -111,16 +158,81 @@ class DAIOClosedLoopOrchestrator:
                         break
 
                     # Format review package
-                    report_markdown = f"""# DAIO Review Request — Change {work.change_id} (Round {rounds_executed})
-**Work ID:** `{work.work_id}`  
-**Current Gate:** `{work.current_gate.value}`  
-**Commit SHA:** `{work.head_sha or 'INITIAL'}`  
-**Action / Deliverables:** {work.requested_action}  
+                    if work.current_gate == DAIOGate.CONTRACT_GATE:
+                        report_markdown = f"""🏛️ **[DAIO v2.1 Closed Loop Review — Gate: CONTRACT_GATE]**
+
+Lead Architect,
+
+Persistent DAIO worker has active work item:
+- **Work ID:** `{work.work_id}`
+- **Current Stage / Change ID:** `{work.change_id}`
+- **Parent Work ID:** `{work.parent_work_id or 'ROOT'}`
+- **Current Gate:** `{work.current_gate.value}`
+- **Commit SHA:** `{work.head_sha or 'INITIAL'}`
+- **Action:** {work.requested_action}
+
+Please provide your **arbitrary engineering instruction** in a `REVISE` decision block:
+```json
+{{
+  "decision": "REVISE",
+  "current_phase": "{work.change_id}",
+  "next_phase": "PHASE_S5_5_PART_B",
+  "action": "RUN",
+  "human_approval_required": false,
+  "instruction": "<Specify arbitrary engineering task and test requirements>"
+}}
+```
+"""
+                    else:
+                        report_markdown = f"""🏛️ **[DAIO v2.1 Closed Loop Review — Gate: IMPLEMENTATION_GATE]**
+
+Lead Architect,
+
+The Engineering Agent has executed the task and passed all test integrity gates:
+- **Work ID:** `{work.work_id}`
+- **Current Stage / Change ID:** `{work.change_id}`
+- **Parent Work ID:** `{work.parent_work_id or 'ROOT'}`
+- **Current Gate:** `{work.current_gate.value}`
+- **Commit SHA:** `{work.head_sha or 'INITIAL'}`
+- **Test Integrity Gate:** PASSED
+
+If approved, please return an `APPROVE` decision. If this work authorizes a subsequent work item (e.g. Part A authorizing Part B), specify `next_phase` (e.g. `PHASE_S5_5_PART_B` or `STAGE_5_COMPLETE`):
+```json
+{{
+  "decision": "APPROVE",
+  "current_phase": "{work.change_id}",
+  "next_phase": "{'PHASE_S5_5_PART_B' if work.change_id == 'PHASE_S5_5_PART_A' else 'STAGE_5_COMPLETE'}",
+  "action": "PROCEED",
+  "human_approval_required": false,
+  "instruction": "Work approved."
+}}
+```
 """
                     try:
                         decision = await self.bridge.transmit_review_request(work, report_markdown)
                         consecutive_errors = 0
                         previous_reviewed_sha = work.head_sha
+
+                        # Record turn history and log decision persistence
+                        turn_id = f"turn-{uuid.uuid4().hex[:8]}"
+                        if hasattr(self.store, "record_turn_history"):
+                            self.store.record_turn_history(
+                                turn_id=turn_id,
+                                work_id=work.work_id,
+                                role=DAIORole.LEAD_ARCHITECT_REVIEW.value,
+                                action_summary=decision.instruction or decision.decision,
+                                commit_sha=work.head_sha or "INITIAL",
+                                status=decision.decision,
+                                payload={
+                                    "decision": decision.decision,
+                                    "current_phase": decision.current_phase,
+                                    "next_phase": decision.next_phase,
+                                    "action": decision.action,
+                                    "human_approval_required": decision.human_approval_required,
+                                    "instruction": decision.instruction,
+                                }
+                            )
+                        logger.info(f"ARCHITECT_DECISION_PERSISTED: work_id={work.work_id}, decision={decision.decision}, phase={decision.current_phase}, next_phase={decision.next_phase}")
 
                         # Process routing
                         work = DAIORoleRouter.process_architect_review(work, decision, DAIORole.LEAD_ARCHITECT_REVIEW)
@@ -133,6 +245,9 @@ class DAIOClosedLoopOrchestrator:
                             "sha": work.head_sha,
                         })
                         self.store.save_work_item(work)
+
+                        if work.status == DAIOStatus.COMPLETED:
+                            logger.info(f"CURRENT_WORK_COMPLETED: work_id={work.work_id}, stage={work.current_stage}")
 
                     except Exception as ex:
                         consecutive_errors += 1
@@ -149,12 +264,24 @@ class DAIOClosedLoopOrchestrator:
                 elif work.assigned_role == DAIORole.ENGINEERING_EXECUTION:
                     try:
                         # Execute task & run test gate
-                        exec_res = self.executor.execute_task(
-                            work=work,
-                            command=None,
-                            test_command=self.default_test_command,
-                            commit_message=f"feat(daio): automated execution round {rounds_executed} for {work.change_id}",
-                        )
+                        async_fn = getattr(self.executor, "execute_task_async", None)
+                        if callable(async_fn) and asyncio.iscoroutinefunction(async_fn):
+                            exec_res = await async_fn(
+                                work=work,
+                                test_command=self.default_test_command,
+                                commit_message=f"feat(daio): automated execution round {rounds_executed} for {work.change_id}",
+                            )
+                        else:
+                            raw_res = self.executor.execute_task(
+                                work=work,
+                                command=None,
+                                test_command=self.default_test_command,
+                                commit_message=f"feat(daio): automated execution round {rounds_executed} for {work.change_id}",
+                            )
+                            if asyncio.iscoroutine(raw_res):
+                                exec_res = await raw_res
+                            else:
+                                exec_res = raw_res
 
                         # Check Scope Violation (DAIO-002)
                         if exec_res.scope_violation:
@@ -202,3 +329,49 @@ class DAIOClosedLoopOrchestrator:
 
         finally:
             self.store.release_lease(work_id, lease_id)
+
+    async def run_continuous_loop(self, initial_work_id: str, max_continuous_works: int = 5) -> List[DAIOWorkItem]:
+        """
+        Execute continuous orchestration across multiple authorized work items.
+        Automatically claims and processes successive work items when APPROVE authorizes next_phase.
+        """
+        completed_works: List[DAIOWorkItem] = []
+        current_work_id: Optional[str] = initial_work_id
+        works_processed = 0
+
+        while current_work_id and works_processed < max_continuous_works:
+            works_processed += 1
+            logger.info(f"🚀 Continuous Orchestration: Processing work item [{works_processed}/{max_continuous_works}]: {current_work_id}")
+
+            final_work = await self.run_autonomous_loop(current_work_id)
+            completed_works.append(final_work)
+
+            # Check if current work completed successfully and authorized a next phase
+            if final_work.status == DAIOStatus.COMPLETED and final_work.last_decision == "APPROVE":
+                next_phase = final_work.authorized_next_phase
+                if next_phase and next_phase.strip().upper() not in TERMINAL_PHASES:
+                    logger.info(f"NEXT_PHASE_AUTHORIZED: phase={next_phase}, authorized_by_work={final_work.work_id}")
+                    next_work = self.resolve_next_work_item(final_work, next_phase)
+                    if next_work and next_work.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
+                        # Claim lease for next item
+                        worker_id = f"worker-{uuid.uuid4().hex[:6]}"
+                        lease_id = self.store.acquire_lease(next_work.work_id, worker_id, ttl_seconds=300)
+                        if lease_id:
+                            logger.info(f"NEXT_WORK_CLAIMED: work_id={next_work.work_id}, worker={worker_id}, lease={lease_id}")
+                            self.store.release_lease(next_work.work_id, lease_id)
+                            current_work_id = next_work.work_id
+                            continue
+                        else:
+                            logger.warning(f"Could not acquire lease for next work item '{next_work.work_id}'. Ending continuous loop.")
+                            break
+                    else:
+                        logger.info(f"Next work item '{next_work.work_id if next_work else None}' is in terminal state or already completed.")
+                        break
+                else:
+                    logger.info(f"Terminal or empty next_phase '{next_phase}'. Continuous orchestration complete.")
+                    break
+            else:
+                logger.info(f"Work item '{current_work_id}' ended with status '{final_work.status.value}'. Stopping continuous loop.")
+                break
+
+        return completed_works

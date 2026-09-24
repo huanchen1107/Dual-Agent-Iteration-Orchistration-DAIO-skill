@@ -104,7 +104,7 @@ async def run_daio_loop(
         default_test_command=default_test_cmd,
     )
 
-    # 2. Resume or create work item
+    # 2. Resume, recover, or create work item
     work = None
     if resume_work_id:
         work = store.load_work_item(resume_work_id)
@@ -117,6 +117,23 @@ async def run_daio_loop(
             logger.info(f"🔄 Resuming existing work item: {work.work_id}")
 
     if not work:
+        # Check if there is an existing pending or recoverable work item
+        existing_items = store.list_all_work_items()
+        for it in existing_items:
+            if it.status in {DAIOStatus.AWAITING_REVIEW, DAIOStatus.IN_PROGRESS, DAIOStatus.QUEUED}:
+                work = it
+                logger.info(f"🔄 NEXT_WORK_RECOVERED: Resuming pending work item: {work.work_id}")
+                break
+            elif it.status == DAIOStatus.COMPLETED and it.authorized_next_phase:
+                next_p = it.authorized_next_phase.strip().upper()
+                if next_p not in TERMINAL_PHASES:
+                    candidate = orchestrator.resolve_next_work_item(it, it.authorized_next_phase)
+                    if candidate and candidate.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
+                        work = candidate
+                        logger.info(f"🔄 NEXT_WORK_RECOVERED: Found uncompleted successor work item: {work.work_id}")
+                        break
+
+    if not work:
         work = orchestrator.create_work_item(
             change_id=change_id,
             project_root=str(root_path),
@@ -127,10 +144,11 @@ async def run_daio_loop(
         work.base_sha = base_sha
         work.head_sha = base_sha
         store.save_work_item(work)
-        logger.info(f"🚀 Launching DAIO Loop for Work ID: {work.work_id}")
+        logger.info(f"🚀 Launching DAIO Continuous Loop for Initial Work ID: {work.work_id}")
 
-    # 3. Execute closed loop
-    final_work = await orchestrator.run_autonomous_loop(work.work_id)
+    # 3. Execute continuous closed loop
+    completed_works = await orchestrator.run_continuous_loop(work.work_id)
+    final_work = completed_works[-1] if completed_works else work
     finish_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
     head_sha = get_current_git_sha(str(root_path))
 
@@ -148,7 +166,9 @@ async def run_daio_loop(
     evidence_data: Dict[str, Any] = {
         "work_id": final_work.work_id,
         "change_id": change_id,
-        "description": "DAIO Autonomous Closed Loop Execution",
+        "all_work_ids": [w.work_id for w in completed_works],
+        "works_count": len(completed_works),
+        "description": "DAIO Autonomous Continuous Closed Loop Execution",
         "project_root": str(root_path),
         "status": final_work.status.value,
         "human_relay_count": 0,
@@ -169,7 +189,7 @@ async def run_daio_loop(
             "scope_violation_triggered": False,
             "repeated_sha_zero_progress_triggered": False,
             "consecutive_error_cap_triggered": False,
-            "max_rounds_reached": len(orchestrator.round_history) >= 10,
+            "max_rounds_reached": len(orchestrator.round_history) >= (10 * len(completed_works)),
         },
         "verification_summary": {
             "contract_gate_passed": True,
@@ -184,3 +204,4 @@ async def run_daio_loop(
 
     logger.info(f"✅ Machine-readable runtime evidence saved to: {evidence_file}")
     return evidence_data
+

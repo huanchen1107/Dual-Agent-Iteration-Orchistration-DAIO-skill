@@ -102,26 +102,42 @@ def do_doctor():
 
 
 def do_status():
-    """Print current DAIO work item status."""
+    """Print current DAIO work item status with full S5.5 observability."""
     db_path = PROJECT_ROOT / "_daio" / "daio_work.db"
     if not db_path.exists():
-        print(f"ℹ️ No active DAIO database at {db_path}. Run 'daio init' first.")
+        db_path = PROJECT_ROOT / "_daio" / "daio_work_state.db"
+    if not db_path.exists():
+        print(f"ℹ️ No active DAIO database at {PROJECT_ROOT / '_daio' / 'daio_work.db'}. Run 'daio init' first.")
         return
 
     try:
         from daio_closed_loop.store import SqliteDAIOWorkStore
+        from daio_closed_loop.models import DAIOStatus, DAIOGate
         store = SqliteDAIOWorkStore(db_path=str(db_path))
         items = store.list_all_work_items()
-        print("=" * 70)
-        print("🤖 DAIO Work Board Status")
-        print("=" * 70)
-        print(f"Total Work Items: {len(items)}")
-        for w in items:
-            sym = "✅" if w.status == "COMPLETED" else "⚙️"
-            print(f" {sym} [{w.status:<14}] Gate: {w.current_gate.value:<16} | Work ID: {w.work_id} | Stage: {w.current_stage}")
+        print("=" * 75)
+        print("🤖 DAIO Work Board & Continuous Orchestration Status")
+        print("=" * 75)
+        print(f"Total Work Items: {len(items)}\n")
+        for idx, w in enumerate(items, 1):
+            last_dec = w.last_decision or (w.metadata.get("last_architect_decision", {}).get("decision") if w.metadata else None) or "NONE"
+            auth_next = w.authorized_next_phase or (w.metadata.get("authorized_next_phase") if w.metadata else None) or "NONE"
+            pending_trans = f"{w.current_stage} -> {auth_next}" if auth_next != "NONE" else "NONE"
+            human_req = (w.status == DAIOStatus.HUMAN_GATE_REQUIRED or w.current_gate == DAIOGate.HUMAN_GATE)
+
+            print(f"[{idx}] Work ID                  : {w.work_id}")
+            print(f"    current_work_id          : {w.work_id}")
+            print(f"    current_phase            : {w.current_stage}")
+            print(f"    last_architect_decision  : {last_dec}")
+            print(f"    authorized_next_phase    : {auth_next}")
+            print(f"    pending_transition       : {pending_trans}")
+            print(f"    claimed_next_work_id     : {w.claimed_by or w.lease_id or 'NONE'}")
+            print(f"    worker_state             : {w.status.value}")
+            print(f"    human_action_required    : {human_req}")
             if w.requested_action:
-                print(f"    Action: {w.requested_action[:80]}")
-        print("=" * 70)
+                print(f"    action_summary           : {w.requested_action[:75]}")
+            print("-" * 75)
+        print("=" * 75)
     except Exception as e:
         print(f"❌ Error reading status: {e}")
 

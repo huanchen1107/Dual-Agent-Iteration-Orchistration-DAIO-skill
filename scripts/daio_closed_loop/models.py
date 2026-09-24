@@ -34,6 +34,19 @@ class DAIOStatus(str, Enum):
     HUMAN_GATE_REQUIRED = "HUMAN_GATE_REQUIRED"
 
 
+TERMINAL_PHASES = {
+    "STOP",
+    "HUMAN_REVIEW",
+    "HUMAN_GATE",
+    "STAGE_5_COMPLETE",
+    "STAGE_COMPLETE",
+    "ALL_COMPLETE",
+    "COMPLETE",
+    "TERMINAL",
+    "NONE",
+}
+
+
 @dataclass
 class ArchitectDecision:
     decision: str  # APPROVE, REVISE, REJECT, HUMAN_REVIEW, STOP
@@ -66,6 +79,10 @@ class DAIOWorkItem:
     human_gate_reason: Optional[str] = None
     human_relay_count: int = 0
     architect_endpoint: Dict[str, Any] = field(default_factory=dict)
+    parent_work_id: Optional[str] = None
+    last_decision: Optional[str] = None
+    authorized_next_phase: Optional[str] = None
+    claimed_by: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)

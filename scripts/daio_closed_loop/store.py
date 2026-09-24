@@ -82,6 +82,10 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 human_gate_reason TEXT,
                 human_relay_count INTEGER NOT NULL DEFAULT 0,
                 architect_endpoint TEXT NOT NULL DEFAULT '{}',
+                parent_work_id TEXT,
+                last_decision TEXT,
+                authorized_next_phase TEXT,
+                claimed_by TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 metadata TEXT NOT NULL
@@ -107,6 +111,14 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             cursor.execute("ALTER TABLE daio_work_items ADD COLUMN human_relay_count INTEGER NOT NULL DEFAULT 0")
         if "architect_endpoint" not in existing_cols:
             cursor.execute("ALTER TABLE daio_work_items ADD COLUMN architect_endpoint TEXT NOT NULL DEFAULT '{}'")
+        if "parent_work_id" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN parent_work_id TEXT")
+        if "last_decision" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN last_decision TEXT")
+        if "authorized_next_phase" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN authorized_next_phase TEXT")
+        if "claimed_by" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN claimed_by TEXT")
 
         conn.commit()
         if not self._shared_conn:
@@ -121,8 +133,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 assigned_role, requested_action, allowed_scope, base_sha,
                 head_sha, status, attempt_count, max_attempts, lease_id,
                 lease_expires_at, next_role, human_gate_reason, human_relay_count,
-                architect_endpoint, created_at, updated_at, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                architect_endpoint, parent_work_id, last_decision,
+                authorized_next_phase, claimed_by, created_at, updated_at, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(work_id) DO UPDATE SET
                 current_stage=excluded.current_stage,
                 current_gate=excluded.current_gate,
@@ -140,6 +153,10 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 human_gate_reason=excluded.human_gate_reason,
                 human_relay_count=excluded.human_relay_count,
                 architect_endpoint=excluded.architect_endpoint,
+                parent_work_id=excluded.parent_work_id,
+                last_decision=excluded.last_decision,
+                authorized_next_phase=excluded.authorized_next_phase,
+                claimed_by=excluded.claimed_by,
                 updated_at=excluded.updated_at,
                 metadata=excluded.metadata
         """, (
@@ -162,9 +179,44 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             item.human_gate_reason,
             item.human_relay_count,
             json.dumps(item.architect_endpoint),
+            item.parent_work_id,
+            item.last_decision,
+            item.authorized_next_phase,
+            item.claimed_by,
             item.created_at,
             item.updated_at,
             json.dumps(item.metadata),
+        ))
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
+    def record_turn_history(
+        self,
+        turn_id: str,
+        work_id: str,
+        role: str,
+        action_summary: str,
+        commit_sha: str,
+        status: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO daio_turn_history (
+                turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(turn_id) DO NOTHING
+        """, (
+            turn_id,
+            work_id,
+            role,
+            action_summary,
+            commit_sha,
+            status,
+            datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            json.dumps(payload),
         ))
         conn.commit()
         if not self._shared_conn:
@@ -197,6 +249,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             conn.close()
         return res
 
+    def list_all_work_items(self) -> List[DAIOWorkItem]:
+        return self.list_work_items()
+
     def acquire_lease(self, work_id: str, worker_id: str, ttl_seconds: int = 60) -> Optional[str]:
         """Acquire a lease lock on work_id if not already locked by another active lease."""
         conn = self._get_connection()
@@ -228,9 +283,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         new_expires_at = (now + datetime.timedelta(seconds=ttl_seconds)).isoformat()
         cursor.execute("""
             UPDATE daio_work_items
-            SET lease_id = ?, lease_expires_at = ?, updated_at = ?
+            SET lease_id = ?, lease_expires_at = ?, claimed_by = ?, updated_at = ?
             WHERE work_id = ?
-        """, (new_lease_id, new_expires_at, now.isoformat(), work_id))
+        """, (new_lease_id, new_expires_at, worker_id, now.isoformat(), work_id))
         conn.commit()
         if not self._shared_conn:
             conn.close()
@@ -251,6 +306,7 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         return affected
 
     def _row_to_work_item(self, row: sqlite3.Row) -> DAIOWorkItem:
+        keys = row.keys()
         return DAIOWorkItem(
             work_id=row["work_id"],
             project_root=row["project_root"],
@@ -269,9 +325,14 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             lease_expires_at=row["lease_expires_at"],
             next_role=DAIORole(row["next_role"]) if row["next_role"] else None,
             human_gate_reason=row["human_gate_reason"],
-            human_relay_count=row["human_relay_count"] if "human_relay_count" in row.keys() else 0,
-            architect_endpoint=json.loads(row["architect_endpoint"]) if "architect_endpoint" in row.keys() and row["architect_endpoint"] else {},
+            human_relay_count=row["human_relay_count"] if "human_relay_count" in keys else 0,
+            architect_endpoint=json.loads(row["architect_endpoint"]) if "architect_endpoint" in keys and row["architect_endpoint"] else {},
+            parent_work_id=row["parent_work_id"] if "parent_work_id" in keys else None,
+            last_decision=row["last_decision"] if "last_decision" in keys else None,
+            authorized_next_phase=row["authorized_next_phase"] if "authorized_next_phase" in keys else None,
+            claimed_by=row["claimed_by"] if "claimed_by" in keys else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             metadata=json.loads(row["metadata"]),
         )
+
