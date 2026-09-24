@@ -191,15 +191,15 @@ Persistent DAIO worker has active work item:
 - **Commit SHA:** `{work.head_sha or 'INITIAL'}`
 - **Action:** {work.requested_action}
 
-Please provide your **arbitrary engineering instruction** in a `REVISE` decision block:
+Please provide your review instruction in a structured decision block:
 ```json
 {{
   "decision": "REVISE",
   "current_phase": "{work.change_id}",
-  "next_phase": "PHASE_S5_5_PART_B",
+  "next_phase": null,
   "action": "RUN",
   "human_approval_required": false,
-  "instruction": "<Specify arbitrary engineering task and test requirements>"
+  "instruction": "<Specify engineering task or preflight instruction>"
 }}
 ```
 """
@@ -216,12 +216,12 @@ The Engineering Agent has executed the task and passed all test integrity gates:
 - **Commit SHA:** `{work.head_sha or 'INITIAL'}`
 - **Test Integrity Gate:** PASSED
 
-If approved, please return an `APPROVE` decision. If this work authorizes a subsequent work item (e.g. Part A authorizing Part B), specify `next_phase` (e.g. `PHASE_S5_5_PART_B` or `STAGE_5_COMPLETE`):
+If approved, please return an `APPROVE` decision. If this work authorizes a subsequent work item, specify `next_phase`:
 ```json
 {{
   "decision": "APPROVE",
   "current_phase": "{work.change_id}",
-  "next_phase": "{'PHASE_S5_5_PART_B' if work.change_id == 'PHASE_S5_5_PART_A' else 'STAGE_5_COMPLETE'}",
+  "next_phase": null,
   "action": "PROCEED",
   "human_approval_required": false,
   "instruction": "Work approved."
