@@ -66,17 +66,18 @@ daio_cfg = {
 
 print(f"🚀 HEADLESS_RUNTIME_STARTED: Phase S5.3 Acceptance Worker Active at {SANDBOX}")
 
-# 5. Initialize Real Gemini Engineering Agent & DAIO Components
+# 5. Initialize Real Engineering Agent & DAIO Components
 from scripts.daio_closed_loop.models import DAIOWorkItem, DAIOStatus, DAIOGate, DAIORole, ArchitectDecision
 from scripts.daio_closed_loop.store import SqliteDAIOWorkStore
 from scripts.daio_closed_loop.router import DAIORoleRouter
-from scripts.daio_closed_loop.adapters.gemini_agent import GeminiEngineeringAgentAdapter
+from scripts.daio_closed_loop.adapters.factory import create_engineering_agent_adapter
 from scripts.daio_closed_loop.adapters.executor import SubprocessWorkspaceExecutor
 from scripts.daio_closed_loop.adapters.bridge import ChromeCDPBridgeAdapter
 
-gemini_agent = GeminiEngineeringAgentAdapter(model_name="gemini-2.5-pro")
+agent = create_engineering_agent_adapter({"provider": "ANTIGRAVITY_CLI"})
+agent_name = agent.__class__.__name__
 store = SqliteDAIOWorkStore(db_path=str(SANDBOX / "_daio" / "daio_work.db"))
-executor = SubprocessWorkspaceExecutor(project_root=str(SANDBOX), agent_adapter=gemini_agent)
+executor = SubprocessWorkspaceExecutor(project_root=str(SANDBOX), agent_adapter=agent)
 bridge = ChromeCDPBridgeAdapter(endpoint=endpoint, cdp_port=9222)
 
 work = DAIOWorkItem(
@@ -95,12 +96,12 @@ store.save_work_item(work)
 
 async def run_s53_acceptance_loop():
     # --- Step 1: Dispatch S5.3 Review Request to ChatGPT Lead Architect ---
-    print("📡 [Step 1] Dispatching S5.3 Review Request to ChatGPT Lead Architect...")
+    print(f"📡 [Step 1] Dispatching S5.3 Review Request to ChatGPT Lead Architect (Backend: {agent_name})...")
     r1_prompt = f"""🏛️ **[DAIO v2.1 Phase S5.3 — Real Arbitrary-Instruction Acceptance]**
 
 Lead Architect,
 
-The Generic DAIO Phase S5.3 acceptance harness is active with the real **GeminiEngineeringAgentAdapter** (`gemini-2.5-pro`):
+The Generic DAIO Phase S5.3 acceptance harness is active with the genuine **{agent_name}** (`/Users/huanchen/.local/bin/agy`):
 - **Sandbox**: `{SANDBOX}`
 - **Initial Baseline Code**: `src/pipeline.py` (`process_data`) and `tests/test_pipeline.py`
 - **Zero Hardcoding Invariant**: The test harness contains NO predetermined code edits or keyword matchers.
@@ -125,8 +126,8 @@ Please provide your **real arbitrary engineering task** in the `REVISE` decision
     w = DAIORoleRouter.process_architect_review(w, dec1, DAIORole.LEAD_ARCHITECT_REVIEW)
     store.save_work_item(w)
 
-    # --- Step 2: Real Gemini Coding Agent Consumes Arbitrary Instruction ---
-    print("🤖 [Step 2] GeminiEngineeringAgentAdapter generating autonomous proposal...")
+    # --- Step 2: Real Coding Agent Consumes Arbitrary Instruction ---
+    print(f"🤖 [Step 2] {agent_name} generating autonomous proposal for instruction...")
     res = executor.execute_task(
         w,
         test_command="pytest tests/ -q",
@@ -177,7 +178,7 @@ Please provide your **real arbitrary engineering task** in the `REVISE` decision
 
 Lead Architect,
 
-The real **GeminiEngineeringAgentAdapter** (`gemini-2.5-pro`) has autonomously executed your arbitrary instruction without human relay or hardcoded solutions:
+The genuine **{agent_name}** (`/Users/huanchen/.local/bin/agy`) has autonomously executed your arbitrary instruction without human relay or hardcoded solutions:
 
 ### 📋 Observed Execution Evidence:
 - **Architect Instruction**: "{dec1.instruction}"
