@@ -1,0 +1,38 @@
+{
+  "work_id": "daio-s54-portability-e2e",
+  "change_id": "PHASE_S5_4_PORTABILITY",
+  "architect_instruction": "Preserve the existing compute_summary behavior and every existing test. Add a new function group_summary(records, key) to src/data_service.py. records is a list of dictionaries and key is the field used for grouping. Each record must contain the grouping key and a numeric field named value; otherwise raise ValueError. Return a dictionary whose keys are the distinct grouping values and whose values are dictionaries containing exactly count, min, max, and mean for that group's numeric value fields. Preserve first-occurrence group order in the returned dictionary. Empty records must return an empty dictionary. Boolean values must not be accepted as numeric values even though Python bool is a subclass of int. Add meaningful tests in tests/test_data_service.py covering multiple groups, repeated groups in non-contiguous input positions, negative and positive numeric values, a single-record group, empty input, missing grouping keys, missing value fields, non-numeric values, and boolean values. Do not add external dependencies, do not replace or weaken existing tests, run the complete test suite, and create a git commit only if every test passes. This is the formal S5.4 unattended acceptance window: execute through the persistent DAIO worker and AntigravityCLIAdapter rather than Antigravity IDE GUI tools. Record human_relay_count, routine_permission_intervention_count, human_continue_count, unauthorized_scope_changes, duplicate_work_claim_count, runtime path/provenance, test result, and generated commit SHA. All routine-intervention counters must remain zero. After successful engineering, transmit the observed evidence back to this exact Lead Architect conversation automatically without requiring human relay.",
+  "backend_identity": "ANTIGRAVITY_CLI",
+  "model_name": "antigravity-cli-default",
+  "reasoning_summary": "Implemented `group_summary(records, key)` in `src/data_service.py` to aggregate records by group key while strictly validating record structure and numeric values. Records must be dictionaries containing the grouping key and a numeric 'value' (integers or floats, with booleans explicitly rejected via `isinstance(val, bool)`). Insertion order of groups is preserved via dict keys in first-occurrence order. An empty records list returns `{}`. Added comprehensive pytest test cases in `tests/test_data_service.py` covering all required scenarios (empty input, multiple groups, non-contiguous repeats, negative/positive numbers, single-record groups, missing keys/values, non-numeric values, and boolean values) while preserving existing `compute_summary` tests.",
+  "proposed_agent_files": [
+    "src/data_service.py",
+    "tests/test_data_service.py"
+  ],
+  "applied_agent_files": [
+    "src/data_service.py",
+    "tests/test_data_service.py"
+  ],
+  "target_workspace_diff": [
+    "src/data_service.py",
+    "tests/test_data_service.py"
+  ],
+  "daio_control_plane_diff": [
+    "_daio/daio_work.db"
+  ],
+  "unauthorized_diff": [],
+  "test_gate_passed": true,
+  "git_state": {
+    "base_sha": "922e6b5b8ed868101faeb58c2427efe8623591e1",
+    "head_sha": "68362e3727ab08a73db8c90c80132431ea824567",
+    "generated_commit_sha": "68362e3727ab08a73db8c90c80132431ea824567"
+  },
+  "metrics": {
+    "human_relay_count": 0,
+    "routine_permission_intervention_count": 0,
+    "human_continue_count": 0,
+    "hardcoded_solution_count": 0,
+    "unauthorized_scope_changes": 0
+  },
+  "verdict": "PHASE_S5_4_PASS"
+}
