@@ -36,54 +36,142 @@ UNIVERSAL_PROMPT_APPENDIX = """
 """
 
 
+VALID_ARCHITECT_DECISIONS = {"APPROVE", "REVISE", "REJECT", "HUMAN_REVIEW", "STOP"}
+
+
+def extract_all_json_candidates(text: str) -> List[str]:
+    """Extract all syntactically complete JSON object substrings from text."""
+    candidates = []
+    seen = set()
+
+    # 1. Fenced markdown code blocks (handles any language token e.g. ```json:response)
+    fence_pattern = r"```[a-zA-Z0-9_\-\:]*[^\n]*\n(.*?)```"
+    for block in re.findall(fence_pattern, text, re.DOTALL):
+        clean_block = block.strip()
+        if clean_block.startswith("{") and clean_block.endswith("}"):
+            if clean_block not in seen:
+                candidates.append(clean_block)
+                seen.add(clean_block)
+
+    # 2. Balanced brace scanner across entire text
+    in_string = False
+    escape = False
+    brace_depth = 0
+    start_idx = -1
+
+    for i, ch in enumerate(text):
+        if ch == '"' and not escape:
+            in_string = not in_string
+        elif ch == '\\' and in_string:
+            escape = not escape
+            continue
+        elif not in_string:
+            if ch == '{':
+                if brace_depth == 0:
+                    start_idx = i
+                brace_depth += 1
+            elif ch == '}':
+                if brace_depth > 0:
+                    brace_depth -= 1
+                    if brace_depth == 0 and start_idx != -1:
+                        candidate = text[start_idx : i + 1].strip()
+                        if candidate not in seen:
+                            candidates.append(candidate)
+                            seen.add(candidate)
+                        start_idx = -1
+        escape = False
+
+    return candidates
+
+
+def validate_and_build_decision(candidate_str: str, full_raw_text: str) -> Tuple[Optional[ArchitectDecision], Optional[str]]:
+    """Validate a candidate JSON string against the ArchitectDecision contract."""
+    try:
+        data = json.loads(candidate_str, strict=False)
+    except Exception as e:
+        return None, f"JSON parse error: {str(e)}"
+
+    if not isinstance(data, dict):
+        return None, "Root JSON entity is not an object"
+
+    # Validate decision
+    raw_decision = str(data.get("decision", "")).strip().upper()
+    if raw_decision not in VALID_ARCHITECT_DECISIONS:
+        return None, f"Invalid or missing decision: '{raw_decision}' (must be one of {sorted(VALID_ARCHITECT_DECISIONS)})"
+
+    # Validate required fields
+    current_phase = str(data.get("current_phase", "")).strip()
+    if not current_phase:
+        return None, "Missing or empty 'current_phase'"
+
+    instruction = str(data.get("instruction", "")).strip()
+
+    # Optional / defaulted fields
+    next_phase = data.get("next_phase")
+    if next_phase is not None:
+        next_phase = str(next_phase).strip()
+
+    action = str(data.get("action", "RUN")).strip().upper() or "RUN"
+
+    raw_human_req = data.get("human_approval_required", False)
+    if isinstance(raw_human_req, str):
+        human_approval_required = raw_human_req.lower() in ("true", "1", "yes")
+    else:
+        human_approval_required = bool(raw_human_req)
+
+    decision = ArchitectDecision(
+        decision=raw_decision,
+        current_phase=current_phase,
+        next_phase=next_phase,
+        action=action,
+        human_approval_required=human_approval_required,
+        instruction=instruction,
+        raw_text=full_raw_text,
+    )
+    return decision, None
+
+
 def parse_decision_from_text(response_text: str) -> ArchitectDecision:
-    """Parse structured JSON decision block from LLM response text."""
-    # 1. Fenced JSON block
-    json_matches = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL)
-    for j_str in reversed(json_matches):
-        try:
-            data = json.loads(j_str)
-            if "decision" in data:
-                return ArchitectDecision(
-                    decision=data.get("decision", "APPROVE").upper(),
-                    current_phase=data.get("current_phase", "UNKNOWN"),
-                    next_phase=data.get("next_phase"),
-                    action=data.get("action", "RUN"),
-                    human_approval_required=data.get("human_approval_required", False),
-                    instruction=data.get("instruction", ""),
-                    raw_text=response_text,
-                )
-        except Exception:
-            continue
+    """
+    Robustly parse structured ArchitectDecision block from LLM response text.
+    Extracts all candidates, validates them against schema, and selects the final valid block.
+    Fails closed with detailed diagnostic context if no valid block is found.
+    """
+    if not response_text or not response_text.strip():
+        raise ValueError("Cannot parse ArchitectDecision from empty response text.")
 
-    # 2. Bare JSON match
-    bare_matches = re.findall(r"(\{\s*\"decision\"\s*:\s*\"[A-Z_]+\".*?\})", response_text, re.DOTALL)
-    for b_str in reversed(bare_matches):
-        try:
-            data = json.loads(b_str)
-            if "decision" in data:
-                return ArchitectDecision(
-                    decision=data.get("decision", "APPROVE").upper(),
-                    current_phase=data.get("current_phase", "UNKNOWN"),
-                    next_phase=data.get("next_phase"),
-                    action=data.get("action", "RUN"),
-                    human_approval_required=data.get("human_approval_required", False),
-                    instruction=data.get("instruction", ""),
-                    raw_text=response_text,
-                )
-        except Exception:
-            continue
+    candidates = extract_all_json_candidates(response_text)
+    valid_decisions: List[Tuple[ArchitectDecision, str]] = []
+    rejection_reasons: List[str] = []
 
-    # 3. Fallback heuristic keyword detection
-    upper_text = response_text.upper()
-    if "DECISION: APPROVE" in upper_text or "GATE = PASS" in upper_text:
-        return ArchitectDecision(decision="APPROVE", current_phase="AUDIT", instruction="Passed by heuristic", raw_text=response_text)
-    if "DECISION: REVISE" in upper_text or "CONDITIONAL PASS" in upper_text:
-        return ArchitectDecision(decision="REVISE", current_phase="AUDIT", instruction="Revision requested", raw_text=response_text)
-    if "HUMAN_REVIEW" in upper_text or "HUMAN_GATE" in upper_text:
-        return ArchitectDecision(decision="HUMAN_REVIEW", current_phase="AUDIT", human_approval_required=True, instruction="Human escalation requested", raw_text=response_text)
+    for idx, cand in enumerate(candidates):
+        dec, err = validate_and_build_decision(cand, response_text)
+        if dec is not None:
+            valid_decisions.append((dec, cand))
+        else:
+            rejection_reasons.append(f"Candidate #{idx + 1}: {err} (preview: {cand[:80]}...)")
 
-    raise ValueError("Could not parse structured ArchitectDecision block from response text.")
+    if valid_decisions:
+        # Prefer the final valid control block in the response as requested
+        selected_decision, selected_json = valid_decisions[-1]
+        logger.info(
+            f"Successfully parsed ArchitectDecision: {selected_decision.decision} "
+            f"(Total candidates discovered: {len(candidates)}, Valid: {len(valid_decisions)}, "
+            f"Selected candidate index: {len(valid_decisions)})"
+        )
+        return selected_decision
+
+    # Construct rich diagnostic error report
+    preview_head = response_text[:200].replace("\n", " ")
+    preview_tail = response_text[-200:].replace("\n", " ")
+    reasons_str = "; ".join(rejection_reasons) if rejection_reasons else "No JSON candidate structures found"
+
+    raise ValueError(
+        f"Could not parse structured ArchitectDecision block from response text. "
+        f"[Diagnostics: Response length={len(response_text)}, Discovered candidates={len(candidates)}, "
+        f"Validation failures={reasons_str}, Preview head='{preview_head}...', Preview tail='...{preview_tail}']"
+    )
+
 
 
 class ArchitectBridgeAdapter(ABC):
