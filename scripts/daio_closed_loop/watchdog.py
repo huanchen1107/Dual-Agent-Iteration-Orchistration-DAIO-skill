@@ -12,6 +12,7 @@ Enforces DAIO-DEFECT-HANDOFF-WATCHDOG-001:
 from __future__ import annotations
 import asyncio
 import datetime
+from enum import Enum
 import json
 import logging
 import os
@@ -32,6 +33,69 @@ from .models import (
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
 
 logger = logging.getLogger("DAIO_Handoff_Watchdog")
+
+
+class WatchdogPolicyAction(str, Enum):
+    HEALTHY_PROGRESS = "HEALTHY_PROGRESS"
+    WAITING = "WAITING"
+    RECOVERABLE_STALL = "RECOVERABLE_STALL"
+    TERMINAL_SUCCESS = "TERMINAL_SUCCESS"
+    TERMINAL_FAILURE = "TERMINAL_FAILURE"
+    ESCALATE = "ESCALATE"
+
+
+def classify_work_status_for_watchdog(
+    work: Optional[DAIOWorkItem],
+    watch: HandoffWatch,
+    now: datetime.datetime,
+) -> Tuple[WatchdogPolicyAction, str]:
+    """
+    Exhaustively maps every DAIOWorkItem status to an explicit WatchdogPolicyAction.
+    Fails closed to ESCALATE for any unhandled or unknown status.
+    """
+    now_iso = now.isoformat()
+
+    if work is None:
+        if watch.discovery_deadline and now_iso > watch.discovery_deadline:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "DISCOVERY_DEADLINE_EXCEEDED"
+        return WatchdogPolicyAction.WAITING, "WAITING_FOR_MATERIALIZATION"
+
+    status = work.status
+
+    if status == DAIOStatus.COMPLETED:
+        return WatchdogPolicyAction.TERMINAL_SUCCESS, "COMPLETED"
+
+    elif status == DAIOStatus.HUMAN_GATE_REQUIRED:
+        return WatchdogPolicyAction.TERMINAL_FAILURE, "HUMAN_GATE_REQUIRED"
+
+    elif status == DAIOStatus.BLOCKED:
+        if work.attempt_count < work.max_attempts and watch.recovery_attempt_count < watch.max_recovery_attempts:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "SUCCESSOR_BLOCKED"
+        else:
+            return WatchdogPolicyAction.ESCALATE, "BLOCKED_RETRY_BUDGET_EXHAUSTED"
+
+    elif status == DAIOStatus.QUEUED:
+        if watch.claim_deadline and now_iso > watch.claim_deadline:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "CLAIM_DEADLINE_EXCEEDED"
+        return WatchdogPolicyAction.WAITING, "WAITING_FOR_CLAIM"
+
+    elif status == DAIOStatus.AWAITING_REVIEW:
+        if watch.progress_deadline and now_iso > watch.progress_deadline:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "REVIEW_DEADLINE_EXCEEDED"
+        return WatchdogPolicyAction.WAITING, "AWAITING_ARCHITECT_REVIEW"
+
+    elif status == DAIOStatus.IN_PROGRESS:
+        if work.lease_id:
+            if work.lease_expires_at and work.lease_expires_at < now_iso:
+                return WatchdogPolicyAction.RECOVERABLE_STALL, "LEASE_EXPIRED"
+            if watch.progress_deadline and now_iso > watch.progress_deadline:
+                return WatchdogPolicyAction.RECOVERABLE_STALL, "PROGRESS_DEADLINE_EXCEEDED"
+            return WatchdogPolicyAction.HEALTHY_PROGRESS, "EXECUTING_WITH_ACTIVE_LEASE"
+        else:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "IN_PROGRESS_NO_LEASE"
+
+    else:
+        return WatchdogPolicyAction.ESCALATE, f"UNKNOWN_WORK_STATUS_{status}"
 
 
 class DAIOHandoffWatchdog:
@@ -135,7 +199,6 @@ class DAIOHandoffWatchdog:
 
     def _evaluate_single_watch(self, watch: HandoffWatch, now_dt: datetime.datetime) -> Dict[str, Any]:
         now_iso = now_dt.isoformat()
-        parent = self.store.load_work_item(watch.parent_work_id)
         successor = self.store.load_work_item(watch.successor_work_id) if watch.successor_work_id else None
 
         # If successor_work_id was not bound, try to locate it by parent
@@ -147,53 +210,53 @@ class DAIOHandoffWatchdog:
                     watch.successor_work_id = it.work_id
                     break
 
-        # 1. State: Successor Completed
-        if successor and successor.status == DAIOStatus.COMPLETED:
+        action, reason = classify_work_status_for_watchdog(successor, watch, now_dt)
+
+        if action == WatchdogPolicyAction.TERMINAL_SUCCESS:
             watch.current_state = HandoffState.COMPLETED
             watch.last_progress_at = now_iso
             self.store.save_handoff_watch(watch)
-            return {"watch_id": watch.watch_id, "status": "COMPLETED", "state": watch.current_state.value}
+            return {"watch_id": watch.watch_id, "status": "COMPLETED", "state": watch.current_state.value, "policy": action.value}
 
-        # Check for expired lease on any active work item
-        if successor and successor.lease_id and successor.lease_expires_at and successor.lease_expires_at < now_iso:
-            return self._handle_stall(watch, "LEASE_EXPIRED", now_dt)
-
-        # 2. State: Successor Executing
-        if successor and successor.status == DAIOStatus.IN_PROGRESS and successor.lease_id:
+        elif action == WatchdogPolicyAction.HEALTHY_PROGRESS:
             watch.current_state = HandoffState.EXECUTING
-            watch.last_progress_at = successor.updated_at
-            # Check progress deadline
-            if watch.progress_deadline and now_iso > watch.progress_deadline:
-                return self._handle_stall(watch, "PROGRESS_DEADLINE_EXCEEDED", now_dt)
+            watch.last_progress_at = successor.updated_at if successor else now_iso
             self.store.save_handoff_watch(watch)
-            return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value}
+            return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value, "policy": action.value}
 
-        # 3. State: Successor Claimed (awaiting execution / review)
-        if successor and successor.claimed_by and successor.lease_id:
-            watch.current_state = HandoffState.CLAIMED
-            watch.last_progress_at = successor.updated_at
-            if watch.first_heartbeat_deadline and now_iso > watch.first_heartbeat_deadline:
-                return self._handle_stall(watch, "FIRST_HEARTBEAT_DEADLINE_EXCEEDED", now_dt)
+        elif action == WatchdogPolicyAction.WAITING:
+            if successor:
+                watch.current_state = HandoffState.WAITING_FOR_CLAIM if successor.status == DAIOStatus.QUEUED else HandoffState.CLAIMED
+            else:
+                watch.current_state = HandoffState.SUCCESSOR_EXPECTED
             self.store.save_handoff_watch(watch)
-            return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value}
+            return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value, "policy": action.value}
 
-        # 4. State: Successor Created, Waiting for Claim
-        if successor and successor.status in {DAIOStatus.QUEUED, DAIOStatus.AWAITING_REVIEW, DAIOStatus.IN_PROGRESS}:
-            watch.current_state = HandoffState.WAITING_FOR_CLAIM
-            if watch.claim_deadline and now_iso > watch.claim_deadline:
-                return self._handle_stall(watch, "CLAIM_DEADLINE_EXCEEDED", now_dt)
+        elif action == WatchdogPolicyAction.RECOVERABLE_STALL:
+            return self._handle_stall(watch, reason, now_dt)
+
+        elif action in {WatchdogPolicyAction.TERMINAL_FAILURE, WatchdogPolicyAction.ESCALATE}:
+            diagnostics = self.diagnose_stall(watch)
+            diagnostics["stall_reason"] = reason
+            escalation_res = self.escalate_stall(watch, diagnostics)
+            watch.current_state = HandoffState.STALLED_ESCALATED
+            watch.escalation_state = json.dumps(escalation_res)
             self.store.save_handoff_watch(watch)
-            return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value}
+            return {
+                "watch_id": watch.watch_id,
+                "status": "ESCALATED",
+                "escalation": escalation_res,
+                "diagnostics": diagnostics,
+                "policy": action.value,
+            }
 
-        # 5. State: Successor Not Yet Materialized
-        if not successor:
-            watch.current_state = HandoffState.SUCCESSOR_EXPECTED
-            if watch.discovery_deadline and now_iso > watch.discovery_deadline:
-                return self._handle_stall(watch, "DISCOVERY_DEADLINE_EXCEEDED", now_dt)
-            self.store.save_handoff_watch(watch)
-            return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value}
-
-        return {"watch_id": watch.watch_id, "status": "OK", "state": watch.current_state.value}
+        # Fail closed
+        diagnostics = self.diagnose_stall(watch)
+        diagnostics["stall_reason"] = f"UNHANDLED_POLICY_{action}"
+        escalation_res = self.escalate_stall(watch, diagnostics)
+        watch.current_state = HandoffState.STALLED_ESCALATED
+        self.store.save_handoff_watch(watch)
+        return {"watch_id": watch.watch_id, "status": "ESCALATED", "policy": "FAIL_CLOSED"}
 
     def _handle_stall(self, watch: HandoffWatch, reason: str, now_dt: datetime.datetime) -> Dict[str, Any]:
         """

@@ -418,3 +418,135 @@ def test_supervisor_antigravity_cli_contract_stage_closed_loop(tmp_path):
     assert final_item.last_decision == "APPROVE"
     assert len(bridge.call_history) == 2
 
+
+def test_exhaustive_daio_status_coverage_in_watchdog(tmp_path):
+    """
+    Exhaustively tests that EVERY single DAIOStatus enum value has an explicit, valid policy action
+    and never produces unhandled fallthrough or returns UNKNOWN.
+    """
+    from scripts.daio_closed_loop.watchdog import classify_work_status_for_watchdog, WatchdogPolicyAction
+
+    watch = HandoffWatch(
+        watch_id="watch-exhaustion",
+        parent_work_id="parent-1",
+        expected_next_phase="PHASE_NEXT",
+        discovery_deadline=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=60)).isoformat(),
+        claim_deadline=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=60)).isoformat(),
+        progress_deadline=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=60)).isoformat(),
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # 1. Missing successor
+    action_none, reason_none = classify_work_status_for_watchdog(None, watch, now)
+    assert action_none in {WatchdogPolicyAction.WAITING, WatchdogPolicyAction.RECOVERABLE_STALL}
+
+    # 2. Every single DAIOStatus enum value
+    for status in DAIOStatus:
+        item = DAIOWorkItem(
+            work_id=f"work-{status.value.lower()}",
+            project_root=str(tmp_path),
+            change_id="PHASE_X",
+            status=status,
+            attempt_count=1,
+            max_attempts=3,
+            lease_id="lease-active" if status == DAIOStatus.IN_PROGRESS else None,
+            lease_expires_at=(now + datetime.timedelta(seconds=60)).isoformat() if status == DAIOStatus.IN_PROGRESS else None,
+        )
+        action, reason = classify_work_status_for_watchdog(item, watch, now)
+        assert isinstance(action, WatchdogPolicyAction)
+        assert not reason.startswith("UNKNOWN_WORK_STATUS"), f"Status {status} produced unknown policy: {reason}"
+
+
+def test_exact_live_failure_blocked_successor_auto_recovery_and_bounded_escalation(tmp_path):
+    """
+    Reproduces the exact live production failure:
+    - Successor work item is in status BLOCKED with attempt_count = 2 / max_attempts = 3
+    - Watchdog evaluates it: must NOT return OK.
+    - Attempt 1: Automatically recovers BLOCKED item -> resets status to IN_PROGRESS, clears lease/claimed_by, preserves lineage.
+    - Exhaustion: When attempt_count reaches max_attempts (3), watchdog transitions to STALLED_ESCALATED and emits HANDOFF_STALLED.
+    """
+    db_file = str(tmp_path / "daio_live_repro.db")
+    store = SqliteDAIOWorkStore(db_path=db_file)
+
+    parent = DAIOWorkItem(
+        work_id="daio-root-change_051_preflight",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_PREFLIGHT",
+        status=DAIOStatus.COMPLETED,
+        authorized_next_phase="CHANGE_051_OPENSPEC_SCAFFOLD",
+        head_sha="3836a3e914f2220d52eabe73edb469e96433b384",
+    )
+    store.save_work_item(parent)
+
+    last_err = "Pure proposal mode failed closed on empty allowed scope ([])"
+    blocked_successor = DAIOWorkItem(
+        work_id="daio-root-change_051_openspec_scaffold",
+        project_root=str(tmp_path),
+        change_id="CHANGE_051_OPENSPEC_SCAFFOLD",
+        current_stage="CHANGE_051_OPENSPEC_SCAFFOLD",
+        current_gate=DAIOGate.ENGINEERING_TASK,
+        assigned_role=DAIORole.ENGINEERING_EXECUTION,
+        status=DAIOStatus.BLOCKED,
+        attempt_count=2,
+        max_attempts=3,
+        claimed_by="worker-supervisor-421314",
+        parent_work_id="daio-root-change_051_preflight",
+        metadata={"last_error": last_err},
+    )
+    store.save_work_item(blocked_successor)
+
+    watchdog = DAIOHandoffWatchdog(
+        store=store,
+        project_root=str(tmp_path),
+        max_recovery_attempts=2,
+    )
+    watch = watchdog.register_handoff(parent, "CHANGE_051_OPENSPEC_SCAFFOLD", successor_work_id="daio-root-change_051_openspec_scaffold")
+
+    # Step 1: Evaluate watch -> must detect stall, NOT return OK, and trigger recovery
+    eval_res1 = watchdog.evaluate_watches()
+    assert len(eval_res1) == 1
+    assert eval_res1[0]["status"] == "RECOVERED"
+    assert eval_res1[0]["diagnostics"]["stall_reason"] == "SUCCESSOR_BLOCKED"
+
+    # Verify work item is now runnable without duplicate work items
+    reloaded_succ = store.load_work_item("daio-root-change_051_openspec_scaffold")
+    assert reloaded_succ.status == DAIOStatus.IN_PROGRESS
+    assert reloaded_succ.lease_id is None
+    assert reloaded_succ.claimed_by is None
+    assert reloaded_succ.parent_work_id == "daio-root-change_051_preflight"
+    assert len(store.list_work_items()) == 2  # Exactly preflight + scaffold, no duplicates
+
+    # Step 2: Simulate retry failure reaching max_attempts = 3
+    reloaded_succ.status = DAIOStatus.BLOCKED
+    reloaded_succ.attempt_count = 3
+    store.save_work_item(reloaded_succ)
+
+    # Step 3: Next evaluation -> must escalate to HANDOFF_STALLED
+    eval_res2 = watchdog.evaluate_watches()
+    assert len(eval_res2) == 1
+    assert eval_res2[0]["status"] == "ESCALATED"
+    assert eval_res2[0]["escalation"]["event"] == "HANDOFF_STALLED"
+    assert eval_res2[0]["escalation"]["diagnosed_root_cause"] == "BLOCKED_RETRY_BUDGET_EXHAUSTED"
+
+
+def test_empty_allowed_scope_never_silently_becomes_unrestricted_scope(tmp_path):
+    """
+    Enforces DAIO-002: An empty allowed_scope ([]) must fail closed and never allow
+    silent modification of target workspace files as if it were unrestricted (*).
+    """
+    from scripts.daio_closed_loop.adapters.executor import SubprocessWorkspaceExecutor
+
+    executor = SubprocessWorkspaceExecutor(project_root=str(tmp_path))
+
+    # Test file in workspace
+    test_file = "src/feature.py"
+    target_ws, control_plane, unauthorized = executor.classify_diff_files(
+        diff_files=[test_file],
+        allowed_scope=[],  # Empty scope
+    )
+
+    assert test_file in target_ws
+    # Crucial invariant: When allowed_scope is empty, any workspace modification is unauthorized
+    assert test_file in unauthorized, "Empty allowed_scope must treat workspace file modification as unauthorized"
+
+

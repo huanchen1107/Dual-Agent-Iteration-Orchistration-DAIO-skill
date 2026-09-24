@@ -156,8 +156,8 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 unauthorized.append(norm_f)
                 continue
 
-            # Check allowed scope
-            if allowed_scope:
+            # Check allowed scope: empty scope or unmatched pattern -> unauthorized
+            if allowed_scope is not None:
                 matched = any(fnmatch.fnmatch(norm_f, pat) or fnmatch.fnmatch(Path(norm_f).name, pat) for pat in allowed_scope)
                 if not matched:
                     unauthorized.append(norm_f)
@@ -231,8 +231,9 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             for edit in proposal.proposed_edits:
                 target_file = root_path / edit.file_path
                 norm_edit_path = edit.file_path.replace("\\", "/")
-                # Check scope
-                if work.allowed_scope and not any(fnmatch.fnmatch(norm_edit_path, pat) or fnmatch.fnmatch(Path(norm_edit_path).name, pat) for pat in work.allowed_scope):
+                # Check scope: empty allowed_scope or edit not matching pattern is unauthorized
+                matched = any(fnmatch.fnmatch(norm_edit_path, pat) or fnmatch.fnmatch(Path(norm_edit_path).name, pat) for pat in (work.allowed_scope or []))
+                if not matched:
                     return ExecutionResult(
                         success=False,
                         test_passed=False,
