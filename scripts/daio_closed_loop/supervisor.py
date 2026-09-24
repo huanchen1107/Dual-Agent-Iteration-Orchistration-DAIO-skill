@@ -21,6 +21,7 @@ from .models import (
     DAIOWorkItem,
     HandoffState,
     HandoffWatch,
+    SupervisorHeartbeat,
     is_terminal_phase,
 )
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
@@ -132,11 +133,22 @@ class DAIOSupervisor:
             max_recovery_attempts=max_recovery_attempts,
         )
 
+        self.started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self.pid = os.getpid()
+
     def stop(self) -> None:
         """Signal the supervisor to stop."""
         logger.info(f"🛑 Stopping DAIOSupervisor ({self.supervisor_id})...")
         self._running = False
         self.worker.stop()
+        try:
+            hb = self.store.load_supervisor_heartbeat(self.supervisor_id)
+            if hb:
+                hb.status = "STOPPED"
+                hb.last_heartbeat_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                self.store.record_supervisor_heartbeat(hb)
+        except Exception:
+            pass
 
     async def run_tick(self) -> Dict[str, Any]:
         """
@@ -144,11 +156,15 @@ class DAIOSupervisor:
         1. Auto-register watches for completed works with authorized next_phase.
         2. Evaluate active watchdog monitors & execute bounded stall recoveries.
         3. Poll and process next available work item.
+        4. Update durable supervisor heartbeat.
         """
         now = datetime.datetime.now(datetime.timezone.utc)
+        now_iso = now.isoformat()
 
         # 1. Register watches for any completed items with unmonitored next_phase
         all_items = self.store.list_work_items()
+        queue_depth = len([it for it in all_items if it.status in {DAIOStatus.QUEUED, DAIOStatus.AWAITING_REVIEW, DAIOStatus.IN_PROGRESS}])
+
         for it in all_items:
             if it.status == DAIOStatus.COMPLETED and it.authorized_next_phase:
                 if not is_terminal_phase(it.authorized_next_phase):
@@ -164,9 +180,30 @@ class DAIOSupervisor:
         # 3. Worker polling & execution
         worker_result = await self.worker.run_once()
 
+        # 4. Record durable supervisor heartbeat
+        last_prog = now_iso if worker_result else None
+        hb = SupervisorHeartbeat(
+            supervisor_id=self.supervisor_id,
+            pid=self.pid,
+            project_root=str(self.project_root),
+            status="RUNNING",
+            started_at=self.started_at,
+            last_heartbeat_at=now_iso,
+            last_bridge_heartbeat_at=now_iso if self.bridge else None,
+            last_agent_heartbeat_at=now_iso if self.executor else None,
+            last_progress_at=last_prog,
+            active_work_id=worker_result.work_id if worker_result else self.worker._active_work_id,
+            queue_depth=queue_depth,
+            metadata={"watch_count": len(watch_results)}
+        )
+        try:
+            self.store.record_supervisor_heartbeat(hb)
+        except Exception as ex:
+            logger.warning(f"Could not record supervisor heartbeat: {ex}")
+
         return {
             "supervisor_id": self.supervisor_id,
-            "timestamp": now.isoformat(),
+            "timestamp": now_iso,
             "watch_evaluations": watch_results,
             "worker_processed_item": worker_result.work_id if worker_result else None,
         }
@@ -179,7 +216,7 @@ class DAIOSupervisor:
         tick_history: List[Dict[str, Any]] = []
         iterations = 0
 
-        logger.info(f"🚀 DAIOSupervisor STARTED: id={self.supervisor_id}, root={self.project_root}")
+        logger.info(f"🚀 DAIOSupervisor STARTED: id={self.supervisor_id}, pid={self.pid}, root={self.project_root}")
 
         try:
             while self._running:
@@ -204,13 +241,37 @@ class DAIOSupervisor:
         return tick_history
 
     def get_status(self) -> str:
-        """Get formatted supervisor status summary."""
+        """Get formatted supervisor status summary with full telemetry."""
         watchdog_summary = self.watchdog.get_status_summary()
         items = self.store.list_work_items()
+        queue_depth = len([it for it in items if it.status in {DAIOStatus.QUEUED, DAIOStatus.AWAITING_REVIEW, DAIOStatus.IN_PROGRESS}])
+        active_items = [it for it in items if it.status == DAIOStatus.IN_PROGRESS]
+        active_work_desc = ", ".join([it.work_id for it in active_items]) if active_items else "NONE"
+
+        hb = self.store.load_supervisor_heartbeat(self.supervisor_id)
+        hb_age_s = "UNKNOWN"
+        last_bridge = "UNKNOWN"
+        last_agent = "UNKNOWN"
+        last_prog = "UNKNOWN"
+
+        if hb:
+            now_dt = datetime.datetime.now(datetime.timezone.utc)
+            hb_dt = datetime.datetime.fromisoformat(hb.last_heartbeat_at)
+            hb_age_s = f"{int((now_dt - hb_dt).total_seconds())}s ago"
+            last_bridge = hb.last_bridge_heartbeat_at or "NONE"
+            last_agent = hb.last_agent_heartbeat_at or "NONE"
+            last_prog = hb.last_progress_at or "NONE"
+
         summary = [
-            f"=== DAIO SUPERVISOR STATUS ({self.supervisor_id}) ===",
-            f"Project Root: {self.project_root}",
-            f"Total Work Items: {len(items)}",
+            f"=== DAIO SUPERVISOR STATUS ===",
+            f"Supervisor ID           : {self.supervisor_id} (PID: {self.pid})",
+            f"Supervisor Heartbeat    : {hb_age_s}",
+            f"Worker State            : {'ACTIVE' if self._running else 'IDLE'}",
+            f"Queue Depth             : {queue_depth}",
+            f"Active Work             : {active_work_desc}",
+            f"Last Bridge Heartbeat   : {last_bridge}",
+            f"Last AntigravityCLI HB  : {last_agent}",
+            f"Last Progress Timestamp : {last_prog}",
             "",
             watchdog_summary,
         ]

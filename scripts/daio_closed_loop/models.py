@@ -130,3 +130,26 @@ class HandoffWatch:
     escalation_state: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+
+class PermissionCategory(str, Enum):
+    RUNTIME_SAFE_AUTONOMOUS = "RUNTIME_SAFE_AUTONOMOUS"
+    HUMAN_GATE_REQUIRED = "HUMAN_GATE_REQUIRED"
+    IDE_DEVELOPMENT_ONLY = "IDE_DEVELOPMENT_ONLY"
+
+
+@dataclass
+class SupervisorHeartbeat:
+    supervisor_id: str
+    pid: int
+    project_root: str
+    status: str = "RUNNING"
+    started_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    last_heartbeat_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    last_bridge_heartbeat_at: Optional[str] = None
+    last_agent_heartbeat_at: Optional[str] = None
+    last_progress_at: Optional[str] = None
+    active_work_id: Optional[str] = None
+    queue_depth: int = 0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+

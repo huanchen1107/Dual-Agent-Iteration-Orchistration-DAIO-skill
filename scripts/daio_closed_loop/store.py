@@ -17,6 +17,7 @@ from .models import (
     DAIOWorkItem,
     HandoffState,
     HandoffWatch,
+    SupervisorHeartbeat,
 )
 
 
@@ -65,6 +66,18 @@ class DAIOWorkStore(ABC):
 
     @abstractmethod
     def find_handoff_watch_by_successor(self, successor_work_id: str) -> Optional[HandoffWatch]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def record_supervisor_heartbeat(self, hb: SupervisorHeartbeat) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def load_supervisor_heartbeat(self, supervisor_id: Optional[str] = None) -> Optional[SupervisorHeartbeat]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_active_supervisors(self) -> List[SupervisorHeartbeat]:
         raise NotImplementedError
 
 
@@ -151,6 +164,22 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 recovery_attempt_count INTEGER NOT NULL DEFAULT 0,
                 max_recovery_attempts INTEGER NOT NULL DEFAULT 3,
                 escalation_state TEXT,
+                metadata TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daio_supervisor_heartbeats (
+                supervisor_id TEXT PRIMARY KEY,
+                pid INTEGER NOT NULL,
+                project_root TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                last_heartbeat_at TEXT NOT NULL,
+                last_bridge_heartbeat_at TEXT,
+                last_agent_heartbeat_at TEXT,
+                last_progress_at TEXT,
+                active_work_id TEXT,
+                queue_depth INTEGER NOT NULL DEFAULT 0,
                 metadata TEXT NOT NULL
             )
         """)
@@ -549,5 +578,82 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             escalation_state=row["escalation_state"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
+
+    def record_supervisor_heartbeat(self, hb: SupervisorHeartbeat) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO daio_supervisor_heartbeats (
+                supervisor_id, pid, project_root, status, started_at,
+                last_heartbeat_at, last_bridge_heartbeat_at, last_agent_heartbeat_at,
+                last_progress_at, active_work_id, queue_depth, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(supervisor_id) DO UPDATE SET
+                pid=excluded.pid,
+                status=excluded.status,
+                last_heartbeat_at=excluded.last_heartbeat_at,
+                last_bridge_heartbeat_at=excluded.last_bridge_heartbeat_at,
+                last_agent_heartbeat_at=excluded.last_agent_heartbeat_at,
+                last_progress_at=excluded.last_progress_at,
+                active_work_id=excluded.active_work_id,
+                queue_depth=excluded.queue_depth,
+                metadata=excluded.metadata
+        """, (
+            hb.supervisor_id,
+            hb.pid,
+            hb.project_root,
+            hb.status,
+            hb.started_at,
+            hb.last_heartbeat_at,
+            hb.last_bridge_heartbeat_at,
+            hb.last_agent_heartbeat_at,
+            hb.last_progress_at,
+            hb.active_work_id,
+            hb.queue_depth,
+            json.dumps(hb.metadata),
+        ))
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
+    def load_supervisor_heartbeat(self, supervisor_id: Optional[str] = None) -> Optional[SupervisorHeartbeat]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        if supervisor_id:
+            cursor.execute("SELECT * FROM daio_supervisor_heartbeats WHERE supervisor_id = ?", (supervisor_id,))
+        else:
+            cursor.execute("SELECT * FROM daio_supervisor_heartbeats ORDER BY last_heartbeat_at DESC LIMIT 1")
+        row = cursor.fetchone()
+        res = self._row_to_supervisor_heartbeat(row) if row else None
+        if not self._shared_conn:
+            conn.close()
+        return res
+
+    def list_active_supervisors(self) -> List[SupervisorHeartbeat]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM daio_supervisor_heartbeats WHERE status = 'RUNNING' ORDER BY last_heartbeat_at DESC")
+        rows = cursor.fetchall()
+        res = [self._row_to_supervisor_heartbeat(r) for r in rows]
+        if not self._shared_conn:
+            conn.close()
+        return res
+
+    def _row_to_supervisor_heartbeat(self, row: sqlite3.Row) -> SupervisorHeartbeat:
+        return SupervisorHeartbeat(
+            supervisor_id=row["supervisor_id"],
+            pid=row["pid"],
+            project_root=row["project_root"],
+            status=row["status"],
+            started_at=row["started_at"],
+            last_heartbeat_at=row["last_heartbeat_at"],
+            last_bridge_heartbeat_at=row["last_bridge_heartbeat_at"],
+            last_agent_heartbeat_at=row["last_agent_heartbeat_at"],
+            last_progress_at=row["last_progress_at"],
+            active_work_id=row["active_work_id"],
+            queue_depth=row["queue_depth"],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+        )
+
 
 
