@@ -260,16 +260,31 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         base_sha = self.get_current_head()
 
         # Fast-Path / Existing Workspace Check:
-        # If requested_action or metadata indicates validating existing workspace, bypass agent proposal synthesis.
+        # If requested_action, daio_config.json, or metadata indicates validating existing workspace, bypass agent proposal synthesis.
         action_lower = (work.requested_action or "").lower()
+
+        cfg_validation_only = False
+        cfg_path = Path(self.project_root) / "_daio" / "daio_config.json"
+        if not cfg_path.exists():
+            cfg_path = Path(self.project_root) / "daio_config.json"
+        if cfg_path.exists():
+            try:
+                cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
+                cfg_validation_only = bool(cfg_data.get("validation_only", False))
+            except Exception:
+                pass
+
         is_validation_only = (
-            bool(work.metadata.get("validation_only"))
+            cfg_validation_only
+            or bool(work.metadata.get("validation_only"))
             or bool(work.metadata.get("skip_agent_proposal"))
+            or "validation" in action_lower
             or "validate existing" in action_lower
             or "validate the existing" in action_lower
             or "do not regenerate" in action_lower
-            or "validation only" in action_lower
             or "existing workspace" in action_lower
+            or "do not invoke agy" in action_lower
+            or "do not invoke" in action_lower
         )
 
         # 1. If an agent adapter is configured and requested_action is provided (and not validation-only), invoke Coding Agent
