@@ -30,7 +30,7 @@ class AgentTaskRequest:
     frozen_paths: List[str] = field(default_factory=list)
     context_files: Dict[str, str] = field(default_factory=dict)
     backend_config: Dict[str, Any] = field(default_factory=dict)
-    timeout_seconds: int = 120
+    timeout_seconds: int = 300
 
 
 @dataclass

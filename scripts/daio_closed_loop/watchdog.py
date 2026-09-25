@@ -125,7 +125,7 @@ class DAIOHandoffWatchdog:
         discovery_timeout_seconds: float = 30.0,
         claim_timeout_seconds: float = 45.0,
         first_heartbeat_timeout_seconds: float = 60.0,
-        progress_timeout_seconds: float = 120.0,
+        progress_timeout_seconds: float = 360.0,
         max_recovery_attempts: int = 3,
     ) -> None:
         self.store = store

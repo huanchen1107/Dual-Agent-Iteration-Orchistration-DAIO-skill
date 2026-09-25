@@ -96,7 +96,15 @@ class DAIOPersistentWorker:
         if executor:
             self.executor = executor
         else:
-            agent = create_engineering_agent_adapter({"provider": agent_provider})
+            agent_cfg = {"provider": agent_provider}
+            if config_file.exists():
+                try:
+                    cfg = json.loads(config_file.read_text(encoding="utf-8"))
+                    if "timeout_seconds" in cfg:
+                        agent_cfg["timeout_seconds"] = cfg["timeout_seconds"]
+                except Exception:
+                    pass
+            agent = create_engineering_agent_adapter(agent_cfg)
             self.executor = SubprocessWorkspaceExecutor(project_root=str(self.project_root), agent_adapter=agent)
 
         # Resolve bridge

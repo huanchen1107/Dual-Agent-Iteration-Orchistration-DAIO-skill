@@ -50,10 +50,10 @@ class DAIOSupervisor:
         bridge: Optional[ArchitectBridgeAdapter] = None,
         supervisor_id: Optional[str] = None,
         poll_interval_seconds: float = 2.0,
-        lease_ttl_seconds: int = 300,
+        lease_ttl_seconds: int = 480,
         watchdog_discovery_timeout: float = 30.0,
         watchdog_claim_timeout: float = 45.0,
-        watchdog_progress_timeout: float = 120.0,
+        watchdog_progress_timeout: float = 360.0,
         max_recovery_attempts: int = 3,
         default_test_command: Optional[str] = None,
     ) -> None:
