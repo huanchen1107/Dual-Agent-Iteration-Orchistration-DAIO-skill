@@ -230,5 +230,31 @@ def check_work_item_invariants(work: DAIOWorkItem) -> List[str]:
     return violations
 
 
+def assert_storage_isolation(store_db_path: str, project_root: str) -> None:
+    """
+    Enforces storage and work-item isolation.
+    Verifies that the SQLite database resides strictly within the declared project root
+    and prevents test harnesses or foreign processes from mutating other workspaces.
+    """
+    from pathlib import Path
+    db_p = Path(store_db_path).resolve()
+    root_p = Path(project_root).resolve()
+    if not (db_p == root_p or root_p in db_p.parents):
+        raise PermissionError(f"Storage isolation violation: DB '{db_p}' is outside project root '{root_p}'")
+
+
+def validate_work_item_isolation(work: DAIOWorkItem, expected_project_root: str) -> bool:
+    """
+    Verifies that a work item strictly belongs to the expected project root.
+    Prevents cross-workspace claiming or mutation.
+    """
+    from pathlib import Path
+    work_root = Path(work.project_root).resolve()
+    exp_root = Path(expected_project_root).resolve()
+    return work_root == exp_root
+
+
+
+
 
 

@@ -107,20 +107,21 @@ orchestrator = DAIOClosedLoopOrchestrator(
 )
 
 # 7. Record the completed Stage 5 terminal work item in the durable database
+# 7. Record the completed Stage 5 terminal work item in the durable database
 stage5_work = DAIOWorkItem(
-    work_id="daio-stage5-acceptance-final",
+    work_id="daio-s56-synthetic-terminal",
     project_root=str(SANDBOX),
-    change_id="PHASE_S5_ACCEPTANCE",
+    change_id="ACCEPTANCE_S56_STAGE_5_TERMINAL",
     current_stage="STAGE_5_COMPLETE",
     current_gate=DAIOGate.FREEZE_GATE,
     assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
-    requested_action="Stage 5 Full Acceptance Completed. Authorize CHANGE_051_PREFLIGHT.",
+    requested_action="Stage 5 Acceptance Completed. Authorize ACCEPTANCE_S56_SYNTHETIC_HANDOFF.",
     allowed_scope=["src/*", "tests/*"],
     base_sha=base_sha,
     head_sha=base_sha,
     status=DAIOStatus.COMPLETED,
     last_decision="APPROVE",
-    authorized_next_phase="CHANGE_051_PREFLIGHT",
+    authorized_next_phase="ACCEPTANCE_S56_SYNTHETIC_HANDOFF",
     architect_endpoint=endpoint,
 )
 store.save_work_item(stage5_work)
@@ -135,7 +136,7 @@ async def run_s56_acceptance():
     # Step 1: Resolve post-completion handoff work item from Stage 5 terminal work
     root_work = orchestrator.resolve_next_work_item(stage5_work, stage5_work.authorized_next_phase)
     assert root_work is not None, "Failed to resolve new root work item from authorized_next_phase"
-    print(f"📦 Resolved New Root Production Work Item: {root_work.work_id}")
+    print(f"📦 Resolved New Root Work Item: {root_work.work_id}")
     print(f"   - Change ID: {root_work.change_id}")
     print(f"   - Parent Work ID: {root_work.parent_work_id}")
     print(f"   - Gate: {root_work.current_gate.value}")
@@ -159,11 +160,11 @@ async def run_s56_acceptance():
 
     # Step 3: Dispatch CONTRACT_GATE review request to exact ChatGPT Lead Architect conversation over CDP
     print("\n📡 Dispatching CONTRACT_GATE Request to Lead Architect ChatGPT Conversation...")
-    report_markdown = f"""🏛️ **[DAIO v2.1 Closed Loop Review — Gate: CONTRACT_GATE]**
+    report_markdown = f"""🏛️ **[DAIO v2.1 Isolated Acceptance Test — Gate: CONTRACT_GATE (S5.6 Handoff Verification)]**
 
 Lead Architect,
 
-Persistent DAIO worker has autonomously discovered and claimed authorized production root work:
+Persistent DAIO acceptance worker in isolated sandbox has claimed synthetic work item:
 - **Work ID:** `{claim_alpha.work_id}`
 - **Current Stage / Change ID:** `{claim_alpha.change_id}`
 - **Parent Work ID:** `{claim_alpha.parent_work_id or 'ROOT'}`
@@ -181,7 +182,7 @@ Please provide your review instruction or contract requirements in a structured 
   "next_phase": null,
   "action": "RUN",
   "human_approval_required": false,
-  "instruction": "<Specify preflight instructions or confirmation for Change 051>"
+  "instruction": "Execute synthetic S5.6 isolated test milestone."
 }}
 ```
 """

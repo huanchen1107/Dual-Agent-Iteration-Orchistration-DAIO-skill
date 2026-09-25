@@ -317,3 +317,71 @@ def test_router_human_gate_transitions_maintain_invariants():
     assert eng_routed.current_gate == DAIOGate.HUMAN_GATE
     assert eng_routed.assigned_role == DAIORole.HUMAN_PROJECT_OWNER
     assert eng_routed.claimed_by is None
+
+
+def test_storage_and_acceptance_isolation_invariants():
+    from scripts.daio_closed_loop.models import assert_storage_isolation, validate_work_item_isolation
+
+    # Valid sandbox path
+    sandbox_root = "/tmp/daio_sandbox_test"
+    valid_db = "/tmp/daio_sandbox_test/_daio/daio_work_state.db"
+    assert_storage_isolation(valid_db, sandbox_root)
+
+    # Invariant: DB path outside project root must raise PermissionError
+    production_db = "/Users/huanchen/Desktop/2026 Projects/2026.8.26AwinFinTechSMCHybridSystemFolder/_AwinFinTechHybridSystem_/_daio/daio_work_state.db"
+    with pytest.raises(PermissionError) as exc:
+        assert_storage_isolation(production_db, sandbox_root)
+    assert "Storage isolation violation" in str(exc.value)
+
+    # Work item root validation
+    item = DAIOWorkItem(
+        work_id="item-sandbox",
+        project_root=sandbox_root,
+        change_id="ACCEPTANCE_S56_SYNTHETIC",
+    )
+    assert validate_work_item_isolation(item, sandbox_root) is True
+    assert validate_work_item_isolation(item, "/tmp/other_sandbox") is False
+
+
+def test_post_completion_handoff_isolation_prevents_production_leakage():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sandbox_root = str(Path(tmpdir).resolve())
+        db_path = str(Path(sandbox_root) / "_daio" / "daio_work.db")
+        Path(sandbox_root, "_daio").mkdir(parents=True, exist_ok=True)
+
+        from scripts.daio_closed_loop.store import SqliteDAIOWorkStore
+        from scripts.daio_closed_loop.orchestrator import DAIOClosedLoopOrchestrator
+
+        store = SqliteDAIOWorkStore(db_path=db_path)
+        orchestrator = DAIOClosedLoopOrchestrator(store=store)
+
+        # Terminal synthetic work item in isolated sandbox
+        terminal_item = DAIOWorkItem(
+            work_id="daio-synthetic-stage5",
+            project_root=sandbox_root,
+            change_id="ACCEPTANCE_S56_STAGE_5_TERMINAL",
+            current_stage="STAGE_5_COMPLETE",
+            current_gate=DAIOGate.FREEZE_GATE,
+            assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+            status=DAIOStatus.COMPLETED,
+            last_decision="APPROVE",
+            authorized_next_phase="ACCEPTANCE_S56_SYNTHETIC_HANDOFF",
+        )
+        store.save_work_item(terminal_item)
+
+        # Resolve next work item
+        resolved = orchestrator.resolve_next_work_item(terminal_item, terminal_item.authorized_next_phase)
+        assert resolved is not None
+        assert resolved.project_root == sandbox_root
+        assert resolved.change_id == "ACCEPTANCE_S56_SYNTHETIC_HANDOFF"
+        assert resolved.parent_work_id == "daio-synthetic-stage5"
+        assert resolved.status == DAIOStatus.AWAITING_REVIEW
+        assert resolved.current_gate == DAIOGate.CONTRACT_GATE
+
+        # Ensure that only items in this sandbox exist in the store
+        all_items = store.list_work_items()
+        assert len(all_items) == 2
+        for it in all_items:
+            assert it.project_root == sandbox_root
+            assert "051" not in it.change_id
+
