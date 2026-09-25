@@ -198,11 +198,15 @@ def do_rpc_publish(relay_url: Optional[str] = None, token: Optional[str] = None,
         except KeyboardInterrupt:
             print("\n🛑 Stopped RPC publisher loop.")
     else:
-        success, detail = publisher.publish_once()
+        success, detail, status_resp = publisher.publish_once()
         if success:
-            print(f"✅ Published successfully: {detail}")
+            proj = status_resp.live_plane.project_name if status_resp else "unknown"
+            sha = (status_resp.durable_plane.local_head_sha[:7]) if (status_resp and status_resp.durable_plane.local_head_sha) else "?"
+            freshness = status_resp.live_plane.freshness.value if status_resp else "?"
+            print(f"✅ Published successfully: {detail} ({proj} | {freshness} | {sha})")
         else:
             print(f"❌ Publication failed: {detail}")
+
 
 
 def do_start():

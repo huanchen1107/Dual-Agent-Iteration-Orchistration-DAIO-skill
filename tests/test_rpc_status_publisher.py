@@ -89,9 +89,10 @@ def test_publisher_successful_publish(mock_relay_server):
         timeout_seconds=2.0,
     )
 
-    success, detail = publisher.publish_once()
+    success, detail, status_resp = publisher.publish_once()
     assert success is True
     assert "200" in detail
+    assert status_resp is not None
     assert len(MockRelayHandler.received_requests) == 1
 
     path, payload, auth = MockRelayHandler.received_requests[0]
@@ -110,7 +111,7 @@ def test_publisher_unauthorized_token_rejection(mock_relay_server):
         timeout_seconds=2.0,
     )
 
-    success, detail = publisher.publish_once()
+    success, detail, status_resp = publisher.publish_once()
     assert success is False
     assert "401" in detail
 
@@ -127,7 +128,7 @@ def test_publisher_missing_relay_secret_fails_closed(mock_relay_server):
         timeout_seconds=2.0,
     )
 
-    success, detail = publisher.publish_once()
+    success, detail, status_resp = publisher.publish_once()
     assert success is False
     assert "503" in detail
     assert len(MockRelayHandler.received_requests) == 0
@@ -143,31 +144,39 @@ def test_publisher_network_failure_resilience():
         timeout_seconds=0.5,
     )
 
-    success, detail = publisher.publish_once()
+    success, detail, status_resp = publisher.publish_once()
     assert success is False
     assert "error" in detail.lower() or "connection" in detail.lower()
 
 
-def test_publisher_run_loop_graceful_stop(mock_relay_server):
+def test_publisher_continuous_multi_cycle_loop(mock_relay_server):
+    """Proves that loop mode performs multiple independent cycles and updates collected_at on each cycle."""
     async def _async_test():
         collector = DAIOStatusCollector(project_root=".")
+        published_records = []
+
+        def record_cb(count, success, detail, resp):
+            if success and resp:
+                published_records.append((count, resp.provenance.get("collected_at")))
+
         publisher = DAIOStatusPublisher(
             collector=collector,
             relay_url=mock_relay_server,
             publish_token="valid-secret-token",
-            interval_seconds=5,
+            interval_seconds=1,
             timeout_seconds=2.0,
+            on_publish=record_cb,
         )
 
-        stop_event = asyncio.Event()
+        # Run for 3 iterations
+        await publisher.run_loop(max_iterations=3)
 
-        async def trigger_stop_later():
-            await asyncio.sleep(0.1)
-            stop_event.set()
+        assert len(MockRelayHandler.received_requests) == 3
+        assert len(published_records) == 3
 
-        asyncio.create_task(trigger_stop_later())
-        await publisher.run_loop(stop_event=stop_event)
-
-        assert len(MockRelayHandler.received_requests) >= 1
+        # Prove each iteration produced a distinct collected_at timestamp
+        timestamps = [r[1] for r in published_records]
+        assert len(set(timestamps)) == 3, f"Expected 3 distinct timestamps, got: {timestamps}"
 
     asyncio.run(_async_test())
+
