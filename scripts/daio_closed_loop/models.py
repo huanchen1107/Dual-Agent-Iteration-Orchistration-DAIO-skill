@@ -194,4 +194,41 @@ class SupervisorHeartbeat:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+def transition_to_human_gate(work: DAIOWorkItem, reason: str) -> DAIOWorkItem:
+    """
+    Atomically transitions a work item to HUMAN_GATE_REQUIRED.
+    Guarantees that status, current_gate, assigned_role, and lease state remain strictly synchronized.
+    """
+    work.status = DAIOStatus.HUMAN_GATE_REQUIRED
+    work.current_gate = DAIOGate.HUMAN_GATE
+    work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
+    work.human_gate_reason = reason
+    work.claimed_by = None
+    work.lease_id = None
+    work.lease_expires_at = None
+    work.execution_attempt_id = None
+    work.execution_started_at = None
+    work.updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return work
+
+
+def check_work_item_invariants(work: DAIOWorkItem) -> List[str]:
+    """
+    Validates structural invariants on DAIOWorkItem state.
+    Returns a list of invariant violation error messages (empty if valid).
+    """
+    violations: List[str] = []
+    if work.status == DAIOStatus.HUMAN_GATE_REQUIRED:
+        if work.current_gate != DAIOGate.HUMAN_GATE:
+            violations.append(f"Invariant violation: status is HUMAN_GATE_REQUIRED but current_gate is {work.current_gate}")
+        if work.assigned_role != DAIORole.HUMAN_PROJECT_OWNER:
+            violations.append(f"Invariant violation: status is HUMAN_GATE_REQUIRED but assigned_role is {work.assigned_role}")
+        if work.claimed_by is not None:
+            violations.append(f"Invariant violation: status is HUMAN_GATE_REQUIRED but claimed_by is '{work.claimed_by}'")
+        if work.lease_id is not None:
+            violations.append(f"Invariant violation: status is HUMAN_GATE_REQUIRED but lease_id is '{work.lease_id}'")
+    return violations
+
+
+
 

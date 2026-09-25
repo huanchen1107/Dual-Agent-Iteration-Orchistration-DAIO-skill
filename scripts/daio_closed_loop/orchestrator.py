@@ -16,6 +16,7 @@ from .models import (
     HandoffState,
     TERMINAL_PHASES,
     is_terminal_phase,
+    transition_to_human_gate,
 )
 from .router import DAIORoleRouter
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
@@ -250,8 +251,10 @@ class DAIOClosedLoopOrchestrator:
                         and work.current_gate == previous_reviewed_gate
                         and work.current_gate == DAIOGate.IMPLEMENTATION_GATE
                     ):
-                        work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                        work.human_gate_reason = f"DAIO-001 Zero progress: Repeated review on identical HEAD SHA ({work.head_sha}) at {work.current_gate.value}"
+                        transition_to_human_gate(
+                            work,
+                            f"DAIO-001 Zero progress: Repeated review on identical HEAD SHA ({work.head_sha}) at {work.current_gate.value}"
+                        )
                         self.store.save_work_item(work)
                         break
 
@@ -359,8 +362,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         consecutive_errors += 1
                         logger.error(f"Error during Architect review turn ({consecutive_errors}/{self.consecutive_errors_cap}): {ex}")
                         if consecutive_errors >= self.consecutive_errors_cap:
-                            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                            work.human_gate_reason = f"DAIO-003 Error Cap Reached: {ex}"
+                            transition_to_human_gate(work, f"DAIO-003 Error Cap Reached: {ex}")
                             self.store.save_work_item(work)
                             break
 
@@ -391,8 +393,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
 
                         # Check Scope Violation (DAIO-002)
                         if exec_res.scope_violation:
-                            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                            work.human_gate_reason = f"DAIO-002 Scope Violation: {exec_res.error_message}"
+                            transition_to_human_gate(work, f"DAIO-002 Scope Violation: {exec_res.error_message}")
                             self.store.save_work_item(work)
                             break
 
@@ -428,15 +429,13 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         consecutive_errors += 1
                         logger.error(f"Error during Engineering turn ({consecutive_errors}/{self.consecutive_errors_cap}): {ex}")
                         if consecutive_errors >= self.consecutive_errors_cap:
-                            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                            work.human_gate_reason = f"DAIO-003 Error Cap Reached: {ex}"
+                            transition_to_human_gate(work, f"DAIO-003 Error Cap Reached: {ex}")
                             self.store.save_work_item(work)
                             break
 
             # If loop exited because of max rounds
             if rounds_executed >= self.max_rounds and work.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
-                work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                work.human_gate_reason = f"DAIO-003 Max autonomous rounds ({self.max_rounds}) reached."
+                transition_to_human_gate(work, f"DAIO-003 Max autonomous rounds ({self.max_rounds}) reached.")
                 self.store.save_work_item(work)
 
             return work

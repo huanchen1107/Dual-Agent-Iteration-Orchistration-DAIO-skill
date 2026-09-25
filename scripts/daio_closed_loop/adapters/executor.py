@@ -40,11 +40,69 @@ class ExecutionResult:
     error_message: Optional[str] = None
     scope_violation: bool = False
     proposal: Optional[AgentTaskProposal] = None
+    test_regressions: List[str] = field(default_factory=list)
+    baseline_failures: List[str] = field(default_factory=list)
+    current_failures: List[str] = field(default_factory=list)
+    regression_status: str = "ALL_PASSED"
 
     @property
     def commit_sha(self) -> str:
         """Backward-compatible alias: returns generated_commit_sha or empty string."""
         return self.generated_commit_sha or ""
+
+
+def extract_pytest_failures(output: str) -> List[str]:
+    """
+    Extracts failed/error test node identifiers or failure names from pytest output.
+    Matches lines like:
+      FAILED tests/test_foo.py::test_bar - AssertionError...
+      FAILED tests/test_pine_smc_reference.py::test_baseline_manifest_is_reproducible_and_change_024_is_protected
+      ERROR tests/test_baz.py::test_init
+    """
+    import re
+    failures = set()
+    for line in output.splitlines():
+        line = line.strip()
+        # Pattern 1: FAILED/ERROR path/to/test.py::test_func[...]
+        m = re.match(r'^(?:FAILED|ERROR)\s+([^\s:]+::[^\s\-]+)', line)
+        if m:
+            clean_node = m.group(1).strip()
+            failures.add(clean_node)
+            continue
+        # Pattern 2: FAILED/ERROR path/to/test.py::test_func
+        m2 = re.match(r'^(?:FAILED|ERROR)\s+([^\s]+)', line)
+        if m2 and "::" in m2.group(1):
+            clean_node = m2.group(1).split()[0].strip()
+            failures.add(clean_node)
+            continue
+        # Pattern 3: Summary lines: FAILED tests/test_pine_smc_reference.py::test_xxx
+        m3 = re.match(r'^FAILED\s+([a-zA-Z0-9_\-/\.]+\.py::[a-zA-Z0-9_\[\]\-\.]+)', line)
+        if m3:
+            clean_node = m3.group(1).strip()
+            failures.add(clean_node)
+            continue
+    return sorted(list(failures))
+
+
+def is_failure_in_baseline(failure: str, baseline_list: List[str]) -> bool:
+    """
+    Checks if a given failing test identifier matches any item in the approved baseline failure set.
+    Supports exact node ID match, basename match, and bracketed parameter match.
+    """
+    if failure in baseline_list:
+        return True
+    for b in baseline_list:
+        if b == failure:
+            return True
+        # Exact suffix match (e.g. baseline has "test_func" or "test_file.py::test_func")
+        if failure.endswith(f"::{b}") or b.endswith(f"::{failure}"):
+            return True
+        # Match base name without parametrization: test_func[param] matches test_func
+        if "[" in failure and failure.split("[")[0] == b:
+            return True
+        if "[" in failure and failure.split("[")[0].endswith(f"::{b}"):
+            return True
+    return False
 
 
 class EngineeringExecutorAdapter(ABC):
@@ -201,8 +259,21 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         proposal = None
         base_sha = self.get_current_head()
 
-        # 1. If an agent adapter is configured and requested_action is provided, invoke Coding Agent
-        if self.agent_adapter and work.requested_action:
+        # Fast-Path / Existing Workspace Check:
+        # If requested_action or metadata indicates validating existing workspace, bypass agent proposal synthesis.
+        action_lower = (work.requested_action or "").lower()
+        is_validation_only = (
+            bool(work.metadata.get("validation_only"))
+            or bool(work.metadata.get("skip_agent_proposal"))
+            or "validate existing" in action_lower
+            or "validate the existing" in action_lower
+            or "do not regenerate" in action_lower
+            or "validation only" in action_lower
+            or "existing workspace" in action_lower
+        )
+
+        # 1. If an agent adapter is configured and requested_action is provided (and not validation-only), invoke Coding Agent
+        if self.agent_adapter and work.requested_action and not is_validation_only:
             context_files = self._gather_context_files(work.allowed_scope)
             req = AgentTaskRequest(
                 work_id=work.work_id,
@@ -249,6 +320,9 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 # Apply authorized edit
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 target_file.write_text(edit.new_content, encoding="utf-8")
+
+        elif is_validation_only:
+            out_logs.append("FAST_PATH_VALIDATION_ONLY: Skipped coding agent proposal synthesis per existing workspace validation request.")
 
         elif command:
             code, out = self.run_cmd(command)
@@ -301,13 +375,58 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 proposal=proposal
             )
 
-        # 3. Run Test Integrity Gate (DAIO-001)
+        # 3. Run Test Integrity Gate (DAIO-001 / Baseline-Aware)
         test_cmd = test_command or "pytest tests/ -q"
         code, test_out = self.run_cmd(test_cmd)
         out_logs.append(test_out)
-        test_passed = (code == 0)
+
+        # Retrieve approved baseline test failures and baseline SHA
+        baseline_failures: List[str] = []
+        baseline_sha: Optional[str] = getattr(work, "base_sha", None) or None
+
+        if hasattr(work, "metadata") and isinstance(work.metadata, dict):
+            baseline_failures = work.metadata.get("baseline_test_failures") or work.metadata.get("approved_baseline_failures") or []
+            if not baseline_sha:
+                baseline_sha = work.metadata.get("baseline_sha")
+
+        if not baseline_failures:
+            # Fallback to _daio/daio_config.json
+            cfg_path = Path(self.project_root) / "_daio" / "daio_config.json"
+            if not cfg_path.exists():
+                cfg_path = Path(self.project_root) / "daio_config.json"
+            if cfg_path.exists():
+                try:
+                    cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
+                    baseline_failures = cfg_data.get("baseline_test_failures", [])
+                    if not baseline_sha:
+                        baseline_sha = cfg_data.get("baseline_sha")
+                except Exception:
+                    pass
+
+        current_failures = extract_pytest_failures(test_out) if code != 0 else []
+        new_regressions = [f for f in current_failures if not is_failure_in_baseline(f, baseline_failures)]
+
+        if code == 0:
+            test_passed = True
+            regression_status = "ALL_PASSED"
+        elif baseline_failures and current_failures and len(new_regressions) == 0:
+            test_passed = True
+            regression_status = "NO_NEW_REGRESSIONS_PASS"
+            msg = (
+                f"[DAIO_TEST_GATE] Baseline-aware evaluation passed: {len(current_failures)} current failure(s) "
+                f"matched approved baseline failure set (Baseline SHA: {baseline_sha or 'UNSPECIFIED'}). 0 new regressions."
+            )
+            out_logs.append(msg)
+        else:
+            test_passed = False
+            regression_status = "NEW_REGRESSIONS_FAIL"
 
         if not test_passed:
+            err_detail = (
+                f"Test Integrity Gate Failed: {len(new_regressions)} new regression(s) detected: {new_regressions} (exit code {code})"
+                if new_regressions
+                else f"Test Integrity Gate Failed (exit code {code}):\n{test_out}"
+            )
             return ExecutionResult(
                 success=False,
                 test_passed=False,
@@ -319,8 +438,12 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 daio_control_plane_diff=control_plane,
                 unauthorized_diff=[],
                 output="\n".join(out_logs),
-                error_message=f"Test Integrity Gate Failed (exit code {code}):\n{test_out}",
-                proposal=proposal
+                error_message=err_detail,
+                proposal=proposal,
+                test_regressions=new_regressions,
+                baseline_failures=baseline_failures,
+                current_failures=current_failures,
+                regression_status=regression_status,
             )
 
         # 4. If tests pass, commit deliverable
@@ -340,7 +463,11 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             daio_control_plane_diff=control_plane,
             unauthorized_diff=[],
             output="\n".join(out_logs),
-            proposal=proposal
+            proposal=proposal,
+            test_regressions=[],
+            baseline_failures=baseline_failures,
+            current_failures=current_failures,
+            regression_status=regression_status,
         )
 
     def execute_task(

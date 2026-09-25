@@ -13,6 +13,7 @@ from .models import (
     DAIOStatus,
     DAIOWorkItem,
     is_terminal_phase,
+    transition_to_human_gate,
 )
 
 
@@ -45,11 +46,8 @@ class DAIORoleRouter:
         }
 
         if decision.human_approval_required or decision.decision == "HUMAN_REVIEW":
-            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-            work.current_gate = DAIOGate.HUMAN_GATE
-            work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
-            work.human_gate_reason = decision.instruction or "Architect requested Human Project Owner review."
-            return work
+            reason = decision.instruction or "Architect requested Human Project Owner review."
+            return transition_to_human_gate(work, reason)
 
         if decision.decision == "APPROVE":
             # Check if this APPROVE authorized a distinct next phase
@@ -111,11 +109,8 @@ class DAIORoleRouter:
             return work
 
         if decision.decision == "REJECT" or decision.decision == "STOP" or decision.action == "STOP":
-            work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-            work.current_gate = DAIOGate.HUMAN_GATE
-            work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
-            work.human_gate_reason = f"Architect issued {decision.decision}: {decision.instruction}"
-            return work
+            reason = f"Architect issued {decision.decision}: {decision.instruction}"
+            return transition_to_human_gate(work, reason)
 
         raise ValueError(f"Unknown architect decision value: '{decision.decision}'")
 
@@ -139,10 +134,8 @@ class DAIORoleRouter:
             work.attempt_count += 1
             if work.attempt_count >= work.max_attempts:
                 # Exhausted recovery budget -> escalate to human
-                work.status = DAIOStatus.HUMAN_GATE_REQUIRED
-                work.current_gate = DAIOGate.HUMAN_GATE
-                work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
-                work.human_gate_reason = f"Test integrity gate failed max attempts ({work.max_attempts}). Detail: {execution_error or 'Tests failed'}"
+                reason = f"Test integrity gate failed max attempts ({work.max_attempts}). Detail: {execution_error or 'Tests failed'}"
+                return transition_to_human_gate(work, reason)
             else:
                 work.status = DAIOStatus.BLOCKED
             return work
