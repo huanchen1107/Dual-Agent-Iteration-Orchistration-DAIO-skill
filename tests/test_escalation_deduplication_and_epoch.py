@@ -293,3 +293,164 @@ def test_human_gate_required_semantics_and_review_request(tmp_path):
     assert report["required_human_role"] == "HUMAN_PROJECT_OWNER"
     assert "Review blocked work item" in report["required_action"]
     assert report["diagnostics"]["successor_status"] == "HUMAN_GATE_REQUIRED"
+
+
+def test_revise_run_resolves_human_gate_to_executable_queue(tmp_path):
+    """
+    State machine invariant: REVISE/RUN + human_approval_required=false MUST resolve an existing
+    human gate, clear HUMAN_GATE_REQUIRED, and transition work to QUEUED / ENGINEERING_TASK.
+    """
+    store = SqliteDAIOWorkStore(db_path=str(tmp_path / "daio_resolve_hg.db"))
+    parent = DAIOWorkItem(
+        work_id="parent-rhg",
+        project_root=str(tmp_path),
+        change_id="P1",
+        status=DAIOStatus.COMPLETED,
+        authorized_next_phase="P2",
+    )
+    store.save_work_item(parent)
+
+    succ = DAIOWorkItem(
+        work_id="succ-rhg",
+        project_root=str(tmp_path),
+        change_id="P2",
+        status=DAIOStatus.HUMAN_GATE_REQUIRED,
+        current_gate=DAIOGate.HUMAN_GATE,
+        assigned_role=DAIORole.HUMAN_PROJECT_OWNER,
+        parent_work_id="parent-rhg",
+        human_gate_reason="Security boundary tripped",
+        attempt_count=3,
+        max_attempts=3,
+    )
+    store.save_work_item(succ)
+
+    mock_bridge = MagicMock()
+    mock_bridge.emit_telemetry = AsyncMock()
+    orchestrator = DAIOClosedLoopOrchestrator(store=store, bridge=mock_bridge)
+    watchdog = DAIOHandoffWatchdog(store=store, project_root=str(tmp_path))
+    watch = watchdog.register_handoff(parent, "P2", successor_work_id="succ-rhg")
+
+    dec = ArchitectDecision(
+        decision="REVISE",
+        current_phase="P2",
+        action="RUN",
+        instruction="Explicit human gate resolution authorized",
+        human_approval_required=False,
+    )
+
+    ok, work, report = asyncio.run(orchestrator.process_incoming_architect_decision(succ.work_id, dec))
+    assert ok is True
+    assert work.status == DAIOStatus.QUEUED
+    assert work.current_gate == DAIOGate.ENGINEERING_TASK
+    assert work.assigned_role == DAIORole.ENGINEERING_EXECUTION
+    assert work.human_gate_reason is None
+
+    reloaded_watch = store.load_handoff_watch(watch.watch_id)
+    assert reloaded_watch.current_state == HandoffState.WAITING_FOR_CLAIM
+    assert reloaded_watch.recovery_attempt_count == 0
+
+
+def test_stop_decision_is_terminal_and_never_creates_recovery_epoch(tmp_path):
+    """
+    State machine invariant: STOP is terminal/quiescent and MUST NEVER create or reactivate
+    a recovery epoch.
+    """
+    store = SqliteDAIOWorkStore(db_path=str(tmp_path / "daio_stop_terminal.db"))
+    parent = DAIOWorkItem(
+        work_id="parent-stop",
+        project_root=str(tmp_path),
+        change_id="P1",
+        status=DAIOStatus.COMPLETED,
+        authorized_next_phase="P2",
+    )
+    store.save_work_item(parent)
+
+    succ = DAIOWorkItem(
+        work_id="succ-stop",
+        project_root=str(tmp_path),
+        change_id="P2",
+        status=DAIOStatus.HUMAN_GATE_REQUIRED,
+        parent_work_id="parent-stop",
+        attempt_count=3,
+        max_attempts=3,
+    )
+    store.save_work_item(succ)
+
+    mock_bridge = MagicMock()
+    mock_bridge.emit_telemetry = AsyncMock()
+    orchestrator = DAIOClosedLoopOrchestrator(store=store, bridge=mock_bridge)
+    watchdog = DAIOHandoffWatchdog(store=store, project_root=str(tmp_path))
+    watch = watchdog.register_handoff(parent, "P2", successor_work_id="succ-stop")
+    watchdog.evaluate_watches()
+
+    w_escalated = store.load_handoff_watch(watch.watch_id)
+    initial_epoch = w_escalated.recovery_epoch_id
+    assert w_escalated.current_state == HandoffState.STALLED_ESCALATED
+
+    # Ingest STOP decision
+    dec = ArchitectDecision(
+        decision="STOP",
+        current_phase="P2",
+        action="STOP",
+        instruction="Abort closed loop permanently",
+        human_approval_required=False,
+    )
+
+    ok, work, report = asyncio.run(orchestrator.process_incoming_architect_decision(succ.work_id, dec))
+    assert ok is True
+    assert work.status == DAIOStatus.HUMAN_GATE_REQUIRED
+    assert store.claim_next_available_work_item(worker_id="w-01") is None
+
+    w_after_stop = store.load_handoff_watch(watch.watch_id)
+    assert w_after_stop.current_state == HandoffState.COMPLETED
+    assert w_after_stop.recovery_epoch_id == initial_epoch  # Epoch MUST NOT change!
+    assert len(w_after_stop.metadata.get("epochs", [])) == 0  # No new epoch appended
+
+
+def test_repeated_evaluation_without_valid_decision_cannot_emit_duplicate_escalation(tmp_path):
+    """
+    State machine invariant: Repeated watchdog evaluation ticks on an unchanged stalled/human-gated
+    item MUST return quiescently and never emit duplicate bridge transmissions.
+    """
+    store = SqliteDAIOWorkStore(db_path=str(tmp_path / "daio_quiescent_eval.db"))
+    parent = DAIOWorkItem(
+        work_id="parent-qe",
+        project_root=str(tmp_path),
+        change_id="P1",
+        status=DAIOStatus.COMPLETED,
+        authorized_next_phase="P2",
+    )
+    store.save_work_item(parent)
+
+    succ = DAIOWorkItem(
+        work_id="succ-qe",
+        project_root=str(tmp_path),
+        change_id="P2",
+        status=DAIOStatus.HUMAN_GATE_REQUIRED,
+        parent_work_id="parent-qe",
+        attempt_count=3,
+        max_attempts=3,
+    )
+    store.save_work_item(succ)
+
+    mock_bridge = MagicMock()
+    mock_bridge.transmit_review_request = AsyncMock()
+
+    watchdog = DAIOHandoffWatchdog(store=store, project_root=str(tmp_path), bridge=mock_bridge, max_recovery_attempts=2)
+    watch = watchdog.register_handoff(parent, "P2", successor_work_id="succ-qe")
+    watch.recovery_attempt_count = 2
+    store.save_handoff_watch(watch)
+
+    # First evaluation escalates and dispatches to bridge
+    eval1 = watchdog.evaluate_watches()
+    assert len(eval1) == 1
+    assert eval1[0]["status"] == "ESCALATED"
+
+    # Reset mock to verify subsequent ticks do NOT call bridge
+    mock_bridge.transmit_review_request.reset_mock()
+
+    for _ in range(5):
+        eval_tick = watchdog.evaluate_watches()
+        # Since watch is STALLED_ESCALATED, it is either not in active list or returns quiescent
+        mock_bridge.transmit_review_request.assert_not_called()
+

@@ -57,7 +57,7 @@ class AntigravityCLIAdapter(EngineeringAgentAdapter):
         self,
         cli_path: Optional[str] = None,
         model_name: Optional[str] = None,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 240,
     ) -> None:
         self.cli_path = cli_path or find_antigravity_cli_path()
         self.model_name = model_name or "antigravity-cli-default"

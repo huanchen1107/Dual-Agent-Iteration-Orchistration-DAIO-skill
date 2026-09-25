@@ -573,29 +573,42 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                 )
             self.store.save_work_item(work)
 
-            # If a handoff watch exists for parent/successor, reactivate it into a new decision epoch
+            # If a handoff watch exists for parent/successor, reactivate it into a new decision epoch ONLY IF valid resume decision
+            is_valid_resume = (
+                decision.decision in ("REVISE", "APPROVE")
+                and decision.action != "STOP"
+                and not decision.human_approval_required
+                and work.status == DAIOStatus.QUEUED
+            )
+
             if hasattr(self.store, "find_handoff_watch_by_successor") and hasattr(self.store, "find_handoff_watch_by_parent"):
                 watch = self.store.find_handoff_watch_by_successor(work.work_id) or self.store.find_handoff_watch_by_parent(work.parent_work_id or work.work_id)
                 if watch:
-                    new_epoch_id = f"epoch-{uuid.uuid4().hex[:8]}"
-                    predecessor_epoch = getattr(watch, "recovery_epoch_id", "epoch-initial")
-                    watch.recovery_epoch_id = new_epoch_id
-                    watch.recovery_attempt_count = 0
-                    watch.current_state = HandoffState.WAITING_FOR_CLAIM if work.status == DAIOStatus.QUEUED else HandoffState.CLAIMED
-                    watch.last_progress_at = now
-                    if not isinstance(watch.metadata, dict):
-                        watch.metadata = {}
-                    epochs = watch.metadata.get("epochs", [])
-                    epochs.append({
-                        "recovery_epoch_id": new_epoch_id,
-                        "predecessor_epoch_id": predecessor_epoch,
-                        "creation_reason": f"ARCHITECT_DECISION_{decision.decision}_{decision.action}",
-                        "created_at": now,
-                        "triggering_decision_hash": decision_hash,
-                    })
-                    watch.metadata["epochs"] = epochs
-                    self.store.save_handoff_watch(watch)
-                    logger.info(f"🔄 HANDOFF_WATCH_NEW_EPOCH: watch_id={watch.watch_id}, epoch={new_epoch_id}, predecessor={predecessor_epoch}")
+                    if is_valid_resume:
+                        new_epoch_id = f"epoch-{uuid.uuid4().hex[:8]}"
+                        predecessor_epoch = getattr(watch, "recovery_epoch_id", "epoch-initial")
+                        watch.recovery_epoch_id = new_epoch_id
+                        watch.recovery_attempt_count = 0
+                        watch.current_state = HandoffState.WAITING_FOR_CLAIM
+                        watch.last_progress_at = now
+                        if not isinstance(watch.metadata, dict):
+                            watch.metadata = {}
+                        epochs = watch.metadata.get("epochs", [])
+                        epochs.append({
+                            "recovery_epoch_id": new_epoch_id,
+                            "predecessor_epoch_id": predecessor_epoch,
+                            "creation_reason": f"ARCHITECT_DECISION_{decision.decision}_{decision.action}",
+                            "created_at": now,
+                            "triggering_decision_hash": decision_hash,
+                        })
+                        watch.metadata["epochs"] = epochs
+                        self.store.save_handoff_watch(watch)
+                        logger.info(f"🔄 HANDOFF_WATCH_NEW_EPOCH: watch_id={watch.watch_id}, epoch={new_epoch_id}, predecessor={predecessor_epoch}")
+                    elif decision.decision == "STOP" or decision.action == "STOP":
+                        watch.current_state = HandoffState.COMPLETED
+                        watch.last_progress_at = now
+                        self.store.save_handoff_watch(watch)
+                        logger.info(f"🛑 HANDOFF_WATCH_TERMINATED: watch_id={watch.watch_id} stopped cleanly upon Architect STOP.")
 
             # 3. Build & Dispatch DECISION_ACKNOWLEDGED event as pure TELEMETRY
             ack_event = {

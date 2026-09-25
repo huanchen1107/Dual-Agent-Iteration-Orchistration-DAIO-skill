@@ -264,6 +264,23 @@ class DAIOHandoffWatchdog:
                     watch.successor_work_id = it.work_id
                     break
 
+        # Quiescence check: If watch is already STALLED_ESCALATED and successor has not been made executable
+        if watch.current_state == HandoffState.STALLED_ESCALATED:
+            if successor and successor.status in {DAIOStatus.HUMAN_GATE_REQUIRED, DAIOStatus.BLOCKED}:
+                return {
+                    "watch_id": watch.watch_id,
+                    "status": "ESCALATED",
+                    "state": watch.current_state.value,
+                    "policy": "QUIESCENT_STALLED_ESCALATED",
+                }
+            elif not successor:
+                return {
+                    "watch_id": watch.watch_id,
+                    "status": "ESCALATED",
+                    "state": watch.current_state.value,
+                    "policy": "QUIESCENT_STALLED_ESCALATED",
+                }
+
         action, reason = classify_work_status_for_watchdog(successor, watch, now_dt)
 
         if action == WatchdogPolicyAction.TERMINAL_SUCCESS:

@@ -65,12 +65,13 @@ class DAIORoleRouter:
                 work.requested_action = decision.instruction or f"Completed {work.change_id} -> authorized {decision.next_phase}"
                 return work
 
-            if work.current_gate == DAIOGate.CONTRACT_GATE:
-                # Contract Gate passed -> advance to Engineering Task (READY in queue)
+            if work.current_gate == DAIOGate.CONTRACT_GATE or (work.current_gate == DAIOGate.HUMAN_GATE and decision.action == "RUN"):
+                # Contract Gate or Human Gate passed -> advance to Engineering Task (READY in queue)
                 work.current_gate = DAIOGate.ENGINEERING_TASK
                 work.assigned_role = DAIORole.ENGINEERING_EXECUTION
                 work.status = DAIOStatus.QUEUED
                 work.requested_action = decision.instruction or "Execute approved engineering milestones."
+                work.human_gate_reason = None
                 work.attempt_count = 0
                 work.claimed_by = None
                 work.lease_id = None
@@ -109,7 +110,7 @@ class DAIORoleRouter:
 
             return work
 
-        if decision.decision == "REJECT" or decision.decision == "STOP":
+        if decision.decision == "REJECT" or decision.decision == "STOP" or decision.action == "STOP":
             work.status = DAIOStatus.HUMAN_GATE_REQUIRED
             work.current_gate = DAIOGate.HUMAN_GATE
             work.assigned_role = DAIORole.HUMAN_PROJECT_OWNER
