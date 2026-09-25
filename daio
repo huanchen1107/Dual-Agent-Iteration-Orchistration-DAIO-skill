@@ -16,7 +16,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from typing import Optional
 import urllib.request
+
 
 PROJECT_ROOT = Path.cwd()
 
@@ -148,6 +150,61 @@ def do_status():
         print(f"❌ Error reading status: {e}")
 
 
+def do_rpc_status():
+    """Print current canonical Two-Plane Remote Project Cockpit (RPC-1) status JSON."""
+    try:
+        from daio_closed_loop.adapters import DAIOStatusCollector
+        collector = DAIOStatusCollector(project_root=str(PROJECT_ROOT))
+        status_resp = collector.collect_status()
+        print(json.dumps(status_resp.to_dict(), indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"❌ Error collecting RPC status: {e}")
+
+
+def do_rpc_publish(relay_url: Optional[str] = None, token: Optional[str] = None, loop_mode: bool = False, interval: int = 15):
+    """Publish current DAIO status to authenticated Cloudflare Relay."""
+    from daio_closed_loop.adapters import DAIOStatusCollector, DAIOStatusPublisher
+
+    cfg_file = PROJECT_ROOT / "_daio" / "daio_config.json"
+    cfg = {}
+    if cfg_file.exists():
+        try:
+            cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    resolved_url = relay_url or os.environ.get("DAIO_RPC_RELAY_URL") or cfg.get("rpc", {}).get("relay_url") or "https://daio-relay.huanchen1107.workers.dev"
+    resolved_token = token or os.environ.get("DAIO_RPC_PUBLISH_TOKEN") or cfg.get("rpc", {}).get("publish_token")
+
+    if not resolved_token:
+        print("❌ Error: Missing publish token.")
+        print("   Set environment variable: export DAIO_RPC_PUBLISH_TOKEN='<your-token>'")
+        print("   Or pass argument: daio rpc-publish --token '<your-token>'")
+        return
+
+    collector = DAIOStatusCollector(project_root=str(PROJECT_ROOT))
+    publisher = DAIOStatusPublisher(
+        collector=collector,
+        relay_url=resolved_url,
+        publish_token=resolved_token,
+        interval_seconds=interval,
+    )
+
+    print(f"📡 DAIO RPC-1 Status Publisher -> {resolved_url}")
+    if loop_mode:
+        print(f"🔄 Running periodic publisher loop (interval: {interval}s)... Press Ctrl+C to stop.")
+        try:
+            asyncio.run(publisher.run_loop())
+        except KeyboardInterrupt:
+            print("\n🛑 Stopped RPC publisher loop.")
+    else:
+        success, detail = publisher.publish_once()
+        if success:
+            print(f"✅ Published successfully: {detail}")
+        else:
+            print(f"❌ Publication failed: {detail}")
+
+
 def do_start():
     """Start DAIO Autonomous Supervisor with Queue Poller & Handoff Watchdog."""
     import logging
@@ -159,8 +216,12 @@ def do_start():
 
 def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI (Generic DAIO v2.1)")
-    parser.add_argument("action", nargs="?", default="start", choices=["start", "init", "doctor", "status", "board", "run", "loop"],
-                        help="Action to perform: start, init, doctor, status, board")
+    parser.add_argument("action", nargs="?", default="start", choices=["start", "init", "doctor", "status", "board", "run", "loop", "rpc-status", "rpc-publish"],
+                        help="Action to perform: start, init, doctor, status, board, rpc-status, rpc-publish")
+    parser.add_argument("--relay", default=None, help="Cloudflare Relay URL for RPC publication")
+    parser.add_argument("--token", default=None, help="Bearer authorization token for Cloudflare Relay")
+    parser.add_argument("--loop", action="store_true", help="Run publisher continuously in a loop")
+    parser.add_argument("--interval", type=int, default=15, help="Publishing interval in seconds (default: 15)")
     args = parser.parse_args()
 
     if args.action == "init":
@@ -169,6 +230,10 @@ def main():
         do_doctor()
     elif args.action == "status":
         do_status()
+    elif args.action == "rpc-status":
+        do_rpc_status()
+    elif args.action == "rpc-publish":
+        do_rpc_publish(relay_url=args.relay, token=args.token, loop_mode=args.loop, interval=args.interval)
     elif args.action in ["start", "loop", "run"]:
         do_start()
     elif args.action == "board":
@@ -181,3 +246,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

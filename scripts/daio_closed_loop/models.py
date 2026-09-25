@@ -254,6 +254,151 @@ def validate_work_item_isolation(work: DAIOWorkItem, expected_project_root: str)
     return work_root == exp_root
 
 
+# ---------------------------------------------------------------------------
+# Remote Project Cockpit (RPC) - Two-Plane Models & Freshness State Engine
+# ---------------------------------------------------------------------------
+
+class FreshnessEnum(str, Enum):
+    FRESH = "FRESH"      # Heartbeat age < 30 seconds
+    STALE = "STALE"      # Heartbeat age 30s..180s
+    OFFLINE = "OFFLINE"  # Heartbeat age > 180s or supervisor stopped
+    UNKNOWN = "UNKNOWN"  # Heartbeat source uninitialized or cannot be determined
+
+
+def evaluate_freshness(
+    heartbeat_timestamp: Optional[str],
+    current_time: Optional[datetime.datetime] = None,
+    is_supervisor_running: bool = True,
+) -> tuple[FreshnessEnum, Optional[float]]:
+    """
+    Calculates freshness classification and heartbeat age in seconds according to canonical thresholds:
+    - FRESH: age < 30.0s
+    - STALE: 30.0s <= age <= 180.0s
+    - OFFLINE: age > 180.0s OR not is_supervisor_running
+    - UNKNOWN: heartbeat_timestamp is None/empty/unparseable
+    """
+    if not heartbeat_timestamp or not isinstance(heartbeat_timestamp, str):
+        return FreshnessEnum.UNKNOWN, None
+
+    try:
+        ts_clean = heartbeat_timestamp.strip()
+        if ts_clean.endswith("Z"):
+            ts_clean = ts_clean[:-1] + "+00:00"
+        parsed_ts = datetime.datetime.fromisoformat(ts_clean)
+        if parsed_ts.tzinfo is None:
+            parsed_ts = parsed_ts.replace(tzinfo=datetime.timezone.utc)
+    except Exception:
+        return FreshnessEnum.UNKNOWN, None
+
+    now = current_time or datetime.datetime.now(datetime.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=datetime.timezone.utc)
+
+    age_seconds = (now - parsed_ts).total_seconds()
+    if age_seconds < 0:
+        age_seconds = 0.0
+    age_rounded = round(age_seconds, 1)
+
+    if not is_supervisor_running:
+        return FreshnessEnum.OFFLINE, age_rounded
+
+    if age_seconds < 30.0:
+        return FreshnessEnum.FRESH, age_rounded
+    elif age_seconds <= 180.0:
+        return FreshnessEnum.STALE, age_rounded
+    else:
+        return FreshnessEnum.OFFLINE, age_rounded
+
+
+@dataclass
+class LivePlaneStatus:
+    project_name: str = "unknown"
+    host: str = "unknown"
+    host_status: str = "UNKNOWN"  # "ONLINE", "OFFLINE", "UNKNOWN"
+    freshness: FreshnessEnum = FreshnessEnum.UNKNOWN
+    last_heartbeat_timestamp: Optional[str] = None
+    heartbeat_age_seconds: Optional[float] = None
+    supervisor_running: bool = False
+    supervisor_pid: Optional[int] = None
+    active_work_id: Optional[str] = None
+    active_work_item: Optional[str] = None
+    current_phase: Optional[str] = None
+    current_gate: Optional[str] = None
+    assigned_role: Optional[str] = None
+    human_gate_required: bool = False
+    human_gate_reason: Optional[str] = None
+    recovery_epoch_id: Optional[str] = None
+    active_agent: Optional[str] = None
+    queue_depth: int = 0
+    degraded_note: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "project_name": self.project_name,
+            "host": self.host,
+            "host_status": self.host_status,
+            "freshness": self.freshness.value if isinstance(self.freshness, FreshnessEnum) else str(self.freshness),
+            "last_heartbeat_timestamp": self.last_heartbeat_timestamp,
+            "heartbeat_age_seconds": self.heartbeat_age_seconds,
+            "supervisor_running": self.supervisor_running,
+            "supervisor_pid": self.supervisor_pid,
+            "active_work_id": self.active_work_id,
+            "active_work_item": self.active_work_item,
+            "current_phase": self.current_phase,
+            "current_gate": self.current_gate,
+            "assigned_role": self.assigned_role,
+            "human_gate_required": self.human_gate_required,
+            "human_gate_reason": self.human_gate_reason,
+            "recovery_epoch_id": self.recovery_epoch_id,
+            "active_agent": self.active_agent,
+            "queue_depth": self.queue_depth,
+            "degraded_note": self.degraded_note,
+        }
+
+
+@dataclass
+class DurablePlaneStatus:
+    repository: Optional[str] = None
+    git_branch: Optional[str] = None
+    local_head_sha: Optional[str] = None
+    remote_origin_sha: Optional[str] = None
+    ahead_count: int = 0
+    behind_count: int = 0
+    working_tree_clean: bool = True
+    push_synchronized: bool = False
+    latest_durable_milestone: Optional[str] = None
+    latest_completed_change: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "repository": self.repository,
+            "git_branch": self.git_branch,
+            "local_head_sha": self.local_head_sha,
+            "remote_origin_sha": self.remote_origin_sha,
+            "ahead_count": self.ahead_count,
+            "behind_count": self.behind_count,
+            "working_tree_clean": self.working_tree_clean,
+            "push_synchronized": self.push_synchronized,
+            "latest_durable_milestone": self.latest_durable_milestone,
+            "latest_completed_change": self.latest_completed_change,
+        }
+
+
+@dataclass
+class DAIOProjectStatusResponse:
+    live_plane: LivePlaneStatus
+    durable_plane: DurablePlaneStatus
+    provenance: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "live_plane": self.live_plane.to_dict(),
+            "durable_plane": self.durable_plane.to_dict(),
+            "provenance": self.provenance,
+        }
+
+
+
 
 
 
