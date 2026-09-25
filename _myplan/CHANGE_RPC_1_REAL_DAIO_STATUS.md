@@ -24,7 +24,9 @@ PoC-0A verified remote reachability from iPhone to Cloudflare Relay (`https://da
    * **Durable Plane**: Git branch, local HEAD SHA, remote `origin/main` SHA, ahead/behind counts, working-tree cleanliness, push synchronization.
 3. **Freshness Invariant**: A previously recorded `RUNNING` supervisor state must **NEVER** be presented as currently `RUNNING` when live heartbeat freshness is `STALE` ($\ge 30\text{s}$), `OFFLINE` ($> 180\text{s}$), or `UNKNOWN`.
 4. **Outbound-Only Ingress**: Workstation initiates authenticated HTTPS publication (`POST /api/v1/publish`) to Cloudflare Relay. Zero open inbound ports on the developer workstation.
-5. **Strict Scope Boundary**: Strictly read-only status inspection. Zero remote decision delivery (RPC-2), remote push alerts (RPC-3), remote shell, or Human Gate mutation.
+5. **Mandatory Publisher Authentication & Fail-Closed Invariant**: `DAIO_RPC_PUBLISH_TOKEN` is mandatory on the Cloudflare Relay. If the secret is missing/unconfigured, the relay strictly fails closed (HTTP 503) and rejects all publications. Publications without valid matching Bearer tokens are rejected (HTTP 401).
+6. **Strict Scope Boundary**: Strictly read-only status inspection. Zero remote decision delivery (RPC-2), remote push alerts (RPC-3), remote shell, or Human Gate mutation.
+
 
 ---
 

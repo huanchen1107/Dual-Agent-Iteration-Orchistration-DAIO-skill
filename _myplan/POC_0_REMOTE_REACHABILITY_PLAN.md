@@ -292,12 +292,20 @@ paths:
 
 ## 5. Step-by-Step 5-Minute Verification Walkthrough
 
-### Step 1: Deploy Worker on Cloudflare (Zero Terminal Install Required)
+### Step 1: Deploy Worker on Cloudflare & Set Mandatory Secret
 1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/) $\rightarrow$ **Compute (Workers & Pages)**.
-2. Click **Create Application** $\rightarrow$ **Create Worker** $\rightarrow$ Name it `daio-relay` $\rightarrow$ Click **Deploy**.
-3. Click **Edit code** (in-browser editor).
-4. Replace the sample code with [`_myplan/poc0/poc0_worker.js`](file:///Users/huanchen/.gemini/antigravity-ide/brain/6c38cf78-aa72-4a88-bfbd-8236872d54ba/scratch/Dual-Agent-Iteration-Orchistration-DAIO-skill/_myplan/poc0/poc0_worker.js).
-5. Click **Save and Deploy**. Copy your worker URL (e.g., `https://daio-relay.<your-name>.workers.dev`).
+2. Select your Worker (`daio-relay`) $\rightarrow$ Click **Edit code** (in-browser editor).
+3. Replace the code with the updated [`_myplan/poc0/poc0_worker.js`](file:///Users/huanchen/.gemini/antigravity-ide/brain/6c38cf78-aa72-4a88-bfbd-8236872d54ba/scratch/Dual-Agent-Iteration-Orchistration-DAIO-skill/_myplan/poc0/poc0_worker.js) $\rightarrow$ Click **Save and Deploy**.
+4. **MANDATORY SECURITY CONFIGURATION (Fail-Closed)**:
+   * Go to **Settings** $\rightarrow$ **Variables and Secrets**.
+   * Under **Environment Variables / Secrets**, click **Add**.
+   * Variable name: `DAIO_RPC_PUBLISH_TOKEN`
+   * Type: **Secret** (Encrypted)
+   * Value: `<your-chosen-strong-secret>`
+   * Click **Save and Deploy**.
+   > [!IMPORTANT]
+   > `DAIO_RPC_PUBLISH_TOKEN` is **MANDATORY**. If absent or unconfigured, `POST /api/v1/publish` will fail closed with `HTTP 503 Server Configuration Error` and reject all publications.
+
 
 ### Step 2: Validate via iPhone Safari
 1. On your iPhone, open `https://daio-relay.<your-name>.workers.dev/api/v1/status`.

@@ -1,12 +1,12 @@
 """
-Automated Test Suite for DAIO RPC-1 Status Publisher.
+Automated Test Suite for DAIO RPC-1 Status Publisher and Relay Security Contract.
 """
 
 import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import threading
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import pytest
 
 from scripts.daio_closed_loop.adapters.rpc_status_collector import DAIOStatusCollector
@@ -14,7 +14,7 @@ from scripts.daio_closed_loop.adapters.rpc_status_publisher import DAIOStatusPub
 
 
 class MockRelayHandler(BaseHTTPRequestHandler):
-    valid_token = "valid-secret-token"
+    configured_secret: Optional[str] = "valid-secret-token"
     received_requests: List[Tuple[str, dict, str]] = []
 
     def do_POST(self):
@@ -23,23 +23,42 @@ class MockRelayHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8") if length > 0 else ""
 
         if self.path == "/api/v1/publish":
-            if auth_header == f"Bearer {self.valid_token}":
-                try:
-                    payload = json.loads(body)
-                    MockRelayHandler.received_requests.append((self.path, payload, auth_header))
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"status": "PUBLISHED", "timestamp": "2026-09-25T12:00:00Z"}')
-                except Exception as e:
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(str(e).encode())
-            else:
+            # 1. Fail closed if relay secret is not configured
+            if not MockRelayHandler.configured_secret:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Server Configuration Error: DAIO_RPC_PUBLISH_TOKEN not configured (fail-closed)."}')
+                return
+
+            # 2. Enforce Bearer authentication
+            if not auth_header.startswith("Bearer "):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"error": "Unauthorized"}')
+                self.wfile.write(b'{"error": "Unauthorized: Missing Bearer token."}')
+                return
+
+            token = auth_header.replace("Bearer ", "").strip()
+            if token != MockRelayHandler.configured_secret:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Unauthorized: Invalid publisher token."}')
+                return
+
+            try:
+                payload = json.loads(body)
+                MockRelayHandler.received_requests.append((self.path, payload, auth_header))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "PUBLISHED", "timestamp": "2026-09-25T12:00:00Z"}')
+            except Exception as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(str(e).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -51,6 +70,7 @@ class MockRelayHandler(BaseHTTPRequestHandler):
 @pytest.fixture
 def mock_relay_server():
     MockRelayHandler.received_requests = []
+    MockRelayHandler.configured_secret = "valid-secret-token"
     server = HTTPServer(("127.0.0.1", 0), MockRelayHandler)
     port = server.server_address[1]
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -95,6 +115,24 @@ def test_publisher_unauthorized_token_rejection(mock_relay_server):
     assert "401" in detail
 
 
+def test_publisher_missing_relay_secret_fails_closed(mock_relay_server):
+    # Simulate unconfigured Cloudflare Worker environment secret
+    MockRelayHandler.configured_secret = None
+
+    collector = DAIOStatusCollector(project_root=".")
+    publisher = DAIOStatusPublisher(
+        collector=collector,
+        relay_url=mock_relay_server,
+        publish_token="valid-secret-token",
+        timeout_seconds=2.0,
+    )
+
+    success, detail = publisher.publish_once()
+    assert success is False
+    assert "503" in detail
+    assert len(MockRelayHandler.received_requests) == 0
+
+
 def test_publisher_network_failure_resilience():
     collector = DAIOStatusCollector(project_root=".")
     # Port 59999 unlikely to be open
@@ -133,4 +171,3 @@ def test_publisher_run_loop_graceful_stop(mock_relay_server):
         assert len(MockRelayHandler.received_requests) >= 1
 
     asyncio.run(_async_test())
-

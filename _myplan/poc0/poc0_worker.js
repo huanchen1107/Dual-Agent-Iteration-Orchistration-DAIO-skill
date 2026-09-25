@@ -103,25 +103,32 @@ export default {
     // Channel A (Write): Authenticated Publication from Mac/PC DAIO
     // -------------------------------------------------------------
     if (url.pathname === "/api/v1/publish" || (url.pathname === "/api/v1/status" && request.method === "POST")) {
-      const authHeader = request.headers.get("Authorization") || "";
-      const expectedToken = env.DAIO_RPC_PUBLISH_TOKEN;
+      const expectedToken = (env && env.DAIO_RPC_PUBLISH_TOKEN) ? env.DAIO_RPC_PUBLISH_TOKEN.trim() : "";
 
-      // Enforce token authentication
-      if (expectedToken) {
-        const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-        const incomingToken = tokenMatch ? tokenMatch[1].trim() : "";
-        if (!incomingToken || incomingToken !== expectedToken) {
-          return new Response(
-            JSON.stringify({ error: "Unauthorized: Invalid or missing publisher Bearer token." }, null, 2),
-            { status: 401, headers: corsHeaders }
-          );
-        }
-      } else if (!authHeader.startsWith("Bearer ")) {
+      // 1. Fail Closed: Reject publication if relay secret is not configured
+      if (!expectedToken) {
         return new Response(
-          JSON.stringify({ error: "Unauthorized: Bearer token required." }, null, 2),
+          JSON.stringify(
+            { error: "Server Configuration Error: DAIO_RPC_PUBLISH_TOKEN is not configured on Cloudflare Relay. Publication is disabled (fail-closed)." },
+            null,
+            2
+          ),
+          { status: 503, headers: corsHeaders }
+        );
+      }
+
+      // 2. Enforce Bearer Token authentication
+      const authHeader = request.headers.get("Authorization") || "";
+      const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+      const incomingToken = tokenMatch ? tokenMatch[1].trim() : "";
+
+      if (!incomingToken || incomingToken !== expectedToken) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized: Invalid or missing publisher Bearer token." }, null, 2),
           { status: 401, headers: corsHeaders }
         );
       }
+
 
       try {
         const body = await request.json();
