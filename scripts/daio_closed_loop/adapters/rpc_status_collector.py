@@ -44,23 +44,50 @@ class DAIOStatusCollector:
         self._config = config or self._load_daio_config()
 
     def _load_daio_config(self) -> Dict[str, Any]:
-        """Loads generic configuration from _daio/daio_config.json if present."""
-        cfg_path = self.project_root / "_daio" / "daio_config.json"
-        if cfg_path.exists():
-            try:
-                return json.loads(cfg_path.read_text(encoding="utf-8"))
-            except Exception:
-                return {}
+        """Loads generic configuration from _daio/daio_config.json or daio_config.json if present."""
+        candidates = [
+            self.project_root / "_daio" / "daio_config.json",
+            self.project_root / "daio_config.json",
+        ]
+        for cfg_path in candidates:
+            if cfg_path.exists():
+                try:
+                    return json.loads(cfg_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
         return {}
 
     def _get_store(self) -> Optional[DAIOWorkStore]:
-        """Lazily initializes read-only SqliteDAIOWorkStore if not explicitly provided."""
+        """Lazily initializes read-only SqliteDAIOWorkStore using canonical DAIO runtime discovery."""
         if self._store is not None:
             return self._store
 
+        # 1. Check explicit environment override
+        env_db = os.environ.get("DAIO_DB_PATH")
+        if env_db and Path(env_db).exists():
+            try:
+                self._store = SqliteDAIOWorkStore(db_path=str(Path(env_db).resolve()))
+                return self._store
+            except Exception:
+                pass
+
+        # 2. Check configuration specified path
+        cfg_db = self._config.get("db_path") or self._config.get("work_store_path")
+        if cfg_db:
+            db_p = Path(cfg_db) if Path(cfg_db).is_absolute() else (self.project_root / cfg_db).resolve()
+            if db_p.exists():
+                try:
+                    self._store = SqliteDAIOWorkStore(db_path=str(db_p))
+                    return self._store
+                except Exception:
+                    pass
+
+        # 3. Canonical DAIO database locations
         candidates = [
             self.project_root / "_daio" / "daio_work.db",
             self.project_root / "_daio" / "daio_work_state.db",
+            self.project_root / "daio_work.db",
+            self.project_root / "daio_work_state.db",
         ]
         for db_file in candidates:
             if db_file.exists():
@@ -70,6 +97,7 @@ class DAIOStatusCollector:
                 except Exception:
                     pass
         return None
+
 
     def _is_pid_alive(self, pid: Optional[int]) -> bool:
         """Verifies if a process PID is currently alive on the host OS."""

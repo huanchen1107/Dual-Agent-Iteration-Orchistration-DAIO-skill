@@ -218,11 +218,16 @@ def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI (Generic DAIO v2.1)")
     parser.add_argument("action", nargs="?", default="start", choices=["start", "init", "doctor", "status", "board", "run", "loop", "rpc-status", "rpc-publish"],
                         help="Action to perform: start, init, doctor, status, board, rpc-status, rpc-publish")
+    parser.add_argument("--project", "-C", default=os.environ.get("DAIO_PROJECT_ROOT"), help="Target project root directory (default: current working directory)")
     parser.add_argument("--relay", default=None, help="Cloudflare Relay URL for RPC publication")
     parser.add_argument("--token", default=None, help="Bearer authorization token for Cloudflare Relay")
     parser.add_argument("--loop", action="store_true", help="Run publisher continuously in a loop")
     parser.add_argument("--interval", type=int, default=15, help="Publishing interval in seconds (default: 15)")
     args = parser.parse_args()
+
+    global PROJECT_ROOT
+    if args.project:
+        PROJECT_ROOT = Path(args.project).resolve()
 
     if args.action == "init":
         do_init()
@@ -246,4 +251,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

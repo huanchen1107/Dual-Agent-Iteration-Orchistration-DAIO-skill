@@ -167,3 +167,35 @@ def test_collector_read_only_safety():
         assert len(store.list_active_supervisors()) == 0
         assert resp1.live_plane.freshness == FreshnessEnum.UNKNOWN
         assert resp2.live_plane.freshness == FreshnessEnum.UNKNOWN
+
+
+def test_collector_runtime_discovery_paths():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        daio_dir = tmp_path / "_daio"
+        daio_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Test discovery via _daio/daio_work_state.db
+        db_path = daio_dir / "daio_work_state.db"
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        store.record_supervisor_heartbeat(
+            SupervisorHeartbeat(
+                supervisor_id="sup-disc",
+                pid=99999999,
+                project_root=str(tmp_path),
+                status="RUNNING",
+                started_at=now_utc.isoformat(),
+                last_heartbeat_at=now_utc.isoformat(),
+            )
+        )
+
+        cfg_path = daio_dir / "daio_config.json"
+        cfg_path.write_text('{"project_name": "DiscoveredProject"}', encoding="utf-8")
+
+        collector = DAIOStatusCollector(project_root=str(tmp_path))
+        status = collector.collect_status(current_time=now_utc)
+
+        assert status.live_plane.project_name == "DiscoveredProject"
+        assert status.live_plane.last_heartbeat_timestamp == now_utc.isoformat()
+
