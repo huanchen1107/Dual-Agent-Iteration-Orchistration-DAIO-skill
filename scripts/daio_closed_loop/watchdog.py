@@ -159,6 +159,20 @@ class DAIOHandoffWatchdog:
                 existing.current_state = HandoffState.WAITING_FOR_CLAIM
                 existing.last_progress_at = now_iso
                 self.store.save_handoff_watch(existing)
+
+            # If existing watch was escalated or completed, check if successor is still active/recoverable
+            succ_item = self.store.load_work_item(existing.successor_work_id) if existing.successor_work_id else None
+            if succ_item and succ_item.status != DAIOStatus.COMPLETED and existing.current_state in {HandoffState.STALLED_ESCALATED, HandoffState.COMPLETED}:
+                existing.current_state = HandoffState.WAITING_FOR_CLAIM if succ_item.status == DAIOStatus.QUEUED else HandoffState.CLAIMED
+                existing.recovery_attempt_count = 0
+                existing.last_progress_at = now_iso
+                existing.claim_deadline = (now_dt + datetime.timedelta(seconds=self.claim_timeout_seconds)).isoformat()
+                existing.discovery_deadline = (now_dt + datetime.timedelta(seconds=self.discovery_timeout_seconds)).isoformat()
+                existing.first_heartbeat_deadline = (now_dt + datetime.timedelta(seconds=self.first_heartbeat_timeout_seconds)).isoformat()
+                existing.progress_deadline = (now_dt + datetime.timedelta(seconds=self.progress_timeout_seconds)).isoformat()
+                self.store.save_handoff_watch(existing)
+                logger.info(f"🔄 HANDOFF_WATCH_REACTIVATED: watch_id={existing.watch_id}, successor={succ_item.work_id}, status={succ_item.status.value}")
+
             return existing
 
         watch_id = f"watch-{uuid.uuid4().hex[:8]}"
@@ -393,10 +407,10 @@ class DAIOHandoffWatchdog:
                     recovered = True
                     logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Materialized missing successor work item {successor.work_id}")
 
-        # Action 2: Release expired / orphaned lease / orphan IN_PROGRESS
+        # Action 2: Release expired / orphaned lease / orphan IN_PROGRESS / BLOCKED recoverable
         if diagnostics.get("successor_found"):
             successor = self.store.load_work_item(watch.successor_work_id)
-            if successor and (successor.lease_id or successor.status == DAIOStatus.IN_PROGRESS):
+            if successor and (successor.lease_id or successor.status in {DAIOStatus.IN_PROGRESS, DAIOStatus.BLOCKED}):
                 # Force release lease so the queue can claim it cleanly
                 if successor.lease_id:
                     self.store.release_lease(successor.work_id, successor.lease_id)
@@ -409,7 +423,7 @@ class DAIOHandoffWatchdog:
                 self.store.save_work_item(successor)
                 watch.current_state = HandoffState.WAITING_FOR_CLAIM
                 recovered = True
-                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Reset orphan/stale work item {successor.work_id} to QUEUED for clean claim")
+                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Reset work item {successor.work_id} to QUEUED for clean claim")
 
         # Action 3: Reset BLOCKED status if recovery budget allows
         if diagnostics.get("successor_found") and not recovered:
