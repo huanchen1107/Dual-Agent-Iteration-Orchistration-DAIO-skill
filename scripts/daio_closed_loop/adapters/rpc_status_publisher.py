@@ -114,9 +114,9 @@ class DAIOStatusPublisher:
                 proj = status_resp.live_plane.project_name if status_resp else "unknown"
                 sha = (status_resp.durable_plane.local_head_sha[:7]) if (status_resp and status_resp.durable_plane.local_head_sha) else "?"
                 freshness = status_resp.live_plane.freshness.value if status_resp else "?"
-                print(f"[RPC-1] publish #{self.publish_count} ({now_str}) → ✅ HTTP 200 PUBLISHED ({proj} | {freshness} | {sha})", flush=True)
+                print(f"[RPC-1] #{self.publish_count}  HTTP 200  PUBLISHED  ({now_str} | {proj} | {freshness} | {sha})", flush=True)
             else:
-                print(f"[RPC-1] publish #{self.publish_count} ({now_str}) → ❌ FAILED: {detail}", flush=True)
+                print(f"[RPC-1] #{self.publish_count}  HTTP FAILED  ({now_str} | {detail})", flush=True)
 
             if self.on_publish:
                 try:
