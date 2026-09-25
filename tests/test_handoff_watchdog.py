@@ -510,7 +510,7 @@ def test_exact_live_failure_blocked_successor_auto_recovery_and_bounded_escalati
 
     # Verify work item is now runnable without duplicate work items
     reloaded_succ = store.load_work_item("daio-root-change_051_openspec_scaffold")
-    assert reloaded_succ.status == DAIOStatus.IN_PROGRESS
+    assert reloaded_succ.status == DAIOStatus.QUEUED
     assert reloaded_succ.lease_id is None
     assert reloaded_succ.claimed_by is None
     assert reloaded_succ.parent_work_id == "daio-root-change_051_preflight"

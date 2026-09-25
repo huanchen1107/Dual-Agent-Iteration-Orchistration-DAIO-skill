@@ -16,7 +16,7 @@ def test_router_contract_gate_approval():
     
     assert updated.current_gate == DAIOGate.ENGINEERING_TASK
     assert updated.assigned_role == DAIORole.ENGINEERING_EXECUTION
-    assert updated.status == DAIOStatus.IN_PROGRESS
+    assert updated.status == DAIOStatus.QUEUED
 
 def test_router_revision_loop():
     work = DAIOWorkItem(
@@ -33,7 +33,7 @@ def test_router_revision_loop():
     
     assert updated.current_gate == DAIOGate.ENGINEERING_TASK
     assert updated.assigned_role == DAIORole.ENGINEERING_EXECUTION
-    assert updated.status == DAIOStatus.IN_PROGRESS
+    assert updated.status == DAIOStatus.QUEUED
     assert updated.attempt_count == 0
     assert "Fix bugs" in updated.requested_action
 

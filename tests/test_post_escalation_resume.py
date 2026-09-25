@@ -69,12 +69,12 @@ def test_scenario_1_handoff_stalled_to_revise_ack_and_claim(tmp_path):
         success, updated_work, ack = await orchestrator.process_incoming_architect_decision(work.work_id, dec, send_ack=True)
 
         assert success is True
-        assert updated_work.status == DAIOStatus.IN_PROGRESS
+        assert updated_work.status == DAIOStatus.QUEUED
         assert updated_work.current_gate == DAIOGate.ENGINEERING_TASK
         assert updated_work.assigned_role == DAIORole.ENGINEERING_EXECUTION
         assert updated_work.allowed_scope == ["openspec/**", "_myplan/**", "docs/**"]
         assert ack["event"] == "DECISION_ACKNOWLEDGED"
-        assert ack["resulting_durable_status"] == "IN_PROGRESS"
+        assert ack["resulting_durable_status"] == "QUEUED"
         assert ack["human_action_required"] is False
 
         # Verify work item is now eligible for worker claim
@@ -112,7 +112,7 @@ def test_scenario_2_architect_approve_resume(tmp_path):
         )
         success, updated, ack = await orchestrator.process_incoming_architect_decision(work.work_id, dec, send_ack=False)
         assert success is True
-        assert updated.status == DAIOStatus.IN_PROGRESS
+        assert updated.status == DAIOStatus.QUEUED
         assert updated.current_gate == DAIOGate.ENGINEERING_TASK
 
     asyncio.run(_test())
@@ -218,7 +218,7 @@ def test_scenario_5_human_approval_required_false_never_requires_ide_permission(
         )
         success, updated, ack = await orchestrator.process_incoming_architect_decision(work.work_id, dec, send_ack=False)
         assert success is True
-        assert updated.status == DAIOStatus.IN_PROGRESS
+        assert updated.status == DAIOStatus.QUEUED
         assert updated.human_gate_reason is None
         assert ack["human_action_required"] is False
 

@@ -173,3 +173,55 @@ class UniversalCDPClient:
             if asyncio.get_event_loop().time() - start_time > timeout_seconds:
                 return {"success": False, "error": f"Timeout waiting for response after {timeout_seconds}s"}
             await asyncio.sleep(2.0)
+
+    async def post_message_only(self, message_text: str) -> Dict[str, Any]:
+        """Dispatch a one-way message/telemetry without waiting for or parsing a reply."""
+        # 1. Fill Text Input
+        input_js = f"""
+        (() => {{
+            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+            if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
+            
+            promptEl.focus();
+            if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {{
+                promptEl.value = {json.dumps(message_text)};
+                promptEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                promptEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            }} else {{
+                promptEl.innerHTML = '<p>' + {json.dumps(message_text)}.replace(/\\n/g, '</p><p>') + '</p>';
+                promptEl.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText' }}));
+            }}
+            return {{ success: true }};
+        }})()
+        """
+        res = await self.evaluate(input_js)
+        if not res or not res.get("success"):
+            return res or {"success": False, "error": "Input evaluation failed"}
+
+        await asyncio.sleep(0.5)
+
+        # 2. Click Send Button
+        click_send_js = """
+        (() => {
+            const sendBtn = document.querySelector('button[data-testid="send-button"]') 
+                || document.querySelector('button[aria-label="Send prompt"]')
+                || document.querySelector('button[aria-label="傳送提示詞"]')
+                || document.querySelector('button[aria-label="Send message"]')
+                || document.querySelector('button[aria-label="Send Message"]')
+                || document.querySelector('fieldset button:last-of-type')
+                || document.querySelector('form button:last-of-type');
+            if (sendBtn && !sendBtn.disabled) {
+                sendBtn.click();
+                return { clicked: true, method: "button_click" };
+            }
+            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+            if (promptEl) {
+                promptEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                return { clicked: true, method: "enter_key" };
+            }
+            return { clicked: false, error: "No send button found" };
+        })()
+        """
+        click_res = await self.evaluate(click_send_js)
+        logger.info(f"One-way telemetry dispatched: {click_res}")
+        return {"success": True, "click_result": click_res}

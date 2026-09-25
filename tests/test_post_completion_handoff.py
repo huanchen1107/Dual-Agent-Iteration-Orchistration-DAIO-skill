@@ -317,9 +317,9 @@ def test_worker_kill_restart_between_contract_gate_and_decision_resumes_automati
     # Release or expire lease to simulate process death
     store.release_lease(routed_work.work_id, routed_work.lease_id)
 
-    # Verify state in database is IN_PROGRESS at ENGINEERING_TASK
+    # Verify state in database is QUEUED at ENGINEERING_TASK
     persisted = store.load_work_item("daio-root-change_051_preflight")
-    assert persisted.status == DAIOStatus.IN_PROGRESS
+    assert persisted.status == DAIOStatus.QUEUED
     assert persisted.current_gate == DAIOGate.ENGINEERING_TASK
     assert persisted.assigned_role == DAIORole.ENGINEERING_EXECUTION
 

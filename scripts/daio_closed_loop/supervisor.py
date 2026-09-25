@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import hashlib
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -195,16 +196,19 @@ class DAIOSupervisor:
                     and eff_dec.get("action") == "RUN"
                     and not eff_dec.get("human_approval_required", False)
                 ):
-                    logger.info(f"🔄 Recovering unapplied Architect REVISE decision for {it.work_id}")
-                    dec = ArchitectDecision(
-                        decision="REVISE",
-                        current_phase=eff_dec.get("current_phase", it.change_id),
-                        next_phase=eff_dec.get("next_phase"),
-                        action=eff_dec.get("action", "RUN"),
-                        human_approval_required=False,
-                        instruction=eff_dec.get("instruction", "Recovered REVISE execution"),
-                    )
-                    await self.orchestrator.process_incoming_architect_decision(it.work_id, dec)
+                    inst_clean = (eff_dec.get("instruction") or "Recovered REVISE execution").strip()
+                    dec_hash = hashlib.sha256(f"{it.work_id}:REVISE:{eff_dec.get('current_phase', it.change_id)}:RUN:{inst_clean}".encode()).hexdigest()[:12]
+                    if hasattr(self.store, "is_decision_applied") and not self.store.is_decision_applied(dec_hash):
+                        logger.info(f"🔄 Recovering unapplied Architect REVISE decision for {it.work_id} (hash={dec_hash})")
+                        dec = ArchitectDecision(
+                            decision="REVISE",
+                            current_phase=eff_dec.get("current_phase", it.change_id),
+                            next_phase=eff_dec.get("next_phase"),
+                            action=eff_dec.get("action", "RUN"),
+                            human_approval_required=False,
+                            instruction=inst_clean,
+                        )
+                        await self.orchestrator.process_incoming_architect_decision(it.work_id, dec)
 
         # 3. Worker polling & execution
         worker_result = await self.worker.run_once()

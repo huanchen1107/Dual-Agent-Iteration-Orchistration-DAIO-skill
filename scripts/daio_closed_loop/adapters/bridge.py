@@ -181,6 +181,11 @@ class ArchitectBridgeAdapter(ABC):
     async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
         raise NotImplementedError
 
+    @abstractmethod
+    async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
+        """Dispatches a one-way telemetry message without requesting a decision and without waiting for response."""
+        raise NotImplementedError
+
 
 def discover_tab_by_endpoint(
     endpoint: Optional[Dict[str, Any]] = None,
@@ -331,6 +336,32 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
         finally:
             await client.close()
 
+    async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
+        """Dispatches a one-way telemetry event without decision-request footer and without waiting for response."""
+        UniversalCDPClient = self._get_cdp_client_class()
+
+        effective_endpoint = dict(self.endpoint)
+        if work.architect_endpoint:
+            effective_endpoint.update(work.architect_endpoint)
+
+        try:
+            ws_url, tab_id, tab_title = discover_tab_by_endpoint(
+                endpoint=effective_endpoint,
+                url_pattern=self.url_pattern,
+                cdp_port=self.cdp_port,
+                max_retries=self.max_discovery_retries,
+            )
+            client = UniversalCDPClient(ws_url)
+            await client.connect()
+            try:
+                res = await client.post_message_only(telemetry_markdown)
+                return bool(res and res.get("success"))
+            finally:
+                await client.close()
+        except Exception as ex:
+            logger.warning(f"Failed to dispatch telemetry via CDP bridge: {ex}")
+            return False
+
 
 class MockArchitectBridgeAdapter(ArchitectBridgeAdapter):
     """Mock bridge for deterministic unit testing."""
@@ -340,9 +371,14 @@ class MockArchitectBridgeAdapter(ArchitectBridgeAdapter):
             ArchitectDecision(decision="APPROVE", current_phase="M1", instruction="Approved by mock")
         ]
         self.call_history: List[str] = []
+        self.telemetry_history: List[str] = []
 
     async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
         self.call_history.append(report_markdown)
         if self.canned_decisions:
             return self.canned_decisions.pop(0)
         return ArchitectDecision(decision="APPROVE", current_phase=work.current_stage, instruction="Default approve")
+
+    async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
+        self.telemetry_history.append(telemetry_markdown)
+        return True

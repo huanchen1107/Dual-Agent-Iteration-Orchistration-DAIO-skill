@@ -85,14 +85,25 @@ def classify_work_status_for_watchdog(
         return WatchdogPolicyAction.WAITING, "AWAITING_ARCHITECT_REVIEW"
 
     elif status == DAIOStatus.IN_PROGRESS:
-        if work.lease_id:
+        has_provenance = bool(
+            work.claimed_by
+            and work.lease_id
+            and work.lease_expires_at
+            and work.lease_expires_at >= now_iso
+            and (work.execution_started_at or work.metadata.get("execution_started_at"))
+        )
+        if not has_provenance:
+            if not work.lease_id:
+                return WatchdogPolicyAction.RECOVERABLE_STALL, "IN_PROGRESS_NO_LEASE"
             if work.lease_expires_at and work.lease_expires_at < now_iso:
                 return WatchdogPolicyAction.RECOVERABLE_STALL, "LEASE_EXPIRED"
-            if watch.progress_deadline and now_iso > watch.progress_deadline:
-                return WatchdogPolicyAction.RECOVERABLE_STALL, "PROGRESS_DEADLINE_EXCEEDED"
-            return WatchdogPolicyAction.HEALTHY_PROGRESS, "EXECUTING_WITH_ACTIVE_LEASE"
-        else:
-            return WatchdogPolicyAction.RECOVERABLE_STALL, "IN_PROGRESS_NO_LEASE"
+            if not work.claimed_by:
+                return WatchdogPolicyAction.RECOVERABLE_STALL, "ORPHAN_IN_PROGRESS_NO_CLAIMANT"
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "ORPHAN_IN_PROGRESS_MISSING_PROVENANCE"
+
+        if watch.progress_deadline and now_iso > watch.progress_deadline:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "PROGRESS_DEADLINE_EXCEEDED"
+        return WatchdogPolicyAction.HEALTHY_PROGRESS, "EXECUTING_WITH_ACTIVE_LEASE"
 
     else:
         return WatchdogPolicyAction.ESCALATE, f"UNKNOWN_WORK_STATUS_{status}"
@@ -382,32 +393,38 @@ class DAIOHandoffWatchdog:
                     recovered = True
                     logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Materialized missing successor work item {successor.work_id}")
 
-        # Action 2: Release expired or orphaned lease
+        # Action 2: Release expired / orphaned lease / orphan IN_PROGRESS
         if diagnostics.get("successor_found"):
             successor = self.store.load_work_item(watch.successor_work_id)
-            if successor and successor.lease_id:
-                # Force release lease so the queue can claim it again
-                self.store.release_lease(successor.work_id, successor.lease_id)
+            if successor and (successor.lease_id or successor.status == DAIOStatus.IN_PROGRESS):
+                # Force release lease so the queue can claim it cleanly
+                if successor.lease_id:
+                    self.store.release_lease(successor.work_id, successor.lease_id)
                 successor.lease_id = None
                 successor.lease_expires_at = None
                 successor.claimed_by = None
+                successor.execution_attempt_id = None
+                successor.execution_started_at = None
+                successor.status = DAIOStatus.QUEUED
                 self.store.save_work_item(successor)
                 watch.current_state = HandoffState.WAITING_FOR_CLAIM
                 recovered = True
-                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Released stale lease on {successor.work_id} to re-enable queue claiming")
+                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Reset orphan/stale work item {successor.work_id} to QUEUED for clean claim")
 
         # Action 3: Reset BLOCKED status if recovery budget allows
         if diagnostics.get("successor_found") and not recovered:
             successor = self.store.load_work_item(watch.successor_work_id)
             if successor and successor.status == DAIOStatus.BLOCKED and successor.attempt_count < successor.max_attempts:
-                successor.status = DAIOStatus.IN_PROGRESS
+                successor.status = DAIOStatus.QUEUED
                 successor.lease_id = None
                 successor.lease_expires_at = None
                 successor.claimed_by = None
+                successor.execution_attempt_id = None
+                successor.execution_started_at = None
                 self.store.save_work_item(successor)
                 watch.current_state = HandoffState.WAITING_FOR_CLAIM
                 recovered = True
-                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Reset BLOCKED status on {successor.work_id} for retry")
+                logger.info(f"✅ RECOVERY_ACTION_SUCCESS: Reset BLOCKED status on {successor.work_id} to QUEUED for retry")
 
         return recovered
 

@@ -96,9 +96,21 @@ class DAIOWorkItem:
     last_decision: Optional[str] = None
     authorized_next_phase: Optional[str] = None
     claimed_by: Optional[str] = None
+    execution_attempt_id: Optional[str] = None
+    execution_started_at: Optional[str] = None
+    last_heartbeat_at: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class DecisionLifecycleStatus(str, Enum):
+    RECEIVED = "RECEIVED"
+    PERSISTED = "PERSISTED"
+    APPLIED = "APPLIED"
+    DUPLICATE = "DUPLICATE"
+    REJECTED = "REJECTED"
+    FAILED_TO_APPLY = "FAILED_TO_APPLY"
 
 
 class HandoffState(str, Enum):

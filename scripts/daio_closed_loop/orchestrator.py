@@ -155,6 +155,69 @@ class DAIOClosedLoopOrchestrator:
         if not lease_id:
             raise PermissionError(f"Cannot acquire lease for work item '{work_id}' (already locked).")
 
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        work = self.store.load_work_item(work_id)
+        if not work:
+            raise KeyError(f"Work item '{work_id}' not found.")
+
+        # Positive Execution Provenance
+        work.claimed_by = worker_id
+        work.lease_id = lease_id
+        work.execution_attempt_id = f"attempt-{uuid.uuid4().hex[:8]}"
+        work.execution_started_at = now_iso
+        work.last_heartbeat_at = now_iso
+        work.status = DAIOStatus.IN_PROGRESS
+        self.store.save_work_item(work)
+
+        # Emit WORK_CLAIMED & EXECUTION_STARTED telemetry
+        claim_event = {
+            "event": "WORK_CLAIMED",
+            "work_id": work.work_id,
+            "worker_id": worker_id,
+            "lease_id": lease_id,
+            "attempt_count": work.attempt_count,
+            "claimed_at": now_iso,
+        }
+        exec_start_event = {
+            "event": "EXECUTION_STARTED",
+            "work_id": work.work_id,
+            "execution_attempt_id": work.execution_attempt_id,
+            "worker_id": worker_id,
+            "backend": "AntigravityCLIAdapter",
+            "target_repository": str(work.project_root),
+            "started_at": now_iso,
+        }
+        logger.info(f"⚡ WORK_CLAIMED: {json.dumps(claim_event)}")
+        logger.info(f"🚀 EXECUTION_STARTED: {json.dumps(exec_start_event)}")
+
+        if self.bridge and hasattr(self.bridge, "emit_telemetry"):
+            telemetry_body = f"""📡 **[DAIO TELEMETRY — NO ARCHITECT RESPONSE REQUIRED]**
+
+### ⚡ WORK_CLAIMED
+- **Work ID:** `{work.work_id}`
+- **Worker:** `{worker_id}`
+- **Lease ID:** `{lease_id}`
+- **Attempt Count:** `{work.attempt_count}`
+
+### 🚀 EXECUTION_STARTED
+- **Execution Attempt ID:** `{work.execution_attempt_id}`
+- **Backend:** `AntigravityCLIAdapter`
+- **Target Repository:** `{work.project_root}`
+- **Started At:** `{now_iso}`
+
+```json
+{{
+  "claim_event": {json.dumps(claim_event)},
+  "execution_event": {json.dumps(exec_start_event)}
+}}
+```
+*Notice: This is telemetry only. NO ARCHITECT RESPONSE REQUIRED.*
+"""
+            try:
+                await self.bridge.emit_telemetry(work, telemetry_body)
+            except Exception as ex:
+                logger.warning(f"Could not emit execution start telemetry: {ex}")
+
         consecutive_errors = 0
         previous_reviewed_sha: Optional[str] = None
         previous_reviewed_gate: Optional[DAIOGate] = None
@@ -459,13 +522,26 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
             logger.error(f"❌ ARCHITECT_DECISION_NOT_APPLIED: {err_report}")
             return False, None, err_report
 
-        decision_hash = hashlib.sha256(f"{work_id}:{decision.decision}:{decision.current_phase}:{decision.instruction}:{now}".encode()).hexdigest()[:12]
+        # Deterministic decision hash (independent of timestamp so duplicate observations are identical)
+        inst_clean = (decision.instruction or "").strip()
+        decision_hash = hashlib.sha256(f"{work_id}:{decision.decision}:{decision.current_phase}:{decision.action}:{inst_clean}".encode()).hexdigest()[:12]
+
+        # Check idempotency table
+        if hasattr(self.store, "is_decision_applied") and self.store.is_decision_applied(decision_hash):
+            logger.info(f"🔁 DECISION_DUPLICATE_IGNORED: Decision {decision_hash} already applied on {work_id}.")
+            return True, work, {
+                "event": "DECISION_ALREADY_APPLIED",
+                "work_id": work_id,
+                "decision_hash": decision_hash,
+                "status": "DUPLICATE",
+                "human_action_required": False,
+            }
 
         try:
-            # 1. Route work item state
+            # 1. Route work item state (transitions REVISE to QUEUED / READY for positive worker claim)
             work = DAIORoleRouter.process_architect_review(work, decision, DAIORole.LEAD_ARCHITECT_REVIEW)
 
-            # 2. Persist turn history & work state
+            # 2. Persist turn history, work state & record applied decision
             turn_id = f"turn-{uuid.uuid4().hex[:8]}"
             if hasattr(self.store, "record_turn_history"):
                 self.store.record_turn_history(
@@ -485,9 +561,18 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         "decision_hash": decision_hash,
                     }
                 )
+            if hasattr(self.store, "record_applied_decision"):
+                self.store.record_applied_decision(
+                    decision_hash=decision_hash,
+                    work_id=work.work_id,
+                    decision=decision.decision,
+                    current_phase=decision.current_phase,
+                    action=decision.action,
+                    status="APPLIED",
+                )
             self.store.save_work_item(work)
 
-            # 3. Build & Dispatch DECISION_ACKNOWLEDGED event
+            # 3. Build & Dispatch DECISION_ACKNOWLEDGED event as pure TELEMETRY
             ack_event = {
                 "event": "DECISION_ACKNOWLEDGED",
                 "work_id": work.work_id,
@@ -499,23 +584,26 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                 "human_action_required": (work.status == DAIOStatus.HUMAN_GATE_REQUIRED),
             }
 
-            if send_ack and self.bridge and hasattr(self.bridge, "transmit_review_request"):
-                ack_markdown = f"""🏓 **[DAIO DECISION_ACKNOWLEDGED]**
+            if send_ack and self.bridge:
+                ack_markdown = f"""🏓 **[DAIO TELEMETRY — NO ARCHITECT RESPONSE REQUIRED]**
 
+- **Event:** `DECISION_ACKNOWLEDGED`
 - **Work ID:** `{work.work_id}`
 - **Decision Ingested:** `{decision.decision}` (Action: `{decision.action}`)
 - **Decision Hash:** `{decision_hash}`
-- **Resulting Durable Status:** `{work.status.value}`
+- **Resulting Durable Queue Status:** `{work.status.value}`
 - **Human Action Required:** `{work.status == DAIOStatus.HUMAN_GATE_REQUIRED}`
 
 ```json
 {json.dumps(ack_event, indent=2)}
 ```
+*Notice: This is telemetry only. NO ARCHITECT RESPONSE REQUIRED.*
 """
                 try:
-                    await self.bridge.transmit_review_request(work, ack_markdown)
+                    if hasattr(self.bridge, "emit_telemetry"):
+                        await self.bridge.emit_telemetry(work, ack_markdown)
                 except Exception as b_ex:
-                    logger.warning(f"Could not transmit DECISION_ACKNOWLEDGED via bridge: {b_ex}")
+                    logger.warning(f"Could not transmit DECISION_ACKNOWLEDGED telemetry via bridge: {b_ex}")
 
             logger.info(f"✅ DECISION_ACKNOWLEDGED: work_id={work.work_id}, decision={decision.decision}, hash={decision_hash}, resulting_status={work.status.value}")
             return True, work, ack_event

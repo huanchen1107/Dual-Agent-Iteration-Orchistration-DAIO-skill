@@ -77,7 +77,16 @@ class DAIOWorkStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    @abstractmethod
     def list_active_supervisors(self) -> List[SupervisorHeartbeat]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_decision_applied(self, decision_hash: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def record_applied_decision(self, decision_hash: str, work_id: str, decision: str, current_phase: str, action: str, status: str) -> None:
         raise NotImplementedError
 
 
@@ -130,9 +139,23 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 last_decision TEXT,
                 authorized_next_phase TEXT,
                 claimed_by TEXT,
+                execution_attempt_id TEXT,
+                execution_started_at TEXT,
+                last_heartbeat_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 metadata TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daio_applied_decisions (
+                decision_hash TEXT PRIMARY KEY,
+                work_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                current_phase TEXT NOT NULL,
+                action TEXT NOT NULL,
+                applied_at TEXT NOT NULL,
+                status TEXT NOT NULL
             )
         """)
         cursor.execute("""
@@ -198,7 +221,53 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             cursor.execute("ALTER TABLE daio_work_items ADD COLUMN authorized_next_phase TEXT")
         if "claimed_by" not in existing_cols:
             cursor.execute("ALTER TABLE daio_work_items ADD COLUMN claimed_by TEXT")
+        if "execution_attempt_id" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN execution_attempt_id TEXT")
+        if "execution_started_at" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN execution_started_at TEXT")
+        if "last_heartbeat_at" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN last_heartbeat_at TEXT")
 
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
+    def is_decision_applied(self, decision_hash: str) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM daio_applied_decisions WHERE decision_hash = ? AND status = 'APPLIED'", (decision_hash,))
+        row = cursor.fetchone()
+        if not self._shared_conn:
+            conn.close()
+        return row is not None
+
+    def record_applied_decision(
+        self,
+        decision_hash: str,
+        work_id: str,
+        decision: str,
+        current_phase: str,
+        action: str,
+        status: str = "APPLIED",
+    ) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO daio_applied_decisions (
+                decision_hash, work_id, decision, current_phase, action, applied_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(decision_hash) DO UPDATE SET
+                status=excluded.status,
+                applied_at=excluded.applied_at
+        """, (
+            decision_hash,
+            work_id,
+            decision,
+            current_phase,
+            action,
+            datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            status,
+        ))
         conn.commit()
         if not self._shared_conn:
             conn.close()
@@ -213,8 +282,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 head_sha, status, attempt_count, max_attempts, lease_id,
                 lease_expires_at, next_role, human_gate_reason, human_relay_count,
                 architect_endpoint, parent_work_id, last_decision,
-                authorized_next_phase, claimed_by, created_at, updated_at, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                authorized_next_phase, claimed_by, execution_attempt_id,
+                execution_started_at, last_heartbeat_at, created_at, updated_at, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(work_id) DO UPDATE SET
                 current_stage=excluded.current_stage,
                 current_gate=excluded.current_gate,
@@ -236,6 +306,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 last_decision=excluded.last_decision,
                 authorized_next_phase=excluded.authorized_next_phase,
                 claimed_by=excluded.claimed_by,
+                execution_attempt_id=excluded.execution_attempt_id,
+                execution_started_at=excluded.execution_started_at,
+                last_heartbeat_at=excluded.last_heartbeat_at,
                 updated_at=excluded.updated_at,
                 metadata=excluded.metadata
         """, (
@@ -262,6 +335,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             item.last_decision,
             item.authorized_next_phase,
             item.claimed_by,
+            item.execution_attempt_id,
+            item.execution_started_at,
+            item.last_heartbeat_at,
             item.created_at,
             item.updated_at,
             json.dumps(item.metadata),
@@ -494,6 +570,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             last_decision=row["last_decision"] if "last_decision" in keys else None,
             authorized_next_phase=row["authorized_next_phase"] if "authorized_next_phase" in keys else None,
             claimed_by=row["claimed_by"] if "claimed_by" in keys else None,
+            execution_attempt_id=row["execution_attempt_id"] if "execution_attempt_id" in keys else None,
+            execution_started_at=row["execution_started_at"] if "execution_started_at" in keys else None,
+            last_heartbeat_at=row["last_heartbeat_at"] if "last_heartbeat_at" in keys else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             metadata=json.loads(row["metadata"]),

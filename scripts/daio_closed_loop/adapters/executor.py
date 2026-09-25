@@ -83,7 +83,8 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
 
     def run_cmd(self, cmd: str) -> Tuple[int, str]:
         env = os.environ.copy()
-        env["PYTHONPATH"] = self.project_root
+        curr_pypath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{self.project_root}:{curr_pypath}".strip(":")
         res = subprocess.run(
             cmd,
             shell=True,

@@ -66,12 +66,17 @@ class DAIORoleRouter:
                 return work
 
             if work.current_gate == DAIOGate.CONTRACT_GATE:
-                # Contract Gate passed -> advance to Engineering Task
+                # Contract Gate passed -> advance to Engineering Task (READY in queue)
                 work.current_gate = DAIOGate.ENGINEERING_TASK
                 work.assigned_role = DAIORole.ENGINEERING_EXECUTION
-                work.status = DAIOStatus.IN_PROGRESS
+                work.status = DAIOStatus.QUEUED
                 work.requested_action = decision.instruction or "Execute approved engineering milestones."
                 work.attempt_count = 0
+                work.claimed_by = None
+                work.lease_id = None
+                work.lease_expires_at = None
+                work.execution_attempt_id = None
+                work.execution_started_at = None
             elif work.current_gate == DAIOGate.IMPLEMENTATION_GATE:
                 # Implementation Gate passed -> Complete or advance phase
                 work.status = DAIOStatus.COMPLETED
@@ -79,15 +84,17 @@ class DAIORoleRouter:
             return work
 
         if decision.decision == "REVISE":
-            # Revision requested -> loop back to engineering
+            # Revision requested -> loop back to engineering queue (READY)
             work.current_gate = DAIOGate.ENGINEERING_TASK
             work.assigned_role = DAIORole.ENGINEERING_EXECUTION
-            work.status = DAIOStatus.IN_PROGRESS
+            work.status = DAIOStatus.QUEUED
             work.requested_action = decision.instruction or "Implement requested revisions."
             work.human_gate_reason = None
             work.claimed_by = None
             work.lease_id = None
             work.lease_expires_at = None
+            work.execution_attempt_id = None
+            work.execution_started_at = None
             work.attempt_count = 0  # Reset attempt budget for new authorized turn
 
             # If work item is in OpenSpec/contract planning stage and allowed_scope is empty,
