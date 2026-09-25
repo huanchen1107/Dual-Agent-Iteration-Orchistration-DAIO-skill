@@ -462,9 +462,22 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             )
 
         # 4. If tests pass, commit deliverable
-        self.run_cmd("git add .")
-        msg = commit_message or f"feat(daio): automated execution for {work.change_id}"
-        self.run_cmd(f"git commit -m '{msg}'")
+        # Stage canonical deliverables in target_ws while preserving forensic/evidence files uncommitted
+        staged_any = False
+        for f in target_ws:
+            if (
+                "051-daio-root-" in f
+                or f.startswith("_myplan")
+                or f.startswith("docs/")
+                or f.startswith("_daio")
+            ):
+                continue
+            self.run_cmd(f"git add '{f}'")
+            staged_any = True
+
+        if staged_any:
+            msg = commit_message or f"feat(change051): implement canonical OpenSpec scaffold deliverables for {work.change_id}"
+            self.run_cmd(f"git commit -m \"{msg}\"")
         new_head = self.get_current_head()
 
         return ExecutionResult(
