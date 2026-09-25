@@ -1,8 +1,10 @@
 from __future__ import annotations
 import asyncio
 import datetime
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 from .models import (
@@ -432,3 +434,101 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                 break
 
         return completed_works
+
+    async def process_incoming_architect_decision(
+        self,
+        work_id: str,
+        decision: ArchitectDecision,
+        send_ack: bool = True,
+    ) -> Tuple[bool, Optional[DAIOWorkItem], Dict[str, Any]]:
+        """
+        Durable Decision-Watch Processor:
+        Ingests, validates, persists, routes, and acknowledges an incoming ArchitectDecision.
+        Dispatches DECISION_ACKNOWLEDGED event to the Lead Architect conversation.
+        """
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        work = self.store.load_work_item(work_id)
+        if not work:
+            err_report = {
+                "event": "ARCHITECT_DECISION_NOT_APPLIED",
+                "work_id": work_id,
+                "reason": f"Work item '{work_id}' not found in durable store",
+                "decision": decision.decision,
+                "human_action_required": True,
+            }
+            logger.error(f"❌ ARCHITECT_DECISION_NOT_APPLIED: {err_report}")
+            return False, None, err_report
+
+        decision_hash = hashlib.sha256(f"{work_id}:{decision.decision}:{decision.current_phase}:{decision.instruction}:{now}".encode()).hexdigest()[:12]
+
+        try:
+            # 1. Route work item state
+            work = DAIORoleRouter.process_architect_review(work, decision, DAIORole.LEAD_ARCHITECT_REVIEW)
+
+            # 2. Persist turn history & work state
+            turn_id = f"turn-{uuid.uuid4().hex[:8]}"
+            if hasattr(self.store, "record_turn_history"):
+                self.store.record_turn_history(
+                    turn_id=turn_id,
+                    work_id=work.work_id,
+                    role=DAIORole.LEAD_ARCHITECT_REVIEW.value,
+                    action_summary=decision.instruction or decision.decision,
+                    commit_sha=work.head_sha or "INITIAL",
+                    status=decision.decision,
+                    payload={
+                        "decision": decision.decision,
+                        "current_phase": decision.current_phase,
+                        "next_phase": decision.next_phase,
+                        "action": decision.action,
+                        "human_approval_required": decision.human_approval_required,
+                        "instruction": decision.instruction,
+                        "decision_hash": decision_hash,
+                    }
+                )
+            self.store.save_work_item(work)
+
+            # 3. Build & Dispatch DECISION_ACKNOWLEDGED event
+            ack_event = {
+                "event": "DECISION_ACKNOWLEDGED",
+                "work_id": work.work_id,
+                "decision": decision.decision,
+                "action": decision.action,
+                "decision_hash": decision_hash,
+                "received_at": now,
+                "resulting_durable_status": work.status.value,
+                "human_action_required": (work.status == DAIOStatus.HUMAN_GATE_REQUIRED),
+            }
+
+            if send_ack and self.bridge and hasattr(self.bridge, "transmit_review_request"):
+                ack_markdown = f"""🏓 **[DAIO DECISION_ACKNOWLEDGED]**
+
+- **Work ID:** `{work.work_id}`
+- **Decision Ingested:** `{decision.decision}` (Action: `{decision.action}`)
+- **Decision Hash:** `{decision_hash}`
+- **Resulting Durable Status:** `{work.status.value}`
+- **Human Action Required:** `{work.status == DAIOStatus.HUMAN_GATE_REQUIRED}`
+
+```json
+{json.dumps(ack_event, indent=2)}
+```
+"""
+                try:
+                    await self.bridge.transmit_review_request(work, ack_markdown)
+                except Exception as b_ex:
+                    logger.warning(f"Could not transmit DECISION_ACKNOWLEDGED via bridge: {b_ex}")
+
+            logger.info(f"✅ DECISION_ACKNOWLEDGED: work_id={work.work_id}, decision={decision.decision}, hash={decision_hash}, resulting_status={work.status.value}")
+            return True, work, ack_event
+
+        except Exception as ex:
+            err_report = {
+                "event": "ARCHITECT_DECISION_NOT_APPLIED",
+                "work_id": work.work_id,
+                "reason": str(ex),
+                "decision": decision.decision,
+                "failed_transition": f"Attempting to apply {decision.decision} on {work.status.value}",
+                "human_action_required": True,
+            }
+            logger.error(f"❌ ARCHITECT_DECISION_NOT_APPLIED: {err_report}")
+            return False, work, err_report
+

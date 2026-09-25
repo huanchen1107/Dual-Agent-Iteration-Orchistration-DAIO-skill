@@ -34,7 +34,7 @@ def test_router_revision_loop():
     assert updated.current_gate == DAIOGate.ENGINEERING_TASK
     assert updated.assigned_role == DAIORole.ENGINEERING_EXECUTION
     assert updated.status == DAIOStatus.IN_PROGRESS
-    assert updated.attempt_count == 1
+    assert updated.attempt_count == 0
     assert "Fix bugs" in updated.requested_action
 
 def test_router_human_gate_escalation():

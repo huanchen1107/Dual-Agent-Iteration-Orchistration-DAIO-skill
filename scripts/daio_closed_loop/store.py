@@ -301,6 +301,33 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         if not self._shared_conn:
             conn.close()
 
+    def get_turn_history_for_work(self, work_id: str) -> List[Dict[str, Any]]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload FROM daio_turn_history WHERE work_id = ? ORDER BY created_at ASC", (work_id,))
+        rows = cursor.fetchall()
+        results = []
+        for r in rows:
+            payload = {}
+            if r["payload"]:
+                try:
+                    payload = json.loads(r["payload"])
+                except Exception:
+                    pass
+            results.append({
+                "turn_id": r["turn_id"],
+                "work_id": r["work_id"],
+                "role": r["role"],
+                "action_summary": r["action_summary"],
+                "commit_sha": r["commit_sha"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+                "payload": payload,
+            })
+        if not self._shared_conn:
+            conn.close()
+        return results
+
     def load_work_item(self, work_id: str) -> Optional[DAIOWorkItem]:
         conn = self._get_connection()
         cursor = conn.cursor()

@@ -137,6 +137,34 @@ class PermissionCategory(str, Enum):
     IDE_DEVELOPMENT_ONLY = "IDE_DEVELOPMENT_ONLY"
 
 
+class DecisionWatchState(str, Enum):
+    DECISION_EXPECTED = "DECISION_EXPECTED"
+    DECISION_RECEIVED = "DECISION_RECEIVED"
+    DECISION_PERSISTED = "DECISION_PERSISTED"
+    RESUME_AUTHORIZED = "RESUME_AUTHORIZED"
+    WORK_ELIGIBLE = "WORK_ELIGIBLE"
+    WORK_CLAIMED = "WORK_CLAIMED"
+    EXECUTING = "EXECUTING"
+
+
+@dataclass
+class DecisionWatch:
+    decision_watch_id: str
+    work_id: str
+    current_phase: str
+    state: DecisionWatchState = DecisionWatchState.DECISION_EXPECTED
+    decision: Optional[str] = None
+    action: Optional[str] = None
+    decision_hash: Optional[str] = None
+    received_at: Optional[str] = None
+    deadline: str = ""
+    retry_count: int = 0
+    max_retries: int = 3
+    error_message: Optional[str] = None
+    created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class SupervisorHeartbeat:
     supervisor_id: str
@@ -151,5 +179,6 @@ class SupervisorHeartbeat:
     active_work_id: Optional[str] = None
     queue_depth: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
+
 
 

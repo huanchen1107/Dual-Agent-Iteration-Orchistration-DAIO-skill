@@ -84,7 +84,22 @@ class DAIORoleRouter:
             work.assigned_role = DAIORole.ENGINEERING_EXECUTION
             work.status = DAIOStatus.IN_PROGRESS
             work.requested_action = decision.instruction or "Implement requested revisions."
-            work.attempt_count += 1
+            work.human_gate_reason = None
+            work.claimed_by = None
+            work.lease_id = None
+            work.lease_expires_at = None
+            work.attempt_count = 0  # Reset attempt budget for new authorized turn
+
+            # If work item is in OpenSpec/contract planning stage and allowed_scope is empty,
+            # derive and persist the explicit bounded planning scope (never unrestricted)
+            if (not work.allowed_scope or work.allowed_scope == []) and (
+                "OPENSPEC" in work.current_stage.upper()
+                or "SCAFFOLD" in work.current_stage.upper()
+                or "CONTRACT" in work.current_stage.upper()
+                or "openspec" in (decision.instruction or "").lower()
+            ):
+                work.allowed_scope = ["openspec/**", "_myplan/**", "docs/**"]
+
             return work
 
         if decision.decision == "REJECT" or decision.decision == "STOP":

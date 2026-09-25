@@ -462,7 +462,17 @@ class DAIOHandoffWatchdog:
                             requested_action="HANDOFF_STALLED ESCALATION",
                             allowed_scope=[],
                         )
-                        loop.create_task(self.bridge.transmit_review_request(fake_work, stall_msg))
+
+                        async def _handle_escalation_reply(bridge: Any, orchestrator: Any, work_item: DAIOWorkItem, stall_text: str, target_id: str) -> None:
+                            try:
+                                dec = await bridge.transmit_review_request(work_item, stall_text)
+                                if dec and orchestrator:
+                                    await orchestrator.process_incoming_architect_decision(target_id, dec)
+                            except Exception as sub_ex:
+                                logger.error(f"Error handling post-escalation architect decision: {sub_ex}")
+
+                        target_id = watch.successor_work_id or watch.parent_work_id
+                        loop.create_task(_handle_escalation_reply(self.bridge, self.orchestrator, fake_work, stall_msg, target_id))
                 except RuntimeError:
                     pass
             except Exception as ex:

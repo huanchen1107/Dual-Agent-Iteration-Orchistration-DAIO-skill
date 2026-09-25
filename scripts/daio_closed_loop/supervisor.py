@@ -177,6 +177,35 @@ class DAIOSupervisor:
         # 2. Evaluate active watches and recover any stalls
         watch_results = self.watchdog.evaluate_watches(now=now)
 
+        # 2b. Recover any unapplied Architect decisions on blocked/gated items
+        for it in all_items:
+            if it.status in {DAIOStatus.HUMAN_GATE_REQUIRED, DAIOStatus.BLOCKED}:
+                last_dec_meta = it.metadata.get("last_architect_decision", {}) if isinstance(it.metadata, dict) else {}
+                turn_dec = None
+                if hasattr(self.store, "get_turn_history_for_work"):
+                    turns = self.store.get_turn_history_for_work(it.work_id)
+                    for t in reversed(turns):
+                        if t.get("role") == DAIORole.LEAD_ARCHITECT_REVIEW.value and isinstance(t.get("payload"), dict):
+                            turn_dec = t.get("payload")
+                            break
+
+                eff_dec = turn_dec or last_dec_meta
+                if (
+                    eff_dec.get("decision") == "REVISE"
+                    and eff_dec.get("action") == "RUN"
+                    and not eff_dec.get("human_approval_required", False)
+                ):
+                    logger.info(f"🔄 Recovering unapplied Architect REVISE decision for {it.work_id}")
+                    dec = ArchitectDecision(
+                        decision="REVISE",
+                        current_phase=eff_dec.get("current_phase", it.change_id),
+                        next_phase=eff_dec.get("next_phase"),
+                        action=eff_dec.get("action", "RUN"),
+                        human_approval_required=False,
+                        instruction=eff_dec.get("instruction", "Recovered REVISE execution"),
+                    )
+                    await self.orchestrator.process_incoming_architect_decision(it.work_id, dec)
+
         # 3. Worker polling & execution
         worker_result = await self.worker.run_once()
 
