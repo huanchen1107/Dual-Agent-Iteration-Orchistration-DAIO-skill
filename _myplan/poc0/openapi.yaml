@@ -1,0 +1,78 @@
+openapi: 3.1.0
+info:
+  title: DAIO Remote Project Cockpit API
+  description: Remote access adapter for querying DAIO live and durable project status.
+  version: 1.0.0
+servers:
+  - url: https://daio-relay.YOUR_SUBDOMAIN.workers.dev
+paths:
+  /api/v1/status:
+    get:
+      operationId: getDAIOProjectStatus
+      summary: Retrieve current DAIO Live and Durable status
+      description: Returns decoupled live execution plane (freshness, supervisor, gate) and durable plane (git commit, verified SHA).
+      responses:
+        '200':
+          description: Successful status payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  live_plane:
+                    type: object
+                    properties:
+                      freshness:
+                        type: string
+                        example: FRESH
+                      host:
+                        type: string
+                        example: mac-developer-workstation
+                      supervisor_status:
+                        type: string
+                        example: RUNNING
+                      supervisor_pid:
+                        type: integer
+                        example: 91763
+                      active_work_item:
+                        type: string
+                        example: Change 013 (Auth Gateway)
+                      current_gate:
+                        type: string
+                        example: AUTONOMOUS_ROUND_1
+                      current_role:
+                        type: string
+                        example: Antigravity
+                      human_gate_required:
+                        type: boolean
+                        example: false
+                      heartbeat_age_seconds:
+                        type: integer
+                        example: 4
+                  durable_plane:
+                    type: object
+                    properties:
+                      repository:
+                        type: string
+                        example: huanchen1107/Dual-Agent-Iteration-Orchistration-DAIO-skill
+                      verified_git_sha:
+                        type: string
+                        example: 664a05eb094ff5274d5e8a3cf6b2cf3d890f47a3
+                      push_synchronized:
+                        type: boolean
+                        example: true
+                      latest_completed_change:
+                        type: string
+                        example: Change 012
+                  provenance:
+                    type: object
+                    properties:
+                      protocol_version:
+                        type: string
+                        example: daio-rpc/v1
+                      relay_node:
+                        type: string
+                        example: cloudflare-edge-poc0
+                      server_timestamp:
+                        type: string
+                        example: '2026-09-25T12:20:04Z'

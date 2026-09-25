@@ -151,9 +151,11 @@ Cockpit Response:
 
 ### Architecture Decision Record: ADR-RPC-TRANSPORT-001
 
-* **Status**: **PROPOSED / AWAITING LEAD ARCHITECT REVIEW**
+* **Status**: **APPROVED BY LEAD ARCHITECT (Implementation Scope: PoC-0 Authorization Only)**
 * **Context**: The developer workstation (Mac/PC) runs DAIO and Antigravity behind domestic/corporate NAT and firewalls. The project owner needs secure status queries, instant push notifications, and human gate decision delivery from iPhone ChatGPT without exposing local ports directly to the public internet.
 * **Decision**: Adopt a **Lightweight Serverless Cloud Relay (Cloudflare Worker with Outbound WebSocket Hibernation & Push Webhook Dispatch)** as the primary Live Plane communication topology, with **GitHub** serving as the independent Durable Plane / audit fallback.
+* **Integration Surface Principle**: Do not hardcode vendor-specific assumptions (e.g. OpenAI Plus/Team Custom Action only). Support standard HTTPS REST OpenAPI 3.1 compatible with ChatGPT Projects, Plugins, Custom GPT Actions, and Web Tools.
+
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -320,17 +322,18 @@ Cockpit Response:
 * **Tailscale Private Mesh**: Rejected because iPhone ChatGPT cloud servers cannot join private peer-to-peer Tailscale overlay networks without an intermediate public gateway.
 * **Pure GitHub-Only Transport**: Rejected as primary Live Plane due to 30–60s polling latency and rate limits; retained strictly as Durable Plane / audit fallback.
 
-#### 14. Minimal Proof-of-Concept Plan
-* **PoC-1: Mock Live & Durable Query**: Deploy Cloudflare Worker with mock JSON status. Configure iPhone ChatGPT Action and verify natural-language status query.
-* **PoC-2: Outbound WSS Telemetry Sync**: Run local Python client emitting real-time heartbeat to Worker; verify instant online/offline freshness transition.
-* **PoC-3: Human Gate Decision Delivery**: Trigger `HUMAN_GATE_REQUIRED` locally; respond `APPROVE` from iPhone ChatGPT; verify delivery into DAIO `process_incoming_architect_decision()`.
-* **PoC-4: Push Alert Dispatch**: Trigger milestone event on PC; verify instant lock-screen push notification on iPhone via Webhook.
+#### 14. Minimal Proof-of-Concept Roadmap
+* **[PoC-0 — Remote Reachability (CURRENT FOCUS)]**: Stand up Cloudflare Worker with mock JSON status. Connect iPhone ChatGPT and verify natural-language status query (*「DAIO 現在狀態？」*). See [`_myplan/POC_0_REMOTE_REACHABILITY_PLAN.md`](file:///Users/huanchen/.gemini/antigravity-ide/brain/6c38cf78-aa72-4a88-bfbd-8236872d54ba/scratch/Dual-Agent-Iteration-Orchistration-DAIO-skill/_myplan/POC_0_REMOTE_REACHABILITY_PLAN.md).
+* **[PoC-1 — Outbound WSS Sync]**: Run local workstation Python client emitting real-time heartbeat to Worker; verify instant online/offline freshness transition.
+* **[PoC-2 — Live DAIO Status Query]**: Query **real** workstation DAIO status from iPhone ChatGPT in real time.
+* **[PoC-3 — Human Gate Decision Delivery]**: Trigger `HUMAN_GATE_REQUIRED` locally; respond `APPROVE` from iPhone ChatGPT; verify delivery into DAIO `process_incoming_architect_decision()`.
+* **[PoC-4 — Push Alert Dispatch]**: Trigger milestone event on PC; verify instant lock-screen push notification on iPhone via Webhook.
 
 #### 15. Implementation Boundary for Future OpenSpec Change
 * **Confined Modules**:
   * `scripts/daio_closed_loop/adapters/rpc/` (New outbound relay adapter and status aggregator).
   * `scripts/daio_closed_loop/models.py` (Add `LivePlaneDTO`, `DurablePlaneDTO`, `CockpitStatusResponse`, `FreshnessEnum`).
-  * `_myplan/` (Architecture and test plans).
+  * `_myplan/` (Architecture, PoC artifacts, and test plans).
 * **Strict Non-Interference**: Zero modification to DAIO state machine, watchdog, recovery epochs, test gates, supervisor core, or downstream business logic.
 
 ---
@@ -338,5 +341,6 @@ Cockpit Response:
 ## 6. Checkpoint Status & Git Coordinates
 
 * **Canonical Repository**: `huanchen1107/Dual-Agent-Iteration-Orchistration-DAIO-skill`
-* **Status**: **`ADR_PROPOSED_AWAITING_LEAD_ARCHITECT_REVIEW`**
-* **Action**: **STOPPED BEFORE IMPLEMENTATION**.
+* **Status**: **`POC_0_PLAN_ESTABLISHED_READY_FOR_VERIFICATION`**
+* **Action**: **PoC-0 Artifacts Provided, Awaiting Owner Reachability Test**.
+
