@@ -1,117 +1,140 @@
-# DAIO RPC-1: `RPC-ProjectStatus` Planning & Architecture Checkpoint
+# DAIO RPC-1: `RPC-ProjectStatus` (Remote Project Cockpit) Planning & Architecture Checkpoint
 
 ---
 
-## 1. Executive Summary & Objective
+## 1. Canonical Definition & Objective
 
-**RPC-1 (`RPC-ProjectStatus`)** defines the standard, domain-neutral remote procedure call (RPC) endpoint for the DAIO orchestration framework. It provides structured, machine-readable observability into DAIO's durable work queue, active supervisor heartbeats, git synchronization state, and watchdog recovery metrics.
+* **RPC Identifier**: `RPC-1 — RPC-ProjectStatus`
+* **Canonical Terminology**: **RPC = Remote Project Cockpit** *(Not "Remote Procedure Call")*
 
-This enables:
-* **Remote Mobile Observability (e.g., iPhone / Telegram / Web Dashboards)**: Real-time inspection of continuous iteration progress without terminal/SSH access.
-* **Automated CI/CD & Governance Gates**: Structured polling of work-item completion and human-gate requirements.
-* **Audit & Forensics**: Immediate, zero-overhead verification of durable lineage, active recovery epochs, and baseline regression results.
+The **Remote Project Cockpit (RPC)** framework defines the standard, domain-neutral remote observability architecture for DAIO. `RPC-ProjectStatus` provides structured, verifiable inspection into a project's live execution telemetry, durable Git checkpoints, supervisor heartbeats, and watchdog recovery metrics.
 
----
-
-## 2. Architectural Boundaries & Invariants
-
-1. **Strict Read-Only Semantics**:
-   * Invoking `RPC-ProjectStatus` must **never** mutate SQLite state, acquire/release worker leases, trigger stall recoveries, or modify git files.
-2. **Domain Neutrality**:
-   * Zero hardcoded financial terms, tickers, trading indicators, or project-specific symbols. The RPC layer is purely orchestration-native.
-3. **Fail-Closed Fallback & Security**:
-   * Operates over loopback (`127.0.0.1`) by default with optional bearer token authorization.
-   * If the SQLite database is temporarily locked, returns a well-typed degraded response rather than crashing the supervisor daemon.
+### Primary Use Cases:
+* **Mobile Project Cockpit (e.g. iPhone ChatGPT / Telegram / Web UI)**: Real-time, trusted inspection of continuous development and iteration progress without direct terminal/SSH access.
+* **Continuous Governance & Gate Polling**: Structured evaluation of work-item completion, human-gate requirements, and regression gates.
+* **Audit & Forensics**: Independent verification of durable lineage, active recovery epochs, and baseline regression results.
 
 ---
 
-## 3. Protocol Specification
+## 2. End-User Acceptance Scenario
 
-* **Protocol**: JSON-RPC 2.0 / REST GET query
-* **Method Name**: `daio.getProjectStatus` (or HTTP `GET /api/v1/status`)
+### Scenario: iPhone Project Cockpit Query
+* **User Context**: The human project owner is away from the workstation, opening ChatGPT on an iPhone.
+* **User Query**:
+  > **「現在專案做到哪裡了？」**
+* **Expected Cockpit Response Contract**:
+  The response must be grounded in fresh, verifiable DAIO state and **strictly separate live execution state from durable Git checkpoint state**:
+  1. **Durable Milestone**: State the latest verified, pushed GitHub commit SHA, change title, and test pass baseline.
+  2. **Live Execution**: State whether the local supervisor daemon is actively running right now, what work item is in progress, current gate, and whether human action is required.
+  3. **Freshness & Degraded Transparency**: If the workstation is asleep, offline, or behind NAT, explicitly declare live state as `OFFLINE` or `STALE` with the last observed heartbeat timestamp—**never hallucinate that work is actively progressing when live telemetry is unavailable**.
 
-### 3.1 Request Payload
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "daio.getProjectStatus",
-  "params": {
-    "include_history": false,
-    "include_heartbeats": true,
-    "include_watches": true
-  },
-  "id": "req-001"
-}
-```
+---
 
-### 3.2 Structured Response Schema
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "project_name": "AwinFinTechSMCHybridSystem",
-    "project_root": "/Users/.../_AwinFinTechHybridSystem_",
-    "timestamp": "2026-09-25T09:30:00.000000Z",
-    "git": {
-      "branch": "main",
-      "head_sha": "fed57af9587d7b7e99957604bda0bf875f54a13e",
-      "remote_url": "https://github.com/...",
-      "remote_head_sha": "fed57af9587d7b7e99957604bda0bf875f54a13e",
-      "ahead": 0,
-      "behind": 0,
-      "clean": true
-    },
-    "supervisor": {
-      "supervisor_id": "supervisor-029cb6",
-      "pid": 91763,
-      "status": "RUNNING",
-      "started_at": "2026-09-25T08:00:42.000000Z",
-      "last_heartbeat_at": "2026-09-25T09:30:00.000000Z",
-      "active_work_id": null,
-      "queue_depth": 0
-    },
-    "work_items": [
-      {
-        "work_id": "daio-root-change_051_implementation",
-        "change_id": "CHANGE_051_IMPLEMENTATION",
-        "current_stage": "CHANGE_051_IMPLEMENTATION",
-        "current_gate": "IMPLEMENTATION_GATE",
-        "assigned_role": "LEAD_ARCHITECT_REVIEW",
-        "status": "COMPLETED",
-        "last_decision": "APPROVE",
-        "attempt_count": 0,
-        "head_sha": "5d5d4e2c6e1ec9055b68d2444e17b81d7ca435de",
-        "human_action_required": false
-      }
-    ],
-    "handoff_watches": {
-      "active_count": 0,
-      "stalled_count": 0,
-      "watches": []
-    },
-    "regression_gate_summary": {
-      "test_command": "pytest tests/ -q",
-      "baseline_sha": "3836a3e",
-      "baseline_failures_count": 4,
-      "last_regression_status": "NO_NEW_REGRESSIONS_PASS"
-    }
-  },
-  "id": "req-001"
-}
+## 3. Formal Two-Plane Architecture
+
+`RPC-ProjectStatus` aggregates information across two decoupled planes, preserving provenance and timestamps independently:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│              DAIO Remote Project Cockpit (RPC-ProjectStatus)            │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+         ┌───────────────────────────┴───────────────────────────┐
+         ▼                                                       ▼
+┌─────────────────────────────────┐     ┌─────────────────────────────────┐
+│           LIVE PLANE            │     │          DURABLE PLANE          │
+├─────────────────────────────────┤     ├─────────────────────────────────┤
+│ • Daemon Liveness & Heartbeat   │     │ • Git Working Tree Cleanliness  │
+│ • Active Supervisor PID/Uptime  │     │ • Local HEAD vs Remote SHA      │
+│ • Active Work Item & Gate       │     │ • Verified Push Status (Origin) │
+│ • Current Assigned Agent / Role │     │ • Closed OpenSpec Changes       │
+│ • Recovery Epoch & Watchdog     │     │ • Durable Audit Turn History    │
+│ • Human Action Requirement      │     │ • Baseline Regression Archive   │
+└─────────────────────────────────┘     └─────────────────────────────────┘
 ```
 
 ---
 
-## 4. Implementation Decomposition & Milestones
+## 4. Freshness Contract & Invariants
 
-* **[M1] Model & Protocol Contracts**: Define `ProjectStatusRequest`, `ProjectStatusResponse`, `GitStatusDTO`, and `SupervisorStatusDTO` dataclasses in `scripts/daio_closed_loop/models.py`.
-* **[M2] Core RPC Handler**: Implement `DAIOStatusRPCService` in `scripts/daio_closed_loop/rpc.py` to query `SqliteDAIOWorkStore` and Git environment safely.
-* **[M3] CLI & Lightweight Server Endpoint**: Add `daio rpc status` subcommand and integrate an optional async HTTP JSON endpoint inside `DAIOSupervisor`.
-* **[M4] Determinism & Isolation Tests**: Implement `tests/test_rpc_project_status.py` verifying domain neutrality, schema conformance, read-only guarantees, and offline degraded mode handling.
+### 4.1 Freshness State Machine
+Every telemetry payload emitted by `RPC-ProjectStatus` must declare an explicit `freshness_state`:
+
+| Freshness Class | Criteria | Semantics & Cockpit Policy |
+|---|---|---|
+| **`FRESH`** | Live supervisor/worker heartbeat recorded within the last **30 seconds**. | Active, real-time live execution. Work-in-progress claims are valid. |
+| **`STALE`** | Last heartbeat recorded between **30 seconds and 180 seconds** ago. | Potential daemon stall, high system load, or brief network disruption. Report with clear staleness warning. |
+| **`OFFLINE`** | No heartbeat received for **> 180 seconds**, or daemon explicitly stopped. | Host machine is asleep, disconnected, or daemon terminated. |
+| **`UNKNOWN`** | Telemetry source unreachable or database uninitialized. | Cannot determine live status. State must be treated as unverified. |
+
+### 4.2 Core Freshness Invariant
+> [!IMPORTANT]
+> **A previously recorded `RUNNING` state must NEVER be presented as currently `RUNNING` when the live heartbeat is `STALE`, `OFFLINE`, or `UNKNOWN`.**
 
 ---
 
-## 5. Review & Authorization Gate
+## 5. Degraded-State Behavior
 
-* **Status**: **`PLANNING_CHECKPOINT_AWAITING_REVIEW`**
-* **Next Action**: Awaiting Lead Architect sign-off before commencing M1–M4 implementation code.
+When the host machine or DAIO daemon is unreachable:
+1. `live_plane.status` MUST be reported as **`OFFLINE`** or **`UNKNOWN`**.
+2. `live_plane.last_observed_heartbeat` may be provided for forensic context with an explicit historical timestamp.
+3. `durable_plane` MUST independently report the last verified GitHub commit SHA, push status, and completed OpenSpec milestones.
+4. **Safety Constraint**: The cockpit response MUST explicitly declare that live execution is stopped/unreachable and MUST NOT claim that background iterations are ongoing.
+
+---
+
+## 6. Remote Transport Architecture
+
+* **Status**: **`UNRESOLVED — ARCHITECTURE DECISION REQUIRED`**
+
+### Implementation Candidates Under Consideration:
+1. **Candidate A: GitHub-Backed Ephemeral Checkpoint Channel**
+   * DAIO daemon pushes non-blocking, lightweight telemetry / status snapshots to a dedicated branch, issue comment, or release asset on GitHub.
+   * *Pros*: Works 100% through NAT, zero firewall configuration, directly accessible by ChatGPT Web/Mobile.
+   * *Cons*: Small latency delay (30–60s), rate limit budgeting required.
+2. **Candidate B: Reverse Tunnel / Webhook Relay (e.g. Cloudflare Tunnel / WebSocket Relay)**
+   * Outbound secure websocket connection from DAIO daemon to a hardened relay endpoint.
+   * *Pros*: Sub-second real-time responsiveness.
+   * *Cons*: Requires external relay infrastructure and credentials.
+3. **Candidate C: Local-Only Read-Only Service API**
+   * Loopback HTTP/IPC query on `127.0.0.1`.
+   * *Pros*: Zero external dependencies, pure local inspection.
+   * *Cons*: Cannot be queried directly by mobile iPhone ChatGPT across NAT without local tunneling.
+
+> [!NOTE]
+> Local read-only service APIs are evaluated as foundational local inspection utilities, but the canonical iPhone remote transport mechanism remains an open architectural decision for Lead Architect determination.
+
+---
+
+## 7. Open Architecture Questions for Lead Architect Review
+
+1. **NAT Traversal & Remote Ingestion**:
+   * *Core Question*: **How does iPhone ChatGPT securely obtain fresh PC/DAIO live state when the PC is behind NAT and localhost is not reachable from ChatGPT?**
+   * *Decision Options*: GitHub-mediated telemetry branch/issue vs. lightweight encrypted outbound relay vs. ChatGPT Custom GPT Action with authenticated webhook.
+2. **Polling vs. Push Cadence**:
+   * What is the maximum acceptable telemetry freshness window for mobile cockpit queries (e.g., 30s vs. 60s vs. on-demand event-driven)?
+3. **Authentication & Authorization**:
+   * What token verification mechanism should guard remote cockpit queries if an external transport endpoint is exposed?
+
+---
+
+## 8. Domain Neutrality & Integration Boundaries
+
+* **Pure Generic Orchestration**: The RPC layer operates strictly on DAIO orchestration models (`DAIOWorkItem`, `SupervisorHeartbeat`, `HandoffWatch`, Git status).
+* **Domain Isolation**: Zero hardcoded trading rules, symbols (e.g., `2330.TW`), or algorithmic strategies. Target systems (such as `_AwinFinTechHybridSystem_` / SMC7S) serve strictly as downstream execution and verification consumers.
+
+---
+
+## 9. Implementation Milestones (Deferred Pending Review)
+
+* **[M1] Two-Plane Data Contracts & Models**: Define `CockpitStatusResponse`, `LivePlaneDTO`, `DurablePlaneDTO`, and `FreshnessEnum` in `scripts/daio_closed_loop/models.py`.
+* **[M2] Status Aggregator Service**: Implement read-only `ProjectStatusService` evaluating Git and `SqliteDAIOWorkStore` with strict freshness contracts.
+* **[M3] Transport Adapters**: Implement the Lead Architect–approved remote transport channel.
+* **[M4] Deterministic Verification & Degraded-Mode Test Suite**: Implement `tests/test_rpc_project_status.py` verifying freshness transitions, degraded offline reporting, and domain neutrality.
+
+---
+
+## 10. Checkpoint Status
+
+* **Status**: **`REVISED_PLANNING_CHECKPOINT_AWAITING_LEAD_ARCHITECT_REVIEW`**
+* **Action**: **STOPPED BEFORE IMPLEMENTATION**.
