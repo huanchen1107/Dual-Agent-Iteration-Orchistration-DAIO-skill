@@ -337,9 +337,15 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
             await client.close()
 
     async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
-        """Dispatches a one-way telemetry event without decision-request footer and without waiting for response."""
-        UniversalCDPClient = self._get_cdp_client_class()
+        """
+        Dispatches telemetry. By default, routine telemetry remains local and durable (logged)
+        to prevent flooding the Architect chat window.
+        """
+        logger.info(f"📡 Routine telemetry recorded for work {work.work_id}: {telemetry_markdown[:120]}...")
+        if not self.endpoint.get("post_routine_telemetry", False):
+            return True
 
+        UniversalCDPClient = self._get_cdp_client_class()
         effective_endpoint = dict(self.endpoint)
         if work.architect_endpoint:
             effective_endpoint.update(work.architect_endpoint)
