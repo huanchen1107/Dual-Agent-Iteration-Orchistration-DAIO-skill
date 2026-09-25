@@ -72,7 +72,7 @@ iPhone ChatGPT / Remote Project Owner
   * Workstation / DAIO host becoming unavailable (heartbeat timeout)
 * **Cockpit Adapter Responsibility**:
   * Listens to existing DAIO event telemetry and watchdog state.
-  * Relays real-time push alerts to the owner's mobile device (APNs / Webhook / Chatbot Notification).
+  * Relays real-time push alerts to the owner's mobile device (APNs / Push Webhook / Chatbot Notification).
   * **Zero duplicate watchdog**: Never create a secondary watchdog or event state machine.
 
 ---
@@ -89,7 +89,7 @@ HUMAN_GATE_REQUIRED
        ↓
 Remote Project Cockpit (RPC Notification Channel)
        ↓
-iPhone Push Notification
+iPhone Push Notification (NTFY / Telegram / Pushover)
        ↓
 Project Owner in iPhone ChatGPT:
 "Approve. Continue."
@@ -147,85 +147,196 @@ Cockpit Response:
 
 ---
 
-## 5. Analysis of Missing Remote-Access Infrastructure
+## 5. RPC Transport Architecture Decision (ADR-RPC-TRANSPORT-001)
 
-To enable the target mobile loop without violating the DAIO boundary, three specific remote-access bridges are required:
+### Architecture Decision Record: ADR-RPC-TRANSPORT-001
+
+* **Status**: **PROPOSED / AWAITING LEAD ARCHITECT REVIEW**
+* **Context**: The developer workstation (Mac/PC) runs DAIO and Antigravity behind domestic/corporate NAT and firewalls. The project owner needs secure status queries, instant push notifications, and human gate decision delivery from iPhone ChatGPT without exposing local ports directly to the public internet.
+* **Decision**: Adopt a **Lightweight Serverless Cloud Relay (Cloudflare Worker with Outbound WebSocket Hibernation & Push Webhook Dispatch)** as the primary Live Plane communication topology, with **GitHub** serving as the independent Durable Plane / audit fallback.
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│ 1. iPhone → DAIO Query Infrastructure                                   │
-│    • Ingress path from iPhone ChatGPT (Custom GPT Action / REST endpoint)│
-│    • Query Handler reading DAIO SqliteDAIOWorkStore without locks       │
-│    • Two-Plane Formatter assembling Live + Durable status payload       │
-│ ─────────────────────────────────────────────────────────────────────── │
-│ 2. DAIO → iPhone Notification Infrastructure                            │
-│    • Event Tap hooking into DAIO Event telemetry & Watchdog state       │
-│    • Outbound Dispatcher transmitting high-priority alerts to mobile    │
-│    • Push Service / Webhook Bridge triggering iPhone notifications      │
-│ ─────────────────────────────────────────────────────────────────────── │
-│ 3. iPhone → DAIO Authorized Human Gate Decision Infrastructure          │
-│    • Egress / Ingress Decision Envelope with Cryptographic Signature    │
-│    • Token Authentication, Replay Protection (Nonces & Expiry)          │
-│    • Direct Ingestion into DAIO's process_incoming_architect_decision  │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              DEPLOYMENT TOPOLOGY                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+               ┌────────────────────────┐
+               │     iPhone Owner       │
+               │   (ChatGPT / Push)     │
+               └───────┬────────▲───────┘
+                       │        │ (Channel C: Push Notification)
+               HTTPS   │        │ [NTFY / Telegram / Pushover]
+               OpenAPI │        │       ▲
+               Action  ▼        │       │ Outbound Webhook
+       ┌────────────────┴───────┴──────────────────────────────┐
+       │  Cloudflare Worker + Durable Object (Cloud Relay)    │
+       │  • /api/v1/status     [HTTPS GET  <- ChatGPT Action]  │
+       │  • /api/v1/decision   [HTTPS POST <- ChatGPT Action]  │
+       │  • /ws/daio-node      [WSS Ingress <- PC DAIO Daemon] │
+       │  • Memory/DO Snapshot (Cached Live State + Freshness) │
+       │  • Outbound Alert Dispatcher (Webhook to Push Gateway)│
+       └────────────────────────▲──────────────────────────────┘
+                                │
+                                │ Outbound TLS WebSocket (WSS)
+                                │ (Zero inbound firewall / NAT opening)
+                                │
+       ┌────────────────────────┴──────────────────────────────┐
+       │  Developer Workstation (Mac / PC Behind NAT)          │
+       │  ┌──────────────────────────────────────────────────┐ │
+       │  │ DAIO RPC Agent Adapter (Outbound Client Daemon)  │ │
+       │  │ • Maintains persistent WSS to Cloud Relay        │ │
+       │  │ • Emits live heartbeat + work state every 15s    │ │
+       │  │ • Receives signed decisions -> HMAC verify       │ │
+       │  │ • Ingests decision -> DAIO Control Plane         │ │
+       │  └───────────────────┬──────────────────────────────┘ │
+       │                      │ Canonical API / Local SQLite   │
+       │  ┌───────────────────▼──────────────────────────────┐ │
+       │  │ Existing DAIO Control Plane                      │ │
+       │  │ • Orchestrator / Supervisor / Worker / Gate      │ │
+       │  │ • process_incoming_architect_decision()          │ │
+       │  └───────────────────┬──────────────────────────────┘ │
+       │                      │ Execution Loop                 │
+       │  ┌───────────────────▼──────────────────────────────┐ │
+       │  │ Antigravity Coding Agent                         │ │
+       │  └──────────────────────────────────────────────────┘ │
+       └───────────────────────────────────────────────────────┘
+                                │
+                                │ Git Commit / Push (Verified Provenance)
+                                ▼
+       ┌───────────────────────────────────────────────────────┐
+       │  GitHub Repository (Durable Plane & Audit Fallback)   │
+       │  • origin/main (Verified commits)                     │
+       │  • OpenSpec Specifications & Change History           │
+       └───────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 6. Conceptual Comparison of Candidate Architecture Families
+### Detailed Analysis of the 15 Architectural Dimensions
 
-Because developer workstations are typically behind NAT/firewalls, iPhone ChatGPT cannot connect directly to `http://localhost`. Below is a conceptual comparison of candidate transport families:
+#### 1. Candidate Technologies Considered
+* **Candidate A (Selected)**: Cloudflare Worker + Durable Objects / WebSocket Hibernation API.
+* **Candidate B**: AWS API Gateway (WebSocket + HTTP) + Lambda + DynamoDB.
+* **Candidate C**: Dedicated VPS / Container Relay (Go/FastAPI on Fly.io).
+* **Candidate D**: Inbound Cloudflare Tunnel / ngrok directly to localhost.
+* **Candidate E**: Pure GitHub Issue / Telemetry Polling (Durable fallback only).
 
-| Architecture Candidate Family | Architectural Mechanism | Primary Strength | Primary Limitation / Risk |
-|---|---|---|---|
-| **1. Secure Outbound Relay** | PC maintains an outbound persistent TLS connection (e.g. WebSocket / SSE client) to an authenticated cloud message broker. | 100% NAT traversal with 0 router/firewall opening; sub-second live query & instant push notifications. | Requires hosting or maintaining a lightweight relay broker. |
-| **2. Authenticated Cloud Relay (Serverless)** | Serverless queue/KV store (e.g. Cloudflare Worker / AWS API Gateway + DynamoDB) holding short-lived telemetry snapshots & decision queues. | Serverless, zero persistent server maintenance, excellent scalability, and fine-grained token authentication. | Small polling latency (1–5s) unless paired with WebSockets. |
-| **3. Secure Inbound Tunnel** | Encrypted tunnel forwarding public HTTPS requests to localhost (e.g. Cloudflare Tunnel, Tailscale Funnel, ngrok). | Direct REST/JSON-RPC query execution against the local DAIO daemon. | Direct inbound exposure surface; requires strict bearer token guardrails and depends on third-party daemon stability. |
-| **4. Private Mesh / VPN** | Direct encrypted peer-to-peer overlay network (e.g. Tailscale / WireGuard) connecting PC and mobile device. | Enterprise-grade point-to-point encryption, zero public port exposure. | iPhone ChatGPT Web/App backend cannot join the user's private Tailscale mesh directly without intermediate gateway. |
-| **5. Durable GitHub Fallback Channel** | Asynchronous telemetry dispatch via ephemeral GitHub branch (`daio-telemetry`), issue comments, or release assets. | Zero new infrastructure, zero external vendor accounts, built directly on existing GitHub auth. | 30–60s latency, rate limit budgeting; suitable for durable fallback and notifications, **not** real-time sub-second live streaming. |
+#### 2. Real Deployment Topology
+* **Edge Cloud**: A single Cloudflare Worker script deployed on edge with a Durable Object holding the live WebSocket connection from the developer's PC.
+* **Workstation**: A background asyncio/thread WebSocket client embedded in the DAIO Supervisor process.
+* **Mobile**: Custom GPT Action configured in ChatGPT iOS app pointing to the Worker's HTTPS endpoints, coupled with a push notification webhook bridge.
+
+#### 3. iPhone → Relay → DAIO Query Flow (Channel A)
+1. Owner in iPhone ChatGPT asks: *「現在專案做到哪裡了？」*
+2. ChatGPT executes Custom GPT Action: `GET /api/v1/status` with `Authorization: Bearer <CHATGPT_TOKEN>`.
+3. Cloudflare Worker checks the active WebSocket session:
+   - If connected and heartbeat is recent ($\le 30\text{s}$): Returns `FRESH` live telemetry snapshot.
+   - If heartbeat is delayed ($30\text{s} - 180\text{s}$): Returns `STALE` live telemetry with timestamp.
+   - If disconnected or $>180\text{s}$: Returns `OFFLINE` status immediately.
+4. Worker returns JSON payload combining **Live Plane** (supervisor PID, active work item, gate, role) and **Durable Plane** (last verified GitHub SHA, push status, latest OpenSpec change).
+5. ChatGPT renders a natural language summary to the owner.
+
+#### 4. DAIO → Relay → iPhone Notification Flow (Channel C)
+1. DAIO encounters an event requiring attention (`HUMAN_GATE_REQUIRED`, `TEST_GATE_FAILED`, `WORK_ITEM_COMPLETED`, `GITHUB_CHECKPOINT_COMPLETED`, `DAEMON_STALLED`).
+2. DAIO RPC adapter pushes the event envelope over the persistent outbound WSS connection to the Cloud Relay.
+3. Cloud Relay invokes an outbound Webhook to a mobile push gateway (e.g., NTFY.sh, Pushover, or Telegram Bot API).
+4. iPhone displays a real-time lock-screen push banner:
+   > 🔔 **DAIO Human Gate Alert**: Scope verification limit reached on Change 013. Open ChatGPT to review and respond.
+5. Project owner taps notification or opens ChatGPT to review context and issue decisions.
+
+#### 5. iPhone → Relay → DAIO Human Gate Decision Flow (Channel B)
+1. Project owner replies in ChatGPT: *"Approve. Continue with next phase."*
+2. ChatGPT executes Custom GPT Action: `POST /api/v1/decision` with payload:
+   ```json
+   {
+     "decision": "APPROVE",
+     "action": "ACCEPT",
+     "instruction": "Continue with next phase.",
+     "gate_id": "gate_ch013_001",
+     "nonce": "nonce_7a8f9b2c",
+     "timestamp": 1727258400
+   }
+   ```
+3. Cloud Relay verifies bearer token, validates timestamp freshness ($\le 60\text{s}$), and checks nonce uniqueness.
+4. Cloud Relay delivers the decision envelope over the active WebSocket channel to the PC DAIO daemon.
+5. PC DAIO adapter verifies HMAC signature, validates gate state, and invokes:
+   `DAIOClosedLoopOrchestrator.process_incoming_architect_decision(decision)`
+6. Existing DAIO state machine unlocks, updates local SQLite store, logs provenance, and Antigravity execution resumes.
+
+#### 6. Authentication & Authorization Model
+* **ChatGPT ↔ Cloud Relay**: Authenticated via standard `Bearer <CHATGPT_ACCESS_TOKEN>` set in the Custom GPT Action configuration.
+* **PC DAIO ↔ Cloud Relay**: Authenticated via mutual TLS / Pre-Shared Secret Token (`DAIO_NODE_TOKEN`) during WebSocket handshake.
+* **Decision Signature & Nonce**: Remote decisions include an HMAC-SHA256 signature calculated over `(gate_id, decision, nonce, timestamp)` ensuring decision integrity and non-repudiation.
+* **Role-Based Access Control (RBAC)**: Remote API is strictly restricted to:
+  * `read:status` (Read-only status inspection)
+  * `write:decision` (Constrained decision values: `APPROVE`, `REVISE`, `STOP`).
+  * **No remote shell execution or file editing endpoints exist.**
+
+#### 7. Freshness & Offline Model
+* Live Heartbeat Interval: **15 seconds**.
+* Freshness Boundaries:
+  * `FRESH`: Heartbeat age $\le 30\text{s}$
+  * `STALE`: Heartbeat age $30\text{s} < \Delta t \le 180\text{s}$
+  * `OFFLINE`: Heartbeat age $> 180\text{s}$ or TCP session terminated.
+* Fail-Closed Invariant: Cloud Relay will never report `RUNNING` if the WebSocket connection is severed or heartbeat age $>180\text{s}$.
+
+#### 8. Failure & Degraded Modes
+* **PC Asleep / Power Off / Network Disconnected**: Cloud Relay serves cached `OFFLINE` status + last verified durable GitHub commit SHA.
+* **Relay Service Outage**: DAIO continues local autonomous execution uninterrupted. Human gates pause locally and wait for manual CLI resolution.
+* **Replay Attack / Stale Message**: Cloud Relay and PC DAIO enforce a strict 60-second validity window and deduplicate nonces in a memory cache.
+* **GitHub Rate Limit / Outage**: Local Git environment remains primary; remote GitHub verification operates with exponential backoff.
+
+#### 9. Operational Complexity
+* **Zero Host Server Maintenance**: Cloudflare Workers run serverless with automatic scaling, zero OS patching, and global edge routing.
+* **Zero Workstation Port Forwarding**: Pure outbound connection initiated from the PC.
+* **Setup Overhead**: Under 15 minutes to configure Worker + OpenAI Action.
+
+#### 10. Estimated External Services & Accounts Required
+1. **Cloudflare Account** (Free tier covers 100k requests/day and WebSocket hibernation).
+2. **OpenAI ChatGPT Plus / Team Account** (Required for Custom GPT Actions).
+3. **Mobile Push Service** (Free tier NTFY.sh / Pushover / Telegram Bot Webhook).
+4. **GitHub Account** (Existing project repository for Durable Plane).
+
+#### 11. Security Risks & Mitigations
+
+| Threat Vector | Severity | Mitigating Architectural Control |
+|---|:---:|---|
+| **Public Ingress Attack on Workstation** | High | **Eliminated**: Workstation opens **zero inbound ports**. All connections are outbound TLS WebSockets. |
+| **Unauthorized Remote Decision Ingestion** | High | **Bearer token + HMAC signature + Nonce + 60s expiration**. Replays and forged tokens rejected at relay. |
+| **Command Injection / Scope Creep** | Critical | **Strict Schema Enforcement**: Remote decision endpoint only accepts enum `APPROVE`/`REVISE`/`STOP` and string instructions. No shell execution. |
+| **False Execution State Claims** | Medium | **Two-Plane Freshness Engine**: Disconnected status returns `OFFLINE` with durable Git fallback. |
+| **Secret Leaks** | Medium | Workstation secrets stay in local environment; Cloudflare secrets stored in encrypted Worker Secrets (`wrangler secret`). |
+
+#### 12. Recommended Technology Stack
+* **Cloud Relay**: Cloudflare Worker (TypeScript) with Durable Object & WebSocket Hibernation.
+* **Mobile Ingress**: Custom GPT Action with OpenAPI 3.1 specification.
+* **Mobile Push Gateway**: NTFY / Telegram Bot Webhook / Pushover.
+* **Workstation Adapter**: Python `asyncio` / `websockets` outbound client in `scripts/daio_closed_loop/adapters/rpc_relay_adapter.py`.
+* **Durable Plane**: Git CLI + GitHub REST API.
+
+#### 13. Alternatives Rejected and Why
+* **Inbound Cloudflare Tunnel / ngrok**: Rejected because it requires exposing an ingress port on localhost, lacks serverless message buffering when PC is offline, and increases workstation exposure.
+* **AWS API Gateway + Lambda**: Rejected due to high configuration friction (IAM policies, VPCs, cold starts) compared to single-command Cloudflare Worker deployment.
+* **Tailscale Private Mesh**: Rejected because iPhone ChatGPT cloud servers cannot join private peer-to-peer Tailscale overlay networks without an intermediate public gateway.
+* **Pure GitHub-Only Transport**: Rejected as primary Live Plane due to 30–60s polling latency and rate limits; retained strictly as Durable Plane / audit fallback.
+
+#### 14. Minimal Proof-of-Concept Plan
+* **PoC-1: Mock Live & Durable Query**: Deploy Cloudflare Worker with mock JSON status. Configure iPhone ChatGPT Action and verify natural-language status query.
+* **PoC-2: Outbound WSS Telemetry Sync**: Run local Python client emitting real-time heartbeat to Worker; verify instant online/offline freshness transition.
+* **PoC-3: Human Gate Decision Delivery**: Trigger `HUMAN_GATE_REQUIRED` locally; respond `APPROVE` from iPhone ChatGPT; verify delivery into DAIO `process_incoming_architect_decision()`.
+* **PoC-4: Push Alert Dispatch**: Trigger milestone event on PC; verify instant lock-screen push notification on iPhone via Webhook.
+
+#### 15. Implementation Boundary for Future OpenSpec Change
+* **Confined Modules**:
+  * `scripts/daio_closed_loop/adapters/rpc/` (New outbound relay adapter and status aggregator).
+  * `scripts/daio_closed_loop/models.py` (Add `LivePlaneDTO`, `DurablePlaneDTO`, `CockpitStatusResponse`, `FreshnessEnum`).
+  * `_myplan/` (Architecture and test plans).
+* **Strict Non-Interference**: Zero modification to DAIO state machine, watchdog, recovery epochs, test gates, supervisor core, or downstream business logic.
 
 ---
 
-## 7. Comprehensive 15-Criteria Evaluation Matrix
-
-$$\text{Rating Scale: } \mathbf{5} = \text{Optimal / Native},\ \mathbf{3} = \text{Acceptable with Mitigations},\ \mathbf{1} = \text{Significant Blocker / Infeasible}$$
-
-| # | Architectural Evaluation Criterion | 1. Outbound WebSocket Relay | 2. Serverless Cloud Relay | 3. Secure Tunnel (Cloudflare/ngrok) | 4. Private Mesh (Tailscale) | 5. Durable GitHub Fallback |
-|:---:|---|:---:|:---:|:---:|:---:|:---:|
-| **1** | **NAT Traversal** | 5 | 5 | 5 | 4 | 5 |
-| **2** | **Zero Inbound Router Config** | 5 | 5 | 5 | 5 | 5 |
-| **3** | **Authentication** (Bearer/HMAC) | 5 | 5 | 4 | 5 | 5 |
-| **4** | **Authorization & RBAC** | 5 | 5 | 4 | 4 | 4 |
-| **5** | **Replay Protection (Nonces/Timestamps)** | 5 | 5 | 4 | 5 | 4 |
-| **6** | **Decision Integrity (Signature Verification)** | 5 | 5 | 4 | 5 | 4 |
-| **7** | **Freshness Guarantees (Sub-30s)** | 5 | 4 | 5 | 5 | 2 |
-| **8** | **Offline / Degraded Detection** | 5 | 5 | 3 | 3 | 4 |
-| **9** | **Push Notification Capability** | 5 | 5 | 2 | 1 | 3 |
-| **10** | **iPhone Usability (ChatGPT Action / Mobile)** | 5 | 5 | 4 | 2 | 4 |
-| **11** | **ChatGPT Custom Action Feasibility** | 5 | 5 | 4 | 1 | 4 |
-| **12** | **Operational Complexity (Setup overhead)** | 3 | 4 | 3 | 2 | 5 |
-| **13** | **Secret Management (Keys/Tokens)** | 4 | 4 | 3 | 4 | 5 |
-| **14** | **Auditability & Provenance Logging** | 5 | 5 | 4 | 4 | 5 |
-| **15** | **Vendor Independence** | 4 | 3 | 2 | 2 | 4 |
-
----
-
-## 8. Open Architecture Decision for Lead Architect Review
-
-> [!IMPORTANT]
-> **Key Architecture Question**:
-> **Which transport topology should be selected for the primary iPhone $\leftrightarrow$ DAIO communication channel?**
->
-> * **Option 1 (Recommended Hybrid)**:
->   * **Primary Live Channel**: Lightweight Serverless / Outbound Relay (Candidate 1/2) for live status, sub-second decision delivery, and instant push notifications.
->   * **Secondary Durable Fallback**: GitHub checkpoint verification (Candidate 5) for persistent milestone audits and offline status validation.
-> * **Option 2 (Tunnel-Centric)**: Cloudflare Tunnel directly proxying a hardened local DAIO HTTP endpoint with Custom GPT Action authentication.
-> * **Option 3 (GitHub-Only)**: Zero-infrastructure asynchronous GitHub Issue / Telemetry branch polling (high latency, zero hosting).
-
----
-
-## 9. Checkpoint Status & Git Coordinates
+## 6. Checkpoint Status & Git Coordinates
 
 * **Canonical Repository**: `huanchen1107/Dual-Agent-Iteration-Orchistration-DAIO-skill`
-* **Status**: **`ARCHITECTURAL_BOUNDARY_ESTABLISHED_AWAITING_LEAD_ARCHITECT_REVIEW`**
+* **Status**: **`ADR_PROPOSED_AWAITING_LEAD_ARCHITECT_REVIEW`**
 * **Action**: **STOPPED BEFORE IMPLEMENTATION**.
