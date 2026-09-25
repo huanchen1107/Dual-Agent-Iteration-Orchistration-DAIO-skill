@@ -338,9 +338,13 @@ Cockpit Response:
 
 ---
 
-## 6. Checkpoint Status & Git Coordinates
+## 6. Checkpoint Status & Canonical Coordinates
 
 * **Canonical Repository**: `huanchen1107/Dual-Agent-Iteration-Orchistration-DAIO-skill`
-* **Status**: **`POC_0_PLAN_ESTABLISHED_READY_FOR_VERIFICATION`**
-* **Action**: **PoC-0 Artifacts Provided, Awaiting Owner Reachability Test**.
+* **Canonical Milestones**:
+  * `PoC-0A`: **`PASS`** (Remote Reachability Verified)
+  * `RPC-1`: **`PASS`** (Real Two-Plane DAIO Status & Outbound Publication Verified)
+  * `RPC-2`: **`NOT STARTED`** (Remote Decision Ingestion)
+  * `RPC-3`: **`NOT STARTED`** (Push Alerting & Notifications)
+* **Status**: **`RPC-1 CLOSED — READY FOR LEAD ARCHITECT RPC-2 PLANNING`**
 
