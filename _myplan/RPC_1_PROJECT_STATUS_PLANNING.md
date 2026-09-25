@@ -1,46 +1,127 @@
-# DAIO RPC-1: `RPC-ProjectStatus` (Remote Project Cockpit) Planning & Architecture Checkpoint
+# DAIO Remote Project Cockpit (RPC) Architecture & RPC-1 Planning Checkpoint
 
 ---
 
-## 1. Canonical Definition & Objective
-
-* **RPC Identifier**: `RPC-1 — RPC-ProjectStatus`
-* **Canonical Terminology**: **RPC = Remote Project Cockpit** *(Not "Remote Procedure Call")*
-
-The **Remote Project Cockpit (RPC)** framework defines the standard, domain-neutral remote observability architecture for DAIO. `RPC-ProjectStatus` provides structured, verifiable inspection into a project's live execution telemetry, durable Git checkpoints, supervisor heartbeats, and watchdog recovery metrics.
-
-### Primary Use Cases:
-* **Mobile Project Cockpit (e.g. iPhone ChatGPT / Telegram / Web UI)**: Real-time, trusted inspection of continuous development and iteration progress without direct terminal/SSH access.
-* **Continuous Governance & Gate Polling**: Structured evaluation of work-item completion, human-gate requirements, and regression gates.
-* **Audit & Forensics**: Independent verification of durable lineage, active recovery epochs, and baseline regression results.
-
----
-
-## 2. End-User Acceptance Scenario
-
-### Scenario: iPhone Project Cockpit Query
-* **User Context**: The human project owner is away from the workstation, opening ChatGPT on an iPhone.
-* **User Query**:
-  > **「現在專案做到哪裡了？」**
-* **Expected Cockpit Response Contract**:
-  The response must be grounded in fresh, verifiable DAIO state and **strictly separate live execution state from durable Git checkpoint state**:
-  1. **Durable Milestone**: State the latest verified, pushed GitHub commit SHA, change title, and test pass baseline.
-  2. **Live Execution**: State whether the local supervisor daemon is actively running right now, what work item is in progress, current gate, and whether human action is required.
-  3. **Freshness & Degraded Transparency**: If the workstation is asleep, offline, or behind NAT, explicitly declare live state as `OFFLINE` or `STALE` with the last observed heartbeat timestamp—**never hallucinate that work is actively progressing when live telemetry is unavailable**.
-
----
-
-## 3. Formal Two-Plane Architecture
-
-`RPC-ProjectStatus` aggregates information across two decoupled planes, preserving provenance and timestamps independently:
+## 1. Core Architectural Boundary: RPC is an Adapter Over DAIO
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│              DAIO Remote Project Cockpit (RPC-ProjectStatus)            │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-         ┌───────────────────────────┴───────────────────────────┐
-         ▼                                                       ▼
+Existing DAIO Closed Loop (Automation Control Plane)
+        │
+        ├── canonical state (SqliteDAIOWorkStore)
+        ├── canonical decision ingestion (process_incoming_architect_decision)
+        └── canonical events & watchdog (DAIOWatchdog, telemetry events)
+        │
+        ▼
+Remote Project Cockpit (RPC Access Adapter Layer)
+        │
+        ├── [Capability A] Query Channel        -> RPC-1: Status & Freshness Engine
+        ├── [Capability B] Decision Channel     -> Secure Remote Decision Delivery
+        └── [Capability C] Notification Channel -> Event & Milestone Alerts
+        │
+        ▼
+iPhone ChatGPT / Remote Project Owner
+```
+
+### Inviolable Architectural Principles
+> [!IMPORTANT]
+> **DAIO already provides the canonical automation control plane.**
+> 
+> Do **NOT** redesign or duplicate:
+> * DAIO Orchestrator & State Machine
+> * Supervisor & Worker / Antigravity execution
+> * Watchdog & Recovery Epochs
+> * Human Gate & Architect Decision Ingestion
+> * Test Gate & Git Checkpoint / provenance mechanisms
+> 
+> **RPC is strictly the remote/mobile access layer** exposing selected existing DAIO capabilities safely to a remote project owner (especially via iPhone ChatGPT).
+> 
+> * **Prefer**: `RPC → existing DAIO API / state / event`
+> * **Never**: `RPC → duplicate DAIO state machine, second task board, or parallel database`
+
+---
+
+## 2. The Three Core RPC Capabilities
+
+### Capability A — Query (`RPC-1 — RPC-ProjectStatus`)
+* **Mobile Query**: Project owner asks from iPhone ChatGPT:
+  > **「現在專案做到哪裡了？」** 或 **「現在電腦開發到哪？」**
+* **Cockpit Adapter Responsibility**:
+  * Reads existing DAIO canonical state (`SqliteDAIOWorkStore` + local/remote Git environment).
+  * Returns decoupled **Fresh Live Plane** (daemon activity, active work item, current gate, role) and **Durable Plane** (Git commit, verified remote GitHub SHA, push status, closed OpenSpec changes).
+  * Enforces **Freshness Evaluation** (`FRESH`, `STALE`, `OFFLINE`, `UNKNOWN`) and human-action requirements.
+  * **Zero parallel state**: Never create a second project-state database.
+
+### Capability B — Remote Decision (`RPC-2 — RemoteDecisionDelivery`)
+* **Trigger**: Existing DAIO enters `HUMAN_GATE_REQUIRED` (e.g., scope threshold, test gate iteration limit reached, or architectural clarification required).
+* **Owner Action**: Project owner reviews gate details on iPhone ChatGPT and replies:
+  > **`APPROVE`**, **`REVISE`**, or **`STOP`** (with optional structured instruction).
+* **Cockpit Adapter Responsibility**:
+  * Verifies remote identity, signature, and replay-protection token.
+  * Translates remote response into canonical `ArchitectDecision(decision, current_phase, action, instruction)`.
+  * Securely delivers decision directly into the **EXISTING DAIO Architect Decision Ingestion path** (`DAIOClosedLoopOrchestrator.process_incoming_architect_decision()`).
+  * **Zero parallel gate**: DAIO's existing Human Gate state machine unlocks and Antigravity execution resumes.
+
+### Capability C — Push / Event Notification (`RPC-3 — EventNotificationRelay`)
+* **Trigger**: Existing DAIO emits canonical milestones or watchdog alerts:
+  * Meaningful progress checkpoint completed
+  * GitHub checkpoint completed & verified (`origin/main`)
+  * Tests failed / recovery epoch initiated
+  * `HUMAN_GATE_REQUIRED` entered
+  * Work item completed / milestone closed
+  * Agent stalled / daemon unresponsive
+  * Workstation / DAIO host becoming unavailable (heartbeat timeout)
+* **Cockpit Adapter Responsibility**:
+  * Listens to existing DAIO event telemetry and watchdog state.
+  * Relays real-time push alerts to the owner's mobile device (APNs / Webhook / Chatbot Notification).
+  * **Zero duplicate watchdog**: Never create a secondary watchdog or event state machine.
+
+---
+
+## 3. End-to-End Acceptance Visions
+
+### Acceptance Vision 1: Unattended Human-Gate Resolution Loop
+```text
+PC Antigravity (Coding Agent)
+       ↓
+Existing DAIO Executor & Test Gate
+       ↓
+HUMAN_GATE_REQUIRED
+       ↓
+Remote Project Cockpit (RPC Notification Channel)
+       ↓
+iPhone Push Notification
+       ↓
+Project Owner in iPhone ChatGPT:
+"Approve. Continue."
+       ↓
+Authenticated Remote Decision Envelope
+       ↓
+Existing DAIO Decision Ingestion (process_incoming_architect_decision)
+       ↓
+Antigravity resumes execution
+```
+
+### Acceptance Vision 2: Mobile Status & Milestone Inspection
+```text
+Project Owner on iPhone ChatGPT:
+"現在電腦開發到哪？"
+       ↓
+RPC Query Engine (daio.getProjectStatus)
+       ├── Evaluates Live Plane (Heartbeat, PID, Active Work Item, Gate)
+       ├── Evaluates Freshness (FRESH / STALE / OFFLINE / UNKNOWN)
+       └── Evaluates Durable Plane (Latest verified remote GitHub SHA & OpenSpec change)
+       ↓
+Cockpit Response:
+"📍 [Durable State]: Commit a1b2c3d verified on origin/main (Change 012 complete).
+ ⚡ [Live State - FRESH]: Supervisor active (PID 91763), working on Change 013 (Auth Gateway).
+ 🔒 [Human Gate]: None required. Autonomous iteration in progress."
+```
+
+---
+
+## 4. Freshness & Two-Plane Governance Invariants
+
+```text
 ┌─────────────────────────────────┐     ┌─────────────────────────────────┐
 │           LIVE PLANE            │     │          DURABLE PLANE          │
 ├─────────────────────────────────┤     ├─────────────────────────────────┤
@@ -53,88 +134,98 @@ The **Remote Project Cockpit (RPC)** framework defines the standard, domain-neut
 └─────────────────────────────────┘     └─────────────────────────────────┘
 ```
 
+### Freshness State Machine
+1. **`FRESH`** (<30s heartbeat): Live execution claims are authoritative.
+2. **`STALE`** (30s–180s heartbeat): Host machine under heavy load or brief network delay; report with staleness warning.
+3. **`OFFLINE`** (>180s heartbeat / daemon stopped): Host machine asleep, disconnected, or terminated.
+4. **`UNKNOWN`** (DB uninitialized / unreadable): Telemetry source unverified.
+
+> [!CRITICAL]
+> **Inviolable Invariant**: A previously recorded `RUNNING` state must **NEVER** be presented as currently `RUNNING` when live heartbeat telemetry is `STALE`, `OFFLINE`, or `UNKNOWN`.
+>
+> **Degraded Behavior**: If the PC is asleep or offline, the response reports `live_state = OFFLINE` with the last observed heartbeat timestamp, and independently reports the last verified durable GitHub commit. GitHub is strictly a Durable Plane / fallback mechanism and must **never** be misrepresented as the Live Plane.
+
 ---
 
-## 4. Freshness Contract & Invariants
+## 5. Analysis of Missing Remote-Access Infrastructure
 
-### 4.1 Freshness State Machine
-Every telemetry payload emitted by `RPC-ProjectStatus` must declare an explicit `freshness_state`:
+To enable the target mobile loop without violating the DAIO boundary, three specific remote-access bridges are required:
 
-| Freshness Class | Criteria | Semantics & Cockpit Policy |
-|---|---|---|
-| **`FRESH`** | Live supervisor/worker heartbeat recorded within the last **30 seconds**. | Active, real-time live execution. Work-in-progress claims are valid. |
-| **`STALE`** | Last heartbeat recorded between **30 seconds and 180 seconds** ago. | Potential daemon stall, high system load, or brief network disruption. Report with clear staleness warning. |
-| **`OFFLINE`** | No heartbeat received for **> 180 seconds**, or daemon explicitly stopped. | Host machine is asleep, disconnected, or daemon terminated. |
-| **`UNKNOWN`** | Telemetry source unreachable or database uninitialized. | Cannot determine live status. State must be treated as unverified. |
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 1. iPhone → DAIO Query Infrastructure                                   │
+│    • Ingress path from iPhone ChatGPT (Custom GPT Action / REST endpoint)│
+│    • Query Handler reading DAIO SqliteDAIOWorkStore without locks       │
+│    • Two-Plane Formatter assembling Live + Durable status payload       │
+│ ─────────────────────────────────────────────────────────────────────── │
+│ 2. DAIO → iPhone Notification Infrastructure                            │
+│    • Event Tap hooking into DAIO Event telemetry & Watchdog state       │
+│    • Outbound Dispatcher transmitting high-priority alerts to mobile    │
+│    • Push Service / Webhook Bridge triggering iPhone notifications      │
+│ ─────────────────────────────────────────────────────────────────────── │
+│ 3. iPhone → DAIO Authorized Human Gate Decision Infrastructure          │
+│    • Egress / Ingress Decision Envelope with Cryptographic Signature    │
+│    • Token Authentication, Replay Protection (Nonces & Expiry)          │
+│    • Direct Ingestion into DAIO's process_incoming_architect_decision  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-### 4.2 Core Freshness Invariant
+---
+
+## 6. Conceptual Comparison of Candidate Architecture Families
+
+Because developer workstations are typically behind NAT/firewalls, iPhone ChatGPT cannot connect directly to `http://localhost`. Below is a conceptual comparison of candidate transport families:
+
+| Architecture Candidate Family | Architectural Mechanism | Primary Strength | Primary Limitation / Risk |
+|---|---|---|---|
+| **1. Secure Outbound Relay** | PC maintains an outbound persistent TLS connection (e.g. WebSocket / SSE client) to an authenticated cloud message broker. | 100% NAT traversal with 0 router/firewall opening; sub-second live query & instant push notifications. | Requires hosting or maintaining a lightweight relay broker. |
+| **2. Authenticated Cloud Relay (Serverless)** | Serverless queue/KV store (e.g. Cloudflare Worker / AWS API Gateway + DynamoDB) holding short-lived telemetry snapshots & decision queues. | Serverless, zero persistent server maintenance, excellent scalability, and fine-grained token authentication. | Small polling latency (1–5s) unless paired with WebSockets. |
+| **3. Secure Inbound Tunnel** | Encrypted tunnel forwarding public HTTPS requests to localhost (e.g. Cloudflare Tunnel, Tailscale Funnel, ngrok). | Direct REST/JSON-RPC query execution against the local DAIO daemon. | Direct inbound exposure surface; requires strict bearer token guardrails and depends on third-party daemon stability. |
+| **4. Private Mesh / VPN** | Direct encrypted peer-to-peer overlay network (e.g. Tailscale / WireGuard) connecting PC and mobile device. | Enterprise-grade point-to-point encryption, zero public port exposure. | iPhone ChatGPT Web/App backend cannot join the user's private Tailscale mesh directly without intermediate gateway. |
+| **5. Durable GitHub Fallback Channel** | Asynchronous telemetry dispatch via ephemeral GitHub branch (`daio-telemetry`), issue comments, or release assets. | Zero new infrastructure, zero external vendor accounts, built directly on existing GitHub auth. | 30–60s latency, rate limit budgeting; suitable for durable fallback and notifications, **not** real-time sub-second live streaming. |
+
+---
+
+## 7. Comprehensive 15-Criteria Evaluation Matrix
+
+$$\text{Rating Scale: } \mathbf{5} = \text{Optimal / Native},\ \mathbf{3} = \text{Acceptable with Mitigations},\ \mathbf{1} = \text{Significant Blocker / Infeasible}$$
+
+| # | Architectural Evaluation Criterion | 1. Outbound WebSocket Relay | 2. Serverless Cloud Relay | 3. Secure Tunnel (Cloudflare/ngrok) | 4. Private Mesh (Tailscale) | 5. Durable GitHub Fallback |
+|:---:|---|:---:|:---:|:---:|:---:|:---:|
+| **1** | **NAT Traversal** | 5 | 5 | 5 | 4 | 5 |
+| **2** | **Zero Inbound Router Config** | 5 | 5 | 5 | 5 | 5 |
+| **3** | **Authentication** (Bearer/HMAC) | 5 | 5 | 4 | 5 | 5 |
+| **4** | **Authorization & RBAC** | 5 | 5 | 4 | 4 | 4 |
+| **5** | **Replay Protection (Nonces/Timestamps)** | 5 | 5 | 4 | 5 | 4 |
+| **6** | **Decision Integrity (Signature Verification)** | 5 | 5 | 4 | 5 | 4 |
+| **7** | **Freshness Guarantees (Sub-30s)** | 5 | 4 | 5 | 5 | 2 |
+| **8** | **Offline / Degraded Detection** | 5 | 5 | 3 | 3 | 4 |
+| **9** | **Push Notification Capability** | 5 | 5 | 2 | 1 | 3 |
+| **10** | **iPhone Usability (ChatGPT Action / Mobile)** | 5 | 5 | 4 | 2 | 4 |
+| **11** | **ChatGPT Custom Action Feasibility** | 5 | 5 | 4 | 1 | 4 |
+| **12** | **Operational Complexity (Setup overhead)** | 3 | 4 | 3 | 2 | 5 |
+| **13** | **Secret Management (Keys/Tokens)** | 4 | 4 | 3 | 4 | 5 |
+| **14** | **Auditability & Provenance Logging** | 5 | 5 | 4 | 4 | 5 |
+| **15** | **Vendor Independence** | 4 | 3 | 2 | 2 | 4 |
+
+---
+
+## 8. Open Architecture Decision for Lead Architect Review
+
 > [!IMPORTANT]
-> **A previously recorded `RUNNING` state must NEVER be presented as currently `RUNNING` when the live heartbeat is `STALE`, `OFFLINE`, or `UNKNOWN`.**
+> **Key Architecture Question**:
+> **Which transport topology should be selected for the primary iPhone $\leftrightarrow$ DAIO communication channel?**
+>
+> * **Option 1 (Recommended Hybrid)**:
+>   * **Primary Live Channel**: Lightweight Serverless / Outbound Relay (Candidate 1/2) for live status, sub-second decision delivery, and instant push notifications.
+>   * **Secondary Durable Fallback**: GitHub checkpoint verification (Candidate 5) for persistent milestone audits and offline status validation.
+> * **Option 2 (Tunnel-Centric)**: Cloudflare Tunnel directly proxying a hardened local DAIO HTTP endpoint with Custom GPT Action authentication.
+> * **Option 3 (GitHub-Only)**: Zero-infrastructure asynchronous GitHub Issue / Telemetry branch polling (high latency, zero hosting).
 
 ---
 
-## 5. Degraded-State Behavior
+## 9. Checkpoint Status & Git Coordinates
 
-When the host machine or DAIO daemon is unreachable:
-1. `live_plane.status` MUST be reported as **`OFFLINE`** or **`UNKNOWN`**.
-2. `live_plane.last_observed_heartbeat` may be provided for forensic context with an explicit historical timestamp.
-3. `durable_plane` MUST independently report the last verified GitHub commit SHA, push status, and completed OpenSpec milestones.
-4. **Safety Constraint**: The cockpit response MUST explicitly declare that live execution is stopped/unreachable and MUST NOT claim that background iterations are ongoing.
-
----
-
-## 6. Remote Transport Architecture
-
-* **Status**: **`UNRESOLVED — ARCHITECTURE DECISION REQUIRED`**
-
-### Implementation Candidates Under Consideration:
-1. **Candidate A: GitHub-Backed Ephemeral Checkpoint Channel**
-   * DAIO daemon pushes non-blocking, lightweight telemetry / status snapshots to a dedicated branch, issue comment, or release asset on GitHub.
-   * *Pros*: Works 100% through NAT, zero firewall configuration, directly accessible by ChatGPT Web/Mobile.
-   * *Cons*: Small latency delay (30–60s), rate limit budgeting required.
-2. **Candidate B: Reverse Tunnel / Webhook Relay (e.g. Cloudflare Tunnel / WebSocket Relay)**
-   * Outbound secure websocket connection from DAIO daemon to a hardened relay endpoint.
-   * *Pros*: Sub-second real-time responsiveness.
-   * *Cons*: Requires external relay infrastructure and credentials.
-3. **Candidate C: Local-Only Read-Only Service API**
-   * Loopback HTTP/IPC query on `127.0.0.1`.
-   * *Pros*: Zero external dependencies, pure local inspection.
-   * *Cons*: Cannot be queried directly by mobile iPhone ChatGPT across NAT without local tunneling.
-
-> [!NOTE]
-> Local read-only service APIs are evaluated as foundational local inspection utilities, but the canonical iPhone remote transport mechanism remains an open architectural decision for Lead Architect determination.
-
----
-
-## 7. Open Architecture Questions for Lead Architect Review
-
-1. **NAT Traversal & Remote Ingestion**:
-   * *Core Question*: **How does iPhone ChatGPT securely obtain fresh PC/DAIO live state when the PC is behind NAT and localhost is not reachable from ChatGPT?**
-   * *Decision Options*: GitHub-mediated telemetry branch/issue vs. lightweight encrypted outbound relay vs. ChatGPT Custom GPT Action with authenticated webhook.
-2. **Polling vs. Push Cadence**:
-   * What is the maximum acceptable telemetry freshness window for mobile cockpit queries (e.g., 30s vs. 60s vs. on-demand event-driven)?
-3. **Authentication & Authorization**:
-   * What token verification mechanism should guard remote cockpit queries if an external transport endpoint is exposed?
-
----
-
-## 8. Domain Neutrality & Integration Boundaries
-
-* **Pure Generic Orchestration**: The RPC layer operates strictly on DAIO orchestration models (`DAIOWorkItem`, `SupervisorHeartbeat`, `HandoffWatch`, Git status).
-* **Domain Isolation**: Zero hardcoded trading rules, symbols (e.g., `2330.TW`), or algorithmic strategies. Target systems (such as `_AwinFinTechHybridSystem_` / SMC7S) serve strictly as downstream execution and verification consumers.
-
----
-
-## 9. Implementation Milestones (Deferred Pending Review)
-
-* **[M1] Two-Plane Data Contracts & Models**: Define `CockpitStatusResponse`, `LivePlaneDTO`, `DurablePlaneDTO`, and `FreshnessEnum` in `scripts/daio_closed_loop/models.py`.
-* **[M2] Status Aggregator Service**: Implement read-only `ProjectStatusService` evaluating Git and `SqliteDAIOWorkStore` with strict freshness contracts.
-* **[M3] Transport Adapters**: Implement the Lead Architect–approved remote transport channel.
-* **[M4] Deterministic Verification & Degraded-Mode Test Suite**: Implement `tests/test_rpc_project_status.py` verifying freshness transitions, degraded offline reporting, and domain neutrality.
-
----
-
-## 10. Checkpoint Status
-
-* **Status**: **`REVISED_PLANNING_CHECKPOINT_AWAITING_LEAD_ARCHITECT_REVIEW`**
+* **Canonical Repository**: `huanchen1107/Dual-Agent-Iteration-Orchistration-DAIO-skill`
+* **Status**: **`ARCHITECTURAL_BOUNDARY_ESTABLISHED_AWAITING_LEAD_ARCHITECT_REVIEW`**
 * **Action**: **STOPPED BEFORE IMPLEMENTATION**.
