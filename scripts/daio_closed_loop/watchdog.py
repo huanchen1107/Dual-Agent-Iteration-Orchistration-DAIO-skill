@@ -156,23 +156,9 @@ class DAIOHandoffWatchdog:
         if existing and existing.expected_next_phase.strip().upper() == expected_next_phase.strip().upper():
             if successor_work_id and not existing.successor_work_id:
                 existing.successor_work_id = successor_work_id
-                existing.current_state = HandoffState.WAITING_FOR_CLAIM
-                existing.last_progress_at = now_iso
                 self.store.save_handoff_watch(existing)
-
-            # If existing watch was escalated or completed, check if successor is still active/recoverable
-            succ_item = self.store.load_work_item(existing.successor_work_id) if existing.successor_work_id else None
-            if succ_item and succ_item.status != DAIOStatus.COMPLETED and existing.current_state in {HandoffState.STALLED_ESCALATED, HandoffState.COMPLETED}:
-                existing.current_state = HandoffState.WAITING_FOR_CLAIM if succ_item.status == DAIOStatus.QUEUED else HandoffState.CLAIMED
-                existing.recovery_attempt_count = 0
-                existing.last_progress_at = now_iso
-                existing.claim_deadline = (now_dt + datetime.timedelta(seconds=self.claim_timeout_seconds)).isoformat()
-                existing.discovery_deadline = (now_dt + datetime.timedelta(seconds=self.discovery_timeout_seconds)).isoformat()
-                existing.first_heartbeat_deadline = (now_dt + datetime.timedelta(seconds=self.first_heartbeat_timeout_seconds)).isoformat()
-                existing.progress_deadline = (now_dt + datetime.timedelta(seconds=self.progress_timeout_seconds)).isoformat()
-                self.store.save_handoff_watch(existing)
-                logger.info(f"🔄 HANDOFF_WATCH_REACTIVATED: watch_id={existing.watch_id}, successor={succ_item.work_id}, status={succ_item.status.value}")
-
+            # STALLED_ESCALATED is terminal/quiescent for the current decision/recovery epoch.
+            # register_handoff() MUST NOT reactivate it merely because the successor is not COMPLETED.
             return existing
 
         watch_id = f"watch-{uuid.uuid4().hex[:8]}"
@@ -205,6 +191,49 @@ class DAIOHandoffWatchdog:
         )
         self.store.save_handoff_watch(watch)
         logger.info(f"👀 HANDOFF_WATCH_REGISTERED: watch_id={watch.watch_id}, parent={parent_work.work_id}, next_phase={expected_next_phase}, state={watch.current_state.value}")
+        return watch
+
+    def reactivate_watch_for_new_decision_epoch(
+        self,
+        parent_work_id: str,
+        expected_next_phase: str,
+        decision_hash: str,
+        reason: str = "ARCHITECT_DECISION_RECEIVED",
+        now: Optional[datetime.datetime] = None,
+    ) -> Optional[HandoffWatch]:
+        """
+        Explicitly create a new recovery epoch and reactivate a quiescent watch upon a new Architect decision.
+        """
+        now_dt = now or datetime.datetime.now(datetime.timezone.utc)
+        now_iso = now_dt.isoformat()
+        watch = self.store.find_handoff_watch_by_parent(parent_work_id)
+        if not watch:
+            return None
+
+        new_epoch_id = f"epoch-{uuid.uuid4().hex[:8]}"
+        predecessor_epoch = getattr(watch, "recovery_epoch_id", "epoch-initial")
+        watch.recovery_epoch_id = new_epoch_id
+        watch.recovery_attempt_count = 0
+        watch.last_progress_at = now_iso
+        watch.current_state = HandoffState.WAITING_FOR_CLAIM
+        watch.discovery_deadline = (now_dt + datetime.timedelta(seconds=self.discovery_timeout_seconds)).isoformat()
+        watch.claim_deadline = (now_dt + datetime.timedelta(seconds=self.claim_timeout_seconds)).isoformat()
+        watch.first_heartbeat_deadline = (now_dt + datetime.timedelta(seconds=self.first_heartbeat_timeout_seconds)).isoformat()
+        watch.progress_deadline = (now_dt + datetime.timedelta(seconds=self.progress_timeout_seconds)).isoformat()
+
+        if not isinstance(watch.metadata, dict):
+            watch.metadata = {}
+        epochs = watch.metadata.get("epochs", [])
+        epochs.append({
+            "recovery_epoch_id": new_epoch_id,
+            "predecessor_epoch_id": predecessor_epoch,
+            "creation_reason": reason,
+            "created_at": now_iso,
+            "triggering_decision_hash": decision_hash,
+        })
+        watch.metadata["epochs"] = epochs
+        self.store.save_handoff_watch(watch)
+        logger.info(f"🔄 HANDOFF_WATCH_NEW_EPOCH: watch_id={watch.watch_id}, epoch={new_epoch_id}, predecessor={predecessor_epoch}, reason={reason}")
         return watch
 
     def evaluate_watches(self, now: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
@@ -444,36 +473,78 @@ class DAIOHandoffWatchdog:
 
     def escalate_stall(self, watch: HandoffWatch, diagnostics: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Emit a structured HANDOFF_STALLED report when all recovery attempts fail.
+        Emit a structured HANDOFF_STALLED or HUMAN_REVIEW_REQUEST report when recovery attempts fail.
+        Deduplicates escalations durably by (work_id, watch_id, epoch_id, root_cause, event).
         """
+        import hashlib
         now_dt = datetime.datetime.now(datetime.timezone.utc)
         created_dt = datetime.datetime.fromisoformat(watch.created_at)
         elapsed_seconds = int((now_dt - created_dt).total_seconds())
 
+        epoch_id = getattr(watch, "recovery_epoch_id", "epoch-initial")
+        stalled_work_id = watch.successor_work_id or watch.parent_work_id
+        root_cause = diagnostics.get("stall_reason", "UNKNOWN_STALL")
+        succ_status = diagnostics.get("successor_status", "UNKNOWN")
+
+        is_human_gate = (succ_status == DAIOStatus.HUMAN_GATE_REQUIRED.value or root_cause == "HUMAN_GATE_REQUIRED")
+        event_name = "HUMAN_REVIEW_REQUEST" if is_human_gate else "HANDOFF_STALLED"
+
+        escalation_hash = hashlib.sha256(
+            f"{stalled_work_id}:{watch.watch_id}:{epoch_id}:{root_cause}:{event_name}".encode()
+        ).hexdigest()[:16]
+
+        already_emitted = False
+        if hasattr(self.store, "is_escalation_emitted"):
+            already_emitted = self.store.is_escalation_emitted(escalation_hash)
+
         report = {
-            "event": "HANDOFF_STALLED",
-            "stalled_work_id": watch.successor_work_id or watch.parent_work_id,
+            "event": event_name,
+            "stalled_work_id": stalled_work_id,
             "parent_work_id": watch.parent_work_id,
             "expected_next_phase": watch.expected_next_phase,
             "elapsed_seconds": elapsed_seconds,
-            "diagnosed_root_cause": diagnostics.get("stall_reason", "UNKNOWN_STALL"),
+            "diagnosed_root_cause": root_cause,
             "recovery_attempts": watch.recovery_attempt_count,
+            "recovery_epoch_id": epoch_id,
+            "escalation_hash": escalation_hash,
             "diagnostics": diagnostics,
-            "human_action_required": False,
+            "human_action_required": is_human_gate,
         }
 
-        logger.error(f"🚨 HANDOFF_STALLED_ESCALATION: {json.dumps(report, indent=2)}")
+        if is_human_gate:
+            report["required_human_role"] = "HUMAN_PROJECT_OWNER"
+            report["required_action"] = "Review blocked work item, resolve gate/permissions, and issue an authorized resume decision (REVISE/RUN or APPROVE)."
+            report["human_gate_reason"] = diagnostics.get("human_gate_reason") or root_cause
+
+        if already_emitted:
+            logger.info(f"Escalation {escalation_hash} already emitted durably. Suppressing duplicate bridge transmission.")
+            return report
+
+        logger.error(f"🚨 {event_name}_ESCALATION: {json.dumps(report, indent=2)}")
+
+        # Record as emitted durably
+        if hasattr(self.store, "record_emitted_escalation"):
+            self.store.record_emitted_escalation(
+                escalation_hash=escalation_hash,
+                watch_id=watch.watch_id,
+                work_id=stalled_work_id,
+                recovery_epoch_id=epoch_id,
+                event=event_name,
+                diagnosed_root_cause=root_cause,
+                payload=report,
+            )
 
         # Transmit to Architect conversation over bridge if available
         if self.bridge and hasattr(self.bridge, "transmit_review_request"):
             try:
-                stall_msg = f"""🚨 **[DAIO HANDOFF STALLED ESCALATION]**
+                stall_msg = f"""🚨 **[DAIO {event_name} ESCALATION]**
 
-- **Stalled Work ID:** `{watch.successor_work_id or watch.parent_work_id}`
+- **Stalled Work ID:** `{stalled_work_id}`
 - **Expected Next Phase:** `{watch.expected_next_phase}`
 - **Elapsed Duration:** `{elapsed_seconds}s`
-- **Diagnosed Root Cause:** `{diagnostics.get('stall_reason', 'UNKNOWN_STALL')}`
+- **Diagnosed Root Cause:** `{root_cause}`
 - **Recovery Attempts:** `{watch.recovery_attempt_count}/{watch.max_recovery_attempts}`
+- **Recovery Epoch:** `{epoch_id}`
 
 ```json
 {json.dumps(report, indent=2)}
@@ -484,13 +555,13 @@ class DAIOHandoffWatchdog:
                     loop = asyncio.get_running_loop()
                     if loop.is_running():
                         fake_work = DAIOWorkItem(
-                            work_id=watch.successor_work_id or watch.parent_work_id,
+                            work_id=stalled_work_id,
                             project_root=str(self.project_root),
                             change_id=watch.expected_next_phase,
                             current_stage=watch.expected_next_phase,
                             current_gate=DAIOGate.HUMAN_GATE,
                             assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
-                            requested_action="HANDOFF_STALLED ESCALATION",
+                            requested_action=f"{event_name} ESCALATION",
                             allowed_scope=[],
                         )
 
@@ -502,8 +573,7 @@ class DAIOHandoffWatchdog:
                             except Exception as sub_ex:
                                 logger.error(f"Error handling post-escalation architect decision: {sub_ex}")
 
-                        target_id = watch.successor_work_id or watch.parent_work_id
-                        loop.create_task(_handle_escalation_reply(self.bridge, self.orchestrator, fake_work, stall_msg, target_id))
+                        loop.create_task(_handle_escalation_reply(self.bridge, self.orchestrator, fake_work, stall_msg, stalled_work_id))
                 except RuntimeError:
                     pass
             except Exception as ex:

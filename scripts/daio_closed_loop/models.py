@@ -139,6 +139,7 @@ class HandoffWatch:
     last_progress_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     recovery_attempt_count: int = 0
     max_recovery_attempts: int = 3
+    recovery_epoch_id: str = "epoch-initial"
     escalation_state: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 

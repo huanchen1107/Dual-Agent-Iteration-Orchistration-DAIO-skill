@@ -186,8 +186,26 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 last_progress_at TEXT NOT NULL,
                 recovery_attempt_count INTEGER NOT NULL DEFAULT 0,
                 max_recovery_attempts INTEGER NOT NULL DEFAULT 3,
+                recovery_epoch_id TEXT NOT NULL DEFAULT 'epoch-initial',
                 escalation_state TEXT,
                 metadata TEXT NOT NULL
+            )
+        """)
+        try:
+            cursor.execute("ALTER TABLE daio_handoff_watches ADD COLUMN recovery_epoch_id TEXT NOT NULL DEFAULT 'epoch-initial'")
+        except sqlite3.OperationalError:
+            pass
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daio_emitted_escalations (
+                escalation_hash TEXT PRIMARY KEY,
+                watch_id TEXT NOT NULL,
+                work_id TEXT NOT NULL,
+                recovery_epoch_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                diagnosed_root_cause TEXT NOT NULL,
+                emitted_at TEXT NOT NULL,
+                payload TEXT NOT NULL
             )
         """)
         cursor.execute("""
@@ -586,8 +604,8 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 watch_id, parent_work_id, successor_work_id, expected_next_phase,
                 created_at, discovery_deadline, claim_deadline, first_heartbeat_deadline,
                 progress_deadline, current_state, last_progress_at, recovery_attempt_count,
-                max_recovery_attempts, escalation_state, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                max_recovery_attempts, recovery_epoch_id, escalation_state, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(watch_id) DO UPDATE SET
                 successor_work_id=excluded.successor_work_id,
                 expected_next_phase=excluded.expected_next_phase,
@@ -599,6 +617,7 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 last_progress_at=excluded.last_progress_at,
                 recovery_attempt_count=excluded.recovery_attempt_count,
                 max_recovery_attempts=excluded.max_recovery_attempts,
+                recovery_epoch_id=excluded.recovery_epoch_id,
                 escalation_state=excluded.escalation_state,
                 metadata=excluded.metadata
         """, (
@@ -615,6 +634,7 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             watch.last_progress_at,
             watch.recovery_attempt_count,
             watch.max_recovery_attempts,
+            getattr(watch, "recovery_epoch_id", "epoch-initial"),
             watch.escalation_state,
             json.dumps(watch.metadata),
         ))
@@ -666,7 +686,56 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             conn.close()
         return res
 
+    def is_escalation_emitted(self, escalation_hash: str) -> bool:
+        """Check if an escalation report has already been emitted durably."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM daio_emitted_escalations WHERE escalation_hash = ?", (escalation_hash,))
+        row = cursor.fetchone()
+        if not self._shared_conn:
+            conn.close()
+        return row is not None
+
+    def record_emitted_escalation(
+        self,
+        escalation_hash: str,
+        watch_id: str,
+        work_id: str,
+        recovery_epoch_id: str,
+        event: str,
+        diagnosed_root_cause: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Durably record an emitted escalation to prevent repeated retransmissions."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        cursor.execute("""
+            INSERT INTO daio_emitted_escalations (
+                escalation_hash, watch_id, work_id, recovery_epoch_id,
+                event, diagnosed_root_cause, emitted_at, payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(escalation_hash) DO NOTHING
+        """, (
+            escalation_hash,
+            watch_id,
+            work_id,
+            recovery_epoch_id,
+            event,
+            diagnosed_root_cause,
+            now_iso,
+            json.dumps(payload),
+        ))
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
     def _row_to_handoff_watch(self, row: sqlite3.Row) -> HandoffWatch:
+        epoch_id = "epoch-initial"
+        try:
+            epoch_id = row["recovery_epoch_id"] or "epoch-initial"
+        except (IndexError, KeyError):
+            pass
         return HandoffWatch(
             watch_id=row["watch_id"],
             parent_work_id=row["parent_work_id"],
@@ -681,6 +750,7 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             last_progress_at=row["last_progress_at"],
             recovery_attempt_count=row["recovery_attempt_count"],
             max_recovery_attempts=row["max_recovery_attempts"],
+            recovery_epoch_id=epoch_id,
             escalation_state=row["escalation_state"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )

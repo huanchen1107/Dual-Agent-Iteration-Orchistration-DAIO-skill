@@ -258,7 +258,8 @@ def test_permission_denial_without_fallback_escalates_to_stalled(tmp_path):
     reloaded_watch = store.load_handoff_watch(watch.watch_id)
     assert reloaded_watch.current_state == HandoffState.STALLED_ESCALATED
     escalation_payload = json.loads(reloaded_watch.escalation_state)
-    assert escalation_payload["event"] == "HANDOFF_STALLED"
+    assert escalation_payload["event"] == "HUMAN_REVIEW_REQUEST"
+    assert escalation_payload["human_action_required"] is True
     assert escalation_payload["stalled_work_id"] == "work-perm-stalled"
 
 
