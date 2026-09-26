@@ -1215,6 +1215,19 @@ export default {
         // Store ticket in KV with 180s TTL
         await statusKV.put(`ticket:${projectId}:${ticketId}`, JSON.stringify(actionTicket), { expirationTtl: 180 });
 
+        // Also register in Durable Object if available
+        if (env.TICKET_DO) {
+          try {
+            const doId = env.TICKET_DO.idFromName(projectId);
+            const doStub = env.TICKET_DO.get(doId);
+            await doStub.fetch("http://do/issue", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(actionTicket),
+            });
+          } catch (e) {}
+        }
+
         return new Response(JSON.stringify({
           status: "AUTHORIZED",
           action_ticket: ticketId,
@@ -1259,30 +1272,71 @@ export default {
 
           // Authentication Option 1: Action Ticket from Passkey Cockpit
           if (actionTicketHeader) {
-            if (!statusKV) {
-              return new Response(JSON.stringify({ error: "Storage Error" }), { status: 500, headers: corsHeaders });
-            }
-            const ticketKey = `ticket:${projectId}:${actionTicketHeader}`;
-            const ticketStr = await statusKV.get(ticketKey);
-            if (!ticketStr) {
-              return new Response(JSON.stringify({ error: "Unauthorized", reason: "Invalid or expired Action Ticket (FAIL-CLOSED)" }), {
-                status: 401, headers: corsHeaders,
-              });
+            let ticketConsumed = false;
+            let ticket = null;
+
+            // 1. Authoritative Durable Object single-use consume
+            if (env.TICKET_DO) {
+              try {
+                const doId = env.TICKET_DO.idFromName(projectId);
+                const doStub = env.TICKET_DO.get(doId);
+                const doResp = await doStub.fetch("http://do/consume", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    ticket_id: actionTicketHeader,
+                    project_id: projectId,
+                    work_id: workId,
+                    decision: decision,
+                  }),
+                });
+                if (doResp.ok) {
+                  const doJson = await doResp.json();
+                  ticket = doJson.ticket;
+                  ticketConsumed = true;
+                  // Clear KV replica as well
+                  if (statusKV) await statusKV.delete(`ticket:${projectId}:${actionTicketHeader}`);
+                } else {
+                  const errJson = await doResp.json().catch(() => ({}));
+                  return new Response(JSON.stringify({ error: "Unauthorized", reason: errJson.reason || "Action Ticket consumption rejected by DO Authority (FAIL-CLOSED)" }), {
+                    status: doResp.status, headers: corsHeaders,
+                  });
+                }
+              } catch (e) {
+                // DO error: fail-closed if DO configured
+                return new Response(JSON.stringify({ error: "Unauthorized", reason: "DO Ticket Authority error (FAIL-CLOSED)" }), {
+                  status: 401, headers: corsHeaders,
+                });
+              }
             }
 
-            const ticket = JSON.parse(ticketStr);
+            // 2. Fallback if DO not configured: KV single-use delete
+            if (!ticketConsumed) {
+              if (!statusKV) {
+                return new Response(JSON.stringify({ error: "Storage Error" }), { status: 500, headers: corsHeaders });
+              }
+              const ticketKey = `ticket:${projectId}:${actionTicketHeader}`;
+              const ticketStr = await statusKV.get(ticketKey);
+              if (!ticketStr) {
+                return new Response(JSON.stringify({ error: "Unauthorized", reason: "Invalid or already consumed Action Ticket (FAIL-CLOSED)" }), {
+                  status: 401, headers: corsHeaders,
+                });
+              }
 
-            // Strict Multi-Dimensional Ticket Field Binding Check
-            if (ticket.project_id !== projectId ||
-                ticket.work_id !== workId ||
-                ticket.decision !== decision) {
-              return new Response(JSON.stringify({ error: "Forbidden", reason: "Action Ticket does not match decision payload bindings" }), {
-                status: 403, headers: corsHeaders,
-              });
+              ticket = JSON.parse(ticketStr);
+
+              // Strict Multi-Dimensional Ticket Field Binding Check
+              if (ticket.project_id !== projectId ||
+                  ticket.work_id !== workId ||
+                  ticket.decision !== decision) {
+                return new Response(JSON.stringify({ error: "Forbidden", reason: "Action Ticket does not match decision payload bindings" }), {
+                  status: 403, headers: corsHeaders,
+                });
+              }
+
+              // Atomic single-use ticket consumption
+              await statusKV.delete(ticketKey);
             }
-
-            // Atomic single-use ticket consumption
-            await statusKV.delete(ticketKey);
             authMode = "PASSKEY_ACTION_TICKET";
           }
           // Authentication Option 2: Admin Bearer Secret (Mac daemon / CLI)
@@ -1404,3 +1458,65 @@ export default {
     return new Response(JSON.stringify({ error: "Not Found", path }), { status: 404, headers: corsHeaders });
   },
 };
+
+// =============================================================================
+// 6. TICKET AUTHORITY DURABLE OBJECT (Strongly Consistent Single-Use Authority)
+// =============================================================================
+
+export class TicketAuthority {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    if (path === "/issue" && request.method === "POST") {
+      const ticket = await request.json();
+      await this.state.storage.put(ticket.ticket_id, ticket);
+      return new Response(JSON.stringify({ status: "ISSUED", ticket_id: ticket.ticket_id }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (path === "/consume" && request.method === "POST") {
+      const { ticket_id, project_id, work_id, decision } = await request.json();
+      const ticket = await this.state.storage.get(ticket_id);
+
+      if (!ticket) {
+        return new Response(JSON.stringify({ success: false, reason: "TICKET_NOT_FOUND_OR_ALREADY_CONSUMED" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Expiration check
+      if (new Date(ticket.expires_at).getTime() < Date.now()) {
+        await this.state.storage.delete(ticket_id);
+        return new Response(JSON.stringify({ success: false, reason: "TICKET_EXPIRED" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Binding checks
+      if (ticket.project_id !== project_id || ticket.work_id !== work_id || ticket.decision !== decision) {
+        return new Response(JSON.stringify({ success: false, reason: "TICKET_BINDING_MISMATCH" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Authoritative atomic consume: single-threaded DO storage delete
+      await this.state.storage.delete(ticket_id);
+      return new Response(JSON.stringify({ success: true, ticket }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+}
+
