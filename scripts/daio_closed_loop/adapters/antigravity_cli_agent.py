@@ -58,10 +58,14 @@ class AntigravityCLIAdapter(EngineeringAgentAdapter):
         cli_path: Optional[str] = None,
         model_name: Optional[str] = None,
         timeout_seconds: int = 300,
+        unattended: bool = True,
+        sandbox: bool = True,
     ) -> None:
         self.cli_path = cli_path or find_antigravity_cli_path()
         self.model_name = model_name or "antigravity-cli-default"
         self.timeout_seconds = timeout_seconds
+        self.unattended = unattended
+        self.sandbox = sandbox
 
     def _build_prompt(self, request: AgentTaskRequest) -> str:
         context_str = ""
@@ -167,13 +171,17 @@ Ensure the entire response is wrapped in a ```json code fence.
             )
 
         prompt_text = self._build_prompt(request)
-        cmd = [
-            self.cli_path,
+        cmd = [self.cli_path]
+        if self.sandbox:
+            cmd.append("--sandbox")
+        if self.unattended:
+            cmd.append("--dangerously-skip-permissions")
+        cmd.extend([
             "--print", prompt_text,
             "--output-format", "json",
             "--disable-slash-commands",
             "--add-dir", request.project_root,
-        ]
+        ])
         if self.model_name and self.model_name != "antigravity-cli-default":
             cmd.extend(["--model", self.model_name])
 

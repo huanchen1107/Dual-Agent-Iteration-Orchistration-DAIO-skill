@@ -126,18 +126,19 @@ def test_antigravity_cli_adapter_bare_json_and_non_success_handling():
             proposal = await adapter.propose_task_solution(req)
             assert proposal.success is False
 
-def test_headless_unattended_command_flags_and_no_dangerous_bypass():
+def test_headless_unattended_command_flags_and_sandbox():
     """
-    Regression Test:
+    RPC-3C.2B Verification:
     Verifies that AntigravityCLIAdapter builds clean headless non-interactive commands:
-    1. Passes --print, --output-format json, --disable-slash-commands, --add-dir.
-    2. Does NOT pass --dangerously-skip-permissions (preserves DAIO security model).
-    3. Executes headlessly via subprocess without IDE GUI prompt dependency.
+    1. Passes --sandbox by default (or when sandbox=True).
+    2. Passes --dangerously-skip-permissions by default (or when unattended=True).
+    3. Passes --print, --output-format json, --disable-slash-commands, --add-dir.
+    4. Executes headlessly via subprocess without IDE GUI prompt dependency.
     """
     captured_cmds = []
 
     async def _test():
-        adapter = AntigravityCLIAdapter(cli_path="/usr/local/bin/agy")
+        adapter = AntigravityCLIAdapter(cli_path="/usr/local/bin/agy", unattended=True, sandbox=True)
         req = AgentTaskRequest(
             work_id="test-agy-headless",
             change_id="CHG_HEADLESS",
@@ -165,15 +166,93 @@ def test_headless_unattended_command_flags_and_no_dangerous_bypass():
         assert len(captured_cmds) == 1
         cmd = captured_cmds[0]
         assert cmd[0] == "/usr/local/bin/agy"
+        assert "--sandbox" in cmd
+        assert "--dangerously-skip-permissions" in cmd
         assert "--print" in cmd
         assert "--output-format" in cmd
         assert "json" in cmd
         assert "--disable-slash-commands" in cmd
         assert "--add-dir" in cmd
         assert "/tmp/sandbox" in cmd
-        # Architectural Security Invariant: no dangerous permission bypass flag used
-        assert "--dangerously-skip-permissions" not in cmd
 
     asyncio.run(_test())
+
+
+def test_flags_suppressed_when_disabled():
+    """Verifies that --sandbox and --dangerously-skip-permissions are omitted when explicitly disabled."""
+    captured_cmds = []
+
+    async def _test():
+        adapter = AntigravityCLIAdapter(cli_path="/usr/local/bin/agy", unattended=False, sandbox=False)
+        req = AgentTaskRequest(
+            work_id="test-agy-disabled",
+            change_id="CHG_DISABLED",
+            requested_action="Task",
+            project_root="/tmp/sandbox",
+        )
+
+        mock_json_output = """{"status": "SUCCESS", "response": "```json\\n{\\"reasoning_summary\\": \\"ok\\", \\"proposed_edits\\": []}\\n```"}"""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(mock_json_output.encode("utf-8"), b""))
+
+        async def fake_subprocess_exec(*args, **kwargs):
+            captured_cmds.append(list(args))
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_subprocess_exec):
+            proposal = await adapter.propose_task_solution(req)
+            assert proposal.success is True
+
+        assert len(captured_cmds) == 1
+        cmd = captured_cmds[0]
+        assert "--sandbox" not in cmd
+        assert "--dangerously-skip-permissions" not in cmd
+        assert "--print" in cmd
+
+    asyncio.run(_test())
+
+
+def test_factory_unattended_and_sandbox_config_propagation():
+    """Verifies provider-neutral config dict propagates unattended and sandbox settings."""
+    cfg = {
+        "provider": "ANTIGRAVITY_CLI",
+        "unattended": True,
+        "sandbox": True,
+        "timeout_seconds": 120,
+    }
+    adapter = create_engineering_agent_adapter(cfg)
+    assert isinstance(adapter, AntigravityCLIAdapter)
+    assert adapter.unattended is True
+    assert adapter.sandbox is True
+    assert adapter.timeout_seconds == 120
+
+    # Custom override
+    cfg_disabled = {
+        "provider": "ANTIGRAVITY_CLI",
+        "unattended": False,
+        "sandbox": False,
+        "timeout_seconds": 60,
+    }
+    adapter_dis = create_engineering_agent_adapter(cfg_disabled)
+    assert isinstance(adapter_dis, AntigravityCLIAdapter)
+    assert adapter_dis.unattended is False
+    assert adapter_dis.sandbox is False
+    assert adapter_dis.timeout_seconds == 60
+
+
+def test_provider_neutral_core_no_hardcoded_cli_flags():
+    """Verifies that DAIO core orchestrator, supervisor, and store contain no Antigravity CLI flags."""
+    import inspect
+    from scripts.daio_closed_loop import orchestrator, supervisor, store, worker, watchdog
+
+    modules = [orchestrator, supervisor, store, worker, watchdog]
+    forbidden_tokens = ["--dangerously-skip-permissions", "--sandbox", "--disable-slash-commands"]
+
+    for mod in modules:
+        source = inspect.getsource(mod)
+        for token in forbidden_tokens:
+            assert token not in source, f"Hardcoded CLI token '{token}' leaked into core module '{mod.__name__}'!"
+
 
 
