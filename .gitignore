@@ -9,3 +9,5 @@ venv/
 
 # DAIO runtime recovery/sync cache (non-authoritative)
 .daio/
+.wrangler/
+node_modules/
