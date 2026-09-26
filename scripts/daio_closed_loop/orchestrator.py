@@ -503,75 +503,70 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
         work_id: str,
         decision: ArchitectDecision,
         send_ack: bool = True,
+        acting_role: DAIORole = DAIORole.LEAD_ARCHITECT_REVIEW,
+        expected_gate: Optional[DAIOGate] = None,
+        expected_status: Optional[DAIOStatus] = None,
+        expected_stage: Optional[str] = None,
+        expected_role: Optional[DAIORole] = None,
+        expected_decision_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[DAIOWorkItem], Dict[str, Any]]:
         """
-        Durable Decision-Watch Processor:
-        Ingests, validates, persists, routes, and acknowledges an incoming ArchitectDecision.
-        Dispatches DECISION_ACKNOWLEDGED event to the Lead Architect conversation.
+        Durable Decision-Watch Processor (Canonical Single Mutation Path):
+        Ingests, validates, persists, routes, and acknowledges an incoming ArchitectDecision
+        using SqliteDAIOWorkStore's atomic compare-and-apply transaction.
         """
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        work = self.store.load_work_item(work_id)
-        if not work:
-            err_report = {
-                "event": "ARCHITECT_DECISION_NOT_APPLIED",
-                "work_id": work_id,
-                "reason": f"Work item '{work_id}' not found in durable store",
-                "decision": decision.decision,
-                "human_action_required": True,
-            }
-            logger.error(f"❌ ARCHITECT_DECISION_NOT_APPLIED: {err_report}")
-            return False, None, err_report
+        success, status_code, updated_work, dec_hash = self.store.apply_decision_transition_atomically(
+            work_id=work_id,
+            decision=decision,
+            acting_role=acting_role,
+            expected_gate=expected_gate,
+            expected_status=expected_status,
+            expected_stage=expected_stage,
+            expected_role=expected_role,
+            expected_decision_id=expected_decision_id,
+        )
 
-        # Deterministic decision hash (independent of timestamp so duplicate observations are identical)
-        inst_clean = (decision.instruction or "").strip()
-        decision_hash = hashlib.sha256(f"{work_id}:{decision.decision}:{decision.current_phase}:{decision.action}:{inst_clean}".encode()).hexdigest()[:12]
+        if not success:
+            if status_code == "DECISION_ALREADY_APPLIED":
+                logger.info(f"🔁 DECISION_DUPLICATE_IGNORED: Decision {dec_hash} already applied on {work_id}.")
+                return True, updated_work, {
+                    "event": "DECISION_ALREADY_APPLIED",
+                    "work_id": work_id,
+                    "decision_hash": dec_hash,
+                    "status": "DUPLICATE",
+                    "human_action_required": False,
+                }
+            elif status_code == "REJECTED_STALE_CONTEXT":
+                report = {
+                    "event": "REJECTED_STALE_CONTEXT",
+                    "work_id": work_id,
+                    "reason": dec_hash or "TOCTOU state mismatch",
+                    "decision": decision.decision,
+                    "human_action_required": False,
+                }
+                logger.warning(f"⚠️ REJECTED_STALE_CONTEXT: {report}")
+                return False, updated_work, report
+            else:
+                reason_msg = (
+                    f"Work item '{work_id}' not found in durable store."
+                    if status_code == "REJECTED_WORK_NOT_FOUND"
+                    else f"Atomic store rejected decision with status '{status_code}'"
+                )
+                report = {
+                    "event": "ARCHITECT_DECISION_NOT_APPLIED",
+                    "work_id": work_id,
+                    "reason": reason_msg,
+                    "decision": decision.decision,
+                    "human_action_required": True,
+                }
+                logger.error(f"❌ ARCHITECT_DECISION_NOT_APPLIED: {report}")
+                return False, updated_work, report
 
-        # Check idempotency table
-        if hasattr(self.store, "is_decision_applied") and self.store.is_decision_applied(decision_hash):
-            logger.info(f"🔁 DECISION_DUPLICATE_IGNORED: Decision {decision_hash} already applied on {work_id}.")
-            return True, work, {
-                "event": "DECISION_ALREADY_APPLIED",
-                "work_id": work_id,
-                "decision_hash": decision_hash,
-                "status": "DUPLICATE",
-                "human_action_required": False,
-            }
+        work = updated_work
+        decision_hash = dec_hash
 
         try:
-            # 1. Route work item state (transitions REVISE to QUEUED / READY for positive worker claim)
-            work = DAIORoleRouter.process_architect_review(work, decision, DAIORole.LEAD_ARCHITECT_REVIEW)
-
-            # 2. Persist turn history, work state & record applied decision
-            turn_id = f"turn-{uuid.uuid4().hex[:8]}"
-            if hasattr(self.store, "record_turn_history"):
-                self.store.record_turn_history(
-                    turn_id=turn_id,
-                    work_id=work.work_id,
-                    role=DAIORole.LEAD_ARCHITECT_REVIEW.value,
-                    action_summary=decision.instruction or decision.decision,
-                    commit_sha=work.head_sha or "INITIAL",
-                    status=decision.decision,
-                    payload={
-                        "decision": decision.decision,
-                        "current_phase": decision.current_phase,
-                        "next_phase": decision.next_phase,
-                        "action": decision.action,
-                        "human_approval_required": decision.human_approval_required,
-                        "instruction": decision.instruction,
-                        "decision_hash": decision_hash,
-                    }
-                )
-            if hasattr(self.store, "record_applied_decision"):
-                self.store.record_applied_decision(
-                    decision_hash=decision_hash,
-                    work_id=work.work_id,
-                    decision=decision.decision,
-                    current_phase=decision.current_phase,
-                    action=decision.action,
-                    status="APPLIED",
-                )
-            self.store.save_work_item(work)
-
             # If a handoff watch exists for parent/successor, reactivate it into a new decision epoch ONLY IF valid resume decision
             is_valid_resume = (
                 decision.decision in ("REVISE", "APPROVE")

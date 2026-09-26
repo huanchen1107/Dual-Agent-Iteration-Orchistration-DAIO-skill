@@ -1,0 +1,21 @@
+# Cloudflare Worker Configuration: Unified DAIO Relay (RPC-1 + RPC-2A)
+name = "daio-relay"
+main = "relay_worker.js"
+compatibility_date = "2026-09-26"
+
+# KV Namespace Binding for RPC-1 Status Plane
+[[kv_namespaces]]
+binding = "STATUS_KV"
+id = "5b7aa366949c49a38c937718a959e82d"
+
+# KV Namespace Binding for RPC-2A Decision Buffer
+[[kv_namespaces]]
+binding = "DECISION_KV"
+id = "39bbb4afbdf14b3b92243a1b9d22d20b"
+
+[vars]
+DECISION_TTL_SECONDS = "86400"
+
+# Note: Manage secrets using wrangler CLI (never commit to Git):
+# 1. wrangler secret put DAIO_RPC_PUBLISH_TOKEN (RPC-1)
+# 2. wrangler secret put DAIO_RELAY_SECRET        (RPC-2A)

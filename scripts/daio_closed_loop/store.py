@@ -6,11 +6,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import datetime
 import json
+import logging
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
+import hashlib
+
+logger = logging.getLogger(__name__)
 
 from .models import (
+    ArchitectDecision,
     DAIOGate,
     DAIORole,
     DAIOStatus,
@@ -88,6 +93,23 @@ class DAIOWorkStore(ABC):
     @abstractmethod
     def record_applied_decision(self, decision_hash: str, work_id: str, decision: str, current_phase: str, action: str, status: str) -> None:
         raise NotImplementedError
+
+    @abstractmethod
+    def apply_decision_transition_atomically(
+        self,
+        work_id: str,
+        decision: ArchitectDecision,
+        acting_role: DAIORole = DAIORole.LEAD_ARCHITECT_REVIEW,
+        expected_gate: Optional[DAIOGate] = None,
+        expected_status: Optional[DAIOStatus] = None,
+        expected_stage: Optional[str] = None,
+        expected_role: Optional[DAIORole] = None,
+        expected_decision_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
+        metadata_payload: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str, Optional[DAIOWorkItem], Optional[str]]:
+        raise NotImplementedError
+
 
 
 class SqliteDAIOWorkStore(DAIOWorkStore):
@@ -289,6 +311,207 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         conn.commit()
         if not self._shared_conn:
             conn.close()
+
+    def apply_decision_transition_atomically(
+        self,
+        work_id: str,
+        decision: ArchitectDecision,
+        acting_role: DAIORole = DAIORole.LEAD_ARCHITECT_REVIEW,
+        expected_gate: Optional[DAIOGate] = None,
+        expected_status: Optional[DAIOStatus] = None,
+        expected_stage: Optional[str] = None,
+        expected_role: Optional[DAIORole] = None,
+        expected_decision_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
+        metadata_payload: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str, Optional[DAIOWorkItem], Optional[str]]:
+        """
+        Atomically verifies expected context under BEGIN IMMEDIATE write lock,
+        routes the transition via DAIORoleRouter, and writes work item + turn history
+        + applied decision ledger within a single SQLite transaction.
+        """
+        from .router import DAIORoleRouter
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+
+            # 1. Authoritatively re-read live work item under write lock
+            cursor.execute("SELECT * FROM daio_work_items WHERE work_id = ?", (work_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return False, "REJECTED_WORK_NOT_FOUND", None, None
+
+            current_work = self._row_to_work_item(row)
+
+            # 2. Idempotency / Replay Deduplication Check
+            inst_clean = (decision.instruction or "").strip()
+            dec_id_part = f":{expected_decision_id}" if expected_decision_id else ""
+            decision_hash = hashlib.sha256(
+                f"{work_id}:{decision.decision}:{decision.current_phase}:{decision.action}:{inst_clean}{dec_id_part}".encode("utf-8")
+            ).hexdigest()[:12]
+
+            cursor.execute(
+                "SELECT 1 FROM daio_applied_decisions WHERE decision_hash = ? AND status = 'APPLIED'",
+                (decision_hash,),
+            )
+            if cursor.fetchone() is not None:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return False, "DECISION_ALREADY_APPLIED", current_work, decision_hash
+
+            # 3. TOCTOU & Context Guard
+            if expected_gate is not None and current_work.current_gate != expected_gate:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return (
+                    False,
+                    "REJECTED_STALE_CONTEXT",
+                    current_work,
+                    f"TOCTOU violation: gate mismatch (live={current_work.current_gate.value}, expected={expected_gate.value})",
+                )
+
+            if expected_status is not None and current_work.status != expected_status:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return (
+                    False,
+                    "REJECTED_STALE_CONTEXT",
+                    current_work,
+                    f"TOCTOU violation: status mismatch (live={current_work.status.value}, expected={expected_status.value})",
+                )
+
+            if expected_stage is not None and current_work.current_stage.strip().upper() != expected_stage.strip().upper():
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return (
+                    False,
+                    "REJECTED_STALE_CONTEXT",
+                    current_work,
+                    f"TOCTOU violation: stage mismatch (live={current_work.current_stage}, expected={expected_stage})",
+                )
+
+            if expected_role is not None and current_work.assigned_role != expected_role:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return (
+                    False,
+                    "REJECTED_STALE_CONTEXT",
+                    current_work,
+                    f"TOCTOU violation: role mismatch (live={current_work.assigned_role.value}, expected={expected_role.value})",
+                )
+
+            # 4. Canonical Routing via DAIORoleRouter
+            updated_work = DAIORoleRouter.process_architect_review(current_work, decision, acting_role)
+
+            # 5. Atomic Persistence of work item, turn history, and applied decision
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            cursor.execute("""
+                UPDATE daio_work_items
+                SET current_stage = ?, current_gate = ?, assigned_role = ?, requested_action = ?,
+                    allowed_scope = ?, base_sha = ?, head_sha = ?, status = ?, attempt_count = ?,
+                    max_attempts = ?, lease_id = ?, lease_expires_at = ?, next_role = ?,
+                    human_gate_reason = ?, human_relay_count = ?, architect_endpoint = ?,
+                    parent_work_id = ?, last_decision = ?, authorized_next_phase = ?, claimed_by = ?,
+                    execution_attempt_id = ?, execution_started_at = ?, last_heartbeat_at = ?,
+                    updated_at = ?, metadata = ?
+                WHERE work_id = ?
+            """, (
+                updated_work.current_stage,
+                updated_work.current_gate.value,
+                updated_work.assigned_role.value,
+                updated_work.requested_action,
+                json.dumps(updated_work.allowed_scope),
+                updated_work.base_sha,
+                updated_work.head_sha,
+                updated_work.status.value,
+                updated_work.attempt_count,
+                updated_work.max_attempts,
+                updated_work.lease_id,
+                updated_work.lease_expires_at,
+                updated_work.next_role.value if updated_work.next_role else None,
+                updated_work.human_gate_reason,
+                updated_work.human_relay_count,
+                json.dumps(updated_work.architect_endpoint),
+                updated_work.parent_work_id,
+                updated_work.last_decision,
+                updated_work.authorized_next_phase,
+                updated_work.claimed_by,
+                updated_work.execution_attempt_id,
+                updated_work.execution_started_at,
+                updated_work.last_heartbeat_at,
+                updated_work.updated_at,
+                json.dumps(updated_work.metadata),
+                work_id,
+            ))
+
+            t_id = turn_id or f"turn-{uuid.uuid4().hex[:8]}"
+            t_payload = metadata_payload or {
+                "decision": decision.decision,
+                "current_phase": decision.current_phase,
+                "next_phase": decision.next_phase,
+                "action": decision.action,
+                "human_approval_required": decision.human_approval_required,
+                "instruction": decision.instruction,
+                "decision_hash": decision_hash,
+                "decision_id": expected_decision_id,
+            }
+            cursor.execute("""
+                INSERT INTO daio_turn_history (
+                    turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(turn_id) DO NOTHING
+            """, (
+                t_id,
+                work_id,
+                acting_role.value,
+                decision.instruction or decision.decision,
+                updated_work.head_sha or "INITIAL",
+                decision.decision,
+                now_iso,
+                json.dumps(t_payload),
+            ))
+
+            cursor.execute("""
+                INSERT INTO daio_applied_decisions (
+                    decision_hash, work_id, decision, current_phase, action, applied_at, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(decision_hash) DO UPDATE SET
+                    status=excluded.status,
+                    applied_at=excluded.applied_at
+            """, (
+                decision_hash,
+                work_id,
+                decision.decision,
+                decision.current_phase,
+                decision.action,
+                now_iso,
+                "APPLIED",
+            ))
+
+            conn.commit()
+            if not self._shared_conn:
+                conn.close()
+            return True, "DECISION_APPLIED", updated_work, decision_hash
+
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            if not self._shared_conn:
+                conn.close()
+            logger.error(f"Error during apply_decision_transition_atomically on {work_id}: {e}")
+            return False, "ERROR_TRANSACTION_FAILED", None, None
 
     def save_work_item(self, item: DAIOWorkItem) -> None:
         conn = self._get_connection()
