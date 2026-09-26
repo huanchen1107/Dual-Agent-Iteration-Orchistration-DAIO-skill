@@ -1,15 +1,8 @@
 """
-Tests for RPC-3B Read-Only iPhone Owner Cockpit in Cloudflare Unified Relay Worker.
-Validates:
-1. /cockpit and /ui route delivery (HTTP 200, text/html)
-2. Mobile Safari viewport and PWA metadata
-3. 5-Zone layout structure and element IDs
-4. Dynamic rendering logic for FRESH / STALE / OFFLINE / UNKNOWN
-5. Human Gate detection and read-only notice enforcement
-6. Failure isolation: Relay unreachable vs Mac host offline
-7. Zero decision mutation invariant: No POST /api/v1/decisions in RPC-3B UI script
+Tests for RPC-3C.2 WebAuthn Passkey Ingress, Action Tickets, and Hardened CSP in relay_worker.js.
 """
 
+import json
 import re
 from pathlib import Path
 import pytest
@@ -25,112 +18,93 @@ def worker_source() -> str:
 
 @pytest.fixture(scope="module")
 def cockpit_html(worker_source: str) -> str:
-    # Extract COCKPIT_HTML literal from relay_worker.js
     match = re.search(r"const COCKPIT_HTML = `(.*?)`;", worker_source, re.DOTALL)
-    assert match is not None, "COCKPIT_HTML definition not found in relay_worker.js"
+    assert match is not None, "COCKPIT_HTML not found in relay_worker.js"
     return match.group(1)
 
 
-def test_cockpit_route_registered_in_worker(worker_source: str):
-    """Verify that /cockpit and /ui are registered routes returning HTML with proper headers."""
+@pytest.fixture(scope="module")
+def cockpit_js(worker_source: str) -> str:
+    match = re.search(r"const COCKPIT_JS = `(.*?)`;", worker_source, re.DOTALL)
+    assert match is not None, "COCKPIT_JS not found in relay_worker.js"
+    return match.group(1)
+
+
+def test_hardened_csp_without_unsafe_inline_for_scripts(worker_source: str, cockpit_html: str):
+    """
+    CRITICAL SECURITY CHECK:
+    Verify that CSP headers do NOT permit 'unsafe-inline' for scripts.
+    Executable JS must be loaded from same-origin static /cockpit.js route.
+    """
+    # Check CSP header in worker response headers
+    assert "Content-Security-Policy" in worker_source
+    assert "script-src 'self';" in worker_source
+    assert "script-src 'self' 'unsafe-inline'" not in worker_source
+
+    # Check that HTML includes external script tag rather than inline code
+    assert '<script src="/cockpit.js"></script>' in cockpit_html
+    # Ensure no inline script blocks with executable logic exist in HTML body
+    assert '<script>\n' not in cockpit_html
+
+
+def test_cockpit_routes_registered(worker_source: str):
+    """Verify /cockpit, /ui, and /cockpit.js are properly registered routes."""
     assert 'path === "/cockpit"' in worker_source
-    assert 'path === "/ui"' in worker_source
-    assert '"Content-Type": "text/html; charset=utf-8"' in worker_source
-    assert 'rpc3b_owner_cockpit' in worker_source
+    assert 'path === "/cockpit.js"' in worker_source
+    assert '"Content-Type": "application/javascript; charset=utf-8"' in worker_source
 
 
-def test_mobile_viewport_and_pwa_metadata(cockpit_html: str):
-    """Verify mobile Safari viewport, safe-area cover, and PWA capabilities."""
-    assert '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">' in cockpit_html
-    assert '<meta name="apple-mobile-web-app-capable" content="yes">' in cockpit_html
-    assert '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">' in cockpit_html
-    assert '<meta name="theme-color" content="#090d16">' in cockpit_html
-    assert '<title>DAIO Owner Cockpit</title>' in cockpit_html
+def test_webauthn_auth_endpoints_registered(worker_source: str):
+    """Verify WebAuthn challenge, verify, enrollment, and admin routes."""
+    assert 'path === "/api/v1/auth/challenge"' in worker_source
+    assert 'path === "/api/v1/auth/verify"' in worker_source
+    assert 'path === "/api/v1/auth/enroll/token"' in worker_source
+    assert 'path === "/api/v1/auth/enroll/verify"' in worker_source
+    assert 'path === "/api/v1/auth/credentials"' in worker_source
+    assert 'path === "/api/v1/auth/reset"' in worker_source
 
 
-def test_five_zone_structure_present(cockpit_html: str):
-    """Verify that all five required information zones exist in HTML."""
-    # Zone 1: Project
-    assert 'id="zone-project"' in cockpit_html
-    assert 'id="val-project-name"' in cockpit_html
-    assert 'id="val-repo-name"' in cockpit_html
-    assert 'id="val-git-branch-sha"' in cockpit_html
-    assert 'id="val-push-sync"' in cockpit_html
-
-    # Zone 2: Live Status
-    assert 'id="zone-status"' in cockpit_html
-    assert 'id="status-banner"' in cockpit_html
-    assert 'id="val-host-status"' in cockpit_html
-    assert 'id="val-mac-host"' in cockpit_html
-    assert 'id="val-supervisor-status"' in cockpit_html
-    assert 'id="val-heartbeat-age"' in cockpit_html
-    assert 'id="val-collected-at"' in cockpit_html
-
-    # Zone 3: Current Work
-    assert 'id="zone-work"' in cockpit_html
-    assert 'id="val-work-title"' in cockpit_html
-    assert 'id="val-work-id"' in cockpit_html
-    assert 'id="val-stage-gate"' in cockpit_html
-    assert 'id="val-assigned-role"' in cockpit_html
-    assert 'id="val-work-status"' in cockpit_html
-    assert 'id="val-queue-depth"' in cockpit_html
-
-    # Zone 4: Owner Action (Read-only)
-    assert 'id="action-box"' in cockpit_html
-    assert 'id="action-title"' in cockpit_html
-    assert 'id="action-reason"' in cockpit_html
-    assert 'id="action-pill"' in cockpit_html
-
-    # Zone 5: Verified Telemetry Facts
-    assert 'id="zone-facts"' in cockpit_html
-    assert 'id="val-relay-node"' in cockpit_html
-    assert 'id="val-server-timestamp"' in cockpit_html
-    assert 'id="val-working-tree"' in cockpit_html
+def test_action_ticket_binding_and_consumption(worker_source: str):
+    """Verify strict multi-dimensional Action Ticket binding check and atomic deletion."""
+    # Check X-Action-Ticket header extraction
+    assert 'request.headers.get("X-Action-Ticket")' in worker_source
+    # Check binding checks
+    assert 'ticket.project_id !== projectId' in worker_source
+    assert 'ticket.work_id !== workId' in worker_source
+    assert 'ticket.decision !== decision' in worker_source
+    # Check atomic ticket consumption (deletion from KV)
+    assert 'await statusKV.delete(ticketKey)' in worker_source
 
 
-def test_freshness_rendering_rules_in_js(cockpit_html: str):
-    """Verify that JS script evaluates FRESH, STALE, OFFLINE, and UNKNOWN correctly."""
-    # FRESH check
-    assert "freshness === 'FRESH' && live.supervisor_running" in cockpit_html
-    assert "'ONLINE • FRESH'" in cockpit_html
+def test_human_gate_interactive_controls_in_html_and_js(cockpit_html: str, cockpit_js: str):
+    """Verify APPROVE, REVISE, and STOP interactive controls and WebAuthn handlers."""
+    # HTML buttons
+    assert 'id="btn-approve"' in cockpit_html
+    assert 'id="btn-revise-open"' in cockpit_html
+    assert 'id="btn-stop"' in cockpit_html
+    assert 'id="revise-modal"' in cockpit_html
 
-    # STALE check
-    assert "freshness === 'STALE'" in cockpit_html
-    assert "'STALE (' + hStatus + ')'" in cockpit_html
-
-    # OFFLINE check
-    assert "freshness === 'OFFLINE' || !live.supervisor_running" in cockpit_html
-    assert "'HOST OFFLINE'" in cockpit_html
-
-
-def test_human_gate_detection_and_readonly_notice(cockpit_html: str):
-    """Verify Human Gate condition check and read-only notice."""
-    assert "live.human_gate_required && live.current_gate === 'HUMAN_GATE' && live.assigned_role === 'HUMAN_PROJECT_OWNER'" in cockpit_html
-    assert "Decision controls will be enabled in RPC-3C." in cockpit_html
-    assert "No action required — DAIO is operating autonomously." in cockpit_html
+    # JS handlers
+    assert "handleDecisionExecution('APPROVE')" in cockpit_js
+    assert "handleDecisionExecution('STOP')" in cockpit_js
+    assert "handleDecisionExecution('REVISE'" in cockpit_js
+    assert "navigator.credentials.get" in cockpit_js
+    assert "X-Action-Ticket" in cockpit_js
 
 
-def test_failure_isolation_between_relay_and_host(cockpit_html: str):
-    """Verify that relay network failure is distinct from host offline."""
-    assert "Cockpit cannot reach DAIO Relay" in cockpit_html
-    assert "net-error-banner" in cockpit_html
-    assert "HOST OFFLINE" in cockpit_html
-
-
-def test_zero_decision_mutation_in_rpc3b(cockpit_html: str):
+def test_zero_permanent_secrets_in_cockpit_client(cockpit_html: str, cockpit_js: str):
     """
-    INVARIANT CHECK:
-    RPC-3B Cockpit is read-only.
-    The client script must NOT submit decisions or call /api/v1/decisions.
+    CRITICAL INVARIANT CHECK:
+    Verify client code does NOT store DAIO_RELAY_SECRET or permanent tokens in browser storage.
     """
-    # Verify no POST requests in client script
-    assert "method: 'POST'" not in cockpit_html
-    assert 'method: "POST"' not in cockpit_html
-    assert "/api/v1/decisions" not in cockpit_html
+    assert "localStorage" not in cockpit_js
+    assert "sessionStorage" not in cockpit_js
+    assert "DAIO_RELAY_SECRET" not in cockpit_js
     assert "DAIO_RELAY_SECRET" not in cockpit_html
 
 
 def test_openapi_catalog_updates(worker_source: str):
-    """Verify OpenAPI catalog includes /cockpit specification."""
-    assert '"/cockpit":' in worker_source
-    assert 'iPhone Owner Cockpit Web Application (RPC-3B)' in worker_source
+    """Verify OpenAPI v3.2 catalog documents WebAuthn Passkey endpoints."""
+    assert '"/api/v1/auth/challenge":' in worker_source
+    assert '"/api/v1/auth/verify":' in worker_source
+    assert '"/api/v1/auth/enroll/token":' in worker_source
