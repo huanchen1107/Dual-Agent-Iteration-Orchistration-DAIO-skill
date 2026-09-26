@@ -804,7 +804,7 @@ export default {
 
     // Helper: extract bearer token
     const authHeader = request.headers.get("Authorization") || "";
-    const bearerToken = authHeader.replace(/^Bearer\\s+/i, "").trim();
+    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
 
     // =========================================================================
     // 1. COCKPIT STATIC ASSETS (Strict CSP Compliant)
