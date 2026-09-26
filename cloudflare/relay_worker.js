@@ -8,12 +8,537 @@
  * - Strict privilege separation between publishing tokens and decision secrets.
  */
 
+const COCKPIT_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="DAIO Cockpit">
+  <meta name="theme-color" content="#090d16">
+  <title>DAIO Owner Cockpit</title>
+  <style>
+    :root {
+      --bg-base: #090d16;
+      --bg-card: rgba(19, 27, 46, 0.85);
+      --border-card: rgba(255, 255, 255, 0.08);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --color-green: #10b981;
+      --color-green-glow: rgba(16, 185, 129, 0.25);
+      --color-amber: #f59e0b;
+      --color-amber-glow: rgba(245, 158, 11, 0.25);
+      --color-red: #ef4444;
+      --color-red-glow: rgba(239, 68, 68, 0.25);
+      --color-blue: #3b82f6;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    .cockpit-container {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 2px 8px 2px;
+    }
+    .header-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header-badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      text-transform: uppercase;
+    }
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-card);
+      color: var(--text-primary);
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .btn-refresh:active {
+      transform: scale(0.96);
+      background: rgba(255, 255, 255, 0.12);
+    }
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      padding: 14px 16px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .card-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      padding: 2px 0;
+    }
+    .meta-val {
+      font-weight: 500;
+      color: var(--text-primary);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.82rem;
+    }
+    /* Freshness Badges */
+    .status-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+    .status-fresh {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      box-shadow: 0 0 16px var(--color-green-glow);
+    }
+    .status-stale {
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #fbbf24;
+      box-shadow: 0 0 16px var(--color-amber-glow);
+    }
+    .status-offline {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      box-shadow: 0 0 16px var(--color-red-glow);
+    }
+    .status-unknown {
+      background: rgba(100, 116, 139, 0.12);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      color: #94a3b8;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .dot-fresh { background: #10b981; box-shadow: 0 0 8px #10b981; }
+    .dot-stale { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+    .dot-offline { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .dot-unknown { background: #64748b; }
+    /* Tag Pills */
+    .pill {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .pill-synced { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25); }
+    .pill-ahead { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); }
+    .pill-gate { background: rgba(139, 92, 246, 0.15); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.25); }
+    .pill-role { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.25); }
+    /* Action Zone */
+    .action-card {
+      border-radius: 16px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .action-autonomous {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+    .action-human-gate {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      box-shadow: 0 0 16px var(--color-red-glow);
+    }
+    .action-notice {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      font-style: italic;
+      margin-top: 4px;
+    }
+    /* Network Banner */
+    .net-error {
+      background: rgba(220, 38, 38, 0.2);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      display: none;
+      align-items: center;
+      gap: 6px;
+    }
+    /* Footer */
+    .footer {
+      text-align: center;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding: 10px 0 4px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="cockpit-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-title">
+        <span>🚀 DAIO Cockpit</span>
+        <span class="header-badge">RPC-3B MVP</span>
+      </div>
+      <button id="btn-refresh" class="btn-refresh" onclick="fetchCockpitStatus(true)">
+        <span id="refresh-icon">🔄</span>
+        <span id="refresh-label">Refresh</span>
+      </button>
+    </div>
+
+    <!-- Network / Relay Error Banner -->
+    <div id="net-error-banner" class="net-error">
+      <span>⚠️ Cockpit cannot reach DAIO Relay (Cloudflare edge unreachable or network error)</span>
+    </div>
+
+    <!-- ① ZONE 1: PROJECT -->
+    <div class="card" id="zone-project">
+      <div class="card-label">
+        <span>① Project & Governance</span>
+        <span id="val-push-sync" class="pill pill-synced">SYNCED</span>
+      </div>
+      <div class="card-title" id="val-project-name">Loading...</div>
+      <div class="meta-row">
+        <span>Repository</span>
+        <span class="meta-val" id="val-repo-name">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Git Branch / HEAD</span>
+        <span class="meta-val" id="val-git-branch-sha">—</span>
+      </div>
+    </div>
+
+    <!-- ② ZONE 2: LIVE STATUS -->
+    <div class="card" id="zone-status">
+      <div class="card-label">② Live Status Plane</div>
+      <div id="status-banner" class="status-banner status-unknown">
+        <div>
+          <span id="status-dot" class="status-dot dot-unknown"></span>
+          <span id="val-host-status">INITIALIZING</span>
+        </div>
+        <span id="val-freshness-text" style="font-size:0.78rem; font-weight:500;">Connecting...</span>
+      </div>
+      <div class="meta-row">
+        <span>Mac Host</span>
+        <span class="meta-val" id="val-mac-host">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Supervisor Daemon</span>
+        <span class="meta-val" id="val-supervisor-status">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Heartbeat Age</span>
+        <span class="meta-val" id="val-heartbeat-age">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Last Status Report</span>
+        <span class="meta-val" id="val-collected-at">—</span>
+      </div>
+    </div>
+
+    <!-- ③ ZONE 3: CURRENT WORK -->
+    <div class="card" id="zone-work">
+      <div class="card-label">
+        <span>③ Current Work Item</span>
+        <span id="val-queue-depth" class="pill pill-role">Queue: 0</span>
+      </div>
+      <div class="card-title" id="val-work-title" style="font-size: 0.95rem;">No Active Work</div>
+      <div class="meta-row">
+        <span>Work ID</span>
+        <span class="meta-val" id="val-work-id">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Stage / Gate</span>
+        <span class="meta-val" id="val-stage-gate">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Assigned Role</span>
+        <span class="meta-val" id="val-assigned-role">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Work Status</span>
+        <span class="meta-val" id="val-work-status">—</span>
+      </div>
+    </div>
+
+    <!-- ④ ZONE 4: OWNER ACTION (READ-ONLY RPC-3B) -->
+    <div id="action-box" class="action-card action-autonomous">
+      <div class="card-label" style="color:inherit;">
+        <span id="action-header">④ Owner Action Required</span>
+        <span id="action-pill" class="pill pill-synced">AUTONOMOUS</span>
+      </div>
+      <div id="action-title" style="font-weight:600; font-size:0.95rem;">
+        🟢 No action required — DAIO is operating autonomously.
+      </div>
+      <div id="action-reason" style="font-size:0.82rem; color:var(--text-secondary); display:none;"></div>
+      <div class="action-notice">🔒 Read-Only Cockpit (RPC-3B): Decision controls will be enabled in RPC-3C.</div>
+    </div>
+
+    <!-- ⑤ ZONE 5: TELEMETRY FACTS -->
+    <div class="card" id="zone-facts">
+      <div class="card-label">⑤ Verified Telemetry Facts</div>
+      <div class="meta-row">
+        <span>Relay Node</span>
+        <span class="meta-val" id="val-relay-node">Cloudflare Edge</span>
+      </div>
+      <div class="meta-row">
+        <span>Server Timestamp</span>
+        <span class="meta-val" id="val-server-timestamp">—</span>
+      </div>
+      <div class="meta-row">
+        <span>Git Working Tree</span>
+        <span class="meta-val" id="val-working-tree">—</span>
+      </div>
+      <div class="meta-row" style="margin-top:2px;">
+        <span style="font-size:0.72rem; color:var(--text-muted); font-style:italic;">
+          ℹ️ Historical decision timeline API will be integrated in RPC-3C/3D.
+        </span>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <div>DAIO Universal Dual-Agent Iteration Orchestrator</div>
+      <div id="val-footer-sync">Auto-refreshing in 3.5s...</div>
+    </div>
+  </div>
+
+  <script>
+    let pollTimer = null;
+    let countdownSec = 3.5;
+
+    async function fetchCockpitStatus(isManual = false) {
+      const netError = document.getElementById('net-error-banner');
+      const refreshIcon = document.getElementById('refresh-icon');
+      if (isManual && refreshIcon) refreshIcon.style.transform = 'rotate(180deg)';
+
+      try {
+        const resp = await fetch('/api/v1/status', { cache: 'no-store' });
+        if (!resp.ok) {
+          throw new Error('HTTP ' + resp.status);
+        }
+        const data = await resp.json();
+        netError.style.display = 'none';
+        renderCockpitData(data);
+      } catch (err) {
+        netError.style.display = 'flex';
+        netError.innerHTML = '<span>⚠️ Cockpit cannot reach DAIO Relay (' + (err.message || 'Network error') + ')</span>';
+      } finally {
+        if (isManual && refreshIcon) {
+          setTimeout(() => { refreshIcon.style.transform = 'none'; }, 300);
+        }
+      }
+    }
+
+    function renderCockpitData(data) {
+      const live = data.live_plane || {};
+      const durable = data.durable_plane || {};
+      const prov = data.provenance || {};
+
+      // ① PROJECT
+      document.getElementById('val-project-name').textContent = live.project_name || 'DAIO Project';
+      document.getElementById('val-repo-name').textContent = durable.repository || 'Local Project';
+      const branch = durable.git_branch || 'main';
+      const sha = (durable.local_head_sha || '').substring(0, 7) || 'HEAD';
+      document.getElementById('val-git-branch-sha').textContent = branch + ' (' + sha + ')';
+
+      const pushSyncEl = document.getElementById('val-push-sync');
+      if (durable.push_synchronized) {
+        pushSyncEl.className = 'pill pill-synced';
+        pushSyncEl.textContent = '✓ SYNCED';
+      } else {
+        pushSyncEl.className = 'pill pill-ahead';
+        const ahead = durable.ahead_count || 0;
+        const dirty = !durable.working_tree_clean ? ' Dirty' : '';
+        pushSyncEl.textContent = (ahead > 0 ? ('Ahead ' + ahead) : 'Unsynced') + dirty;
+      }
+
+      // ② LIVE STATUS
+      const statusBanner = document.getElementById('status-banner');
+      const statusDot = document.getElementById('status-dot');
+      const hostStatus = document.getElementById('val-host-status');
+      const freshnessText = document.getElementById('val-freshness-text');
+
+      const freshness = (live.freshness || 'UNKNOWN').toUpperCase();
+      const hStatus = (live.host_status || 'UNKNOWN').toUpperCase();
+      const ageSec = live.heartbeat_age_seconds != null ? live.heartbeat_age_seconds.toFixed(1) + 's ago' : 'No heartbeat';
+
+      statusBanner.className = 'status-banner';
+      statusDot.className = 'status-dot';
+
+      if (freshness === 'FRESH' && live.supervisor_running) {
+        statusBanner.classList.add('status-fresh');
+        statusDot.classList.add('dot-fresh');
+        hostStatus.textContent = 'ONLINE • FRESH';
+        freshnessText.textContent = ageSec;
+      } else if (freshness === 'STALE') {
+        statusBanner.classList.add('status-stale');
+        statusDot.classList.add('dot-stale');
+        hostStatus.textContent = 'STALE (' + hStatus + ')';
+        freshnessText.textContent = ageSec;
+      } else if (freshness === 'OFFLINE' || !live.supervisor_running) {
+        statusBanner.classList.add('status-offline');
+        statusDot.classList.add('dot-offline');
+        hostStatus.textContent = 'HOST OFFLINE';
+        freshnessText.textContent = ageSec;
+      } else {
+        statusBanner.classList.add('status-unknown');
+        statusDot.classList.add('dot-unknown');
+        hostStatus.textContent = 'UNKNOWN';
+        freshnessText.textContent = 'No status';
+      }
+
+      document.getElementById('val-mac-host').textContent = live.host || 'unknown';
+      document.getElementById('val-supervisor-status').textContent = live.supervisor_running
+        ? ('Running (PID ' + (live.supervisor_pid || '—') + ')')
+        : 'Stopped / Offline';
+      document.getElementById('val-heartbeat-age').textContent = ageSec;
+      document.getElementById('val-collected-at').textContent = prov.collected_at ? formatTime(prov.collected_at) : '—';
+
+      // ③ CURRENT WORK
+      document.getElementById('val-queue-depth').textContent = 'Queue: ' + (live.queue_depth || 0);
+      if (live.active_work_id) {
+        document.getElementById('val-work-title').textContent = live.active_work_item || live.active_work_id;
+        document.getElementById('val-work-id').textContent = live.active_work_id;
+        document.getElementById('val-stage-gate').textContent = (live.current_phase || '—') + ' / ' + (live.current_gate || '—');
+        document.getElementById('val-assigned-role').textContent = live.assigned_role || '—';
+        document.getElementById('val-work-status').textContent = live.human_gate_required ? 'HUMAN_GATE_REQUIRED' : (live.supervisor_running ? 'IN_PROGRESS' : 'IDLE');
+      } else {
+        document.getElementById('val-work-title').textContent = 'No Active Work Items';
+        document.getElementById('val-work-id').textContent = '—';
+        document.getElementById('val-stage-gate').textContent = '—';
+        document.getElementById('val-assigned-role').textContent = '—';
+        document.getElementById('val-work-status').textContent = 'ALL_COMPLETED / IDLE';
+      }
+
+      // ④ OWNER ACTION (READ-ONLY RPC-3B)
+      const actionBox = document.getElementById('action-box');
+      const actionTitle = document.getElementById('action-title');
+      const actionPill = document.getElementById('action-pill');
+      const actionReason = document.getElementById('action-reason');
+
+      const isHumanGate = live.human_gate_required && live.current_gate === 'HUMAN_GATE' && live.assigned_role === 'HUMAN_PROJECT_OWNER';
+
+      if (isHumanGate) {
+        actionBox.className = 'action-card action-human-gate';
+        actionPill.className = 'pill pill-gate';
+        actionPill.textContent = 'GATE ACTIVE';
+        actionTitle.textContent = '🔴 Human decision required';
+        actionReason.style.display = 'block';
+        actionReason.textContent = live.human_gate_reason ? ('Reason: ' + live.human_gate_reason) : 'Reason: Awaiting Owner authorization.';
+      } else {
+        actionBox.className = 'action-card action-autonomous';
+        actionPill.className = 'pill pill-synced';
+        actionPill.textContent = 'AUTONOMOUS';
+        actionTitle.textContent = '🟢 No action required — DAIO is operating autonomously.';
+        actionReason.style.display = 'none';
+      }
+
+      // ⑤ TELEMETRY FACTS
+      document.getElementById('val-relay-node').textContent = prov.relay_node || 'Cloudflare Edge';
+      document.getElementById('val-server-timestamp').textContent = prov.server_timestamp ? formatTime(prov.server_timestamp) : '—';
+      document.getElementById('val-working-tree').textContent = durable.working_tree_clean ? 'Clean' : 'Modified files present';
+    }
+
+    function formatTime(isoStr) {
+      try {
+        const d = new Date(isoStr);
+        return d.toLocaleTimeString([], { hour12: false }) + ' (' + d.toISOString().substring(0, 10) + ')';
+      } catch (e) {
+        return isoStr;
+      }
+    }
+
+    // Auto-poll loop
+    fetchCockpitStatus();
+    setInterval(() => {
+      fetchCockpitStatus();
+    }, 3500);
+  </script>
+</body>
+</html>
+\`;
+
 const OPENAPI_SPEC = {
   openapi: "3.1.0",
   info: {
-    title: "DAIO Unified Remote Relay API (RPC-1 + RPC-2A)",
-    description: "Unified edge relay providing remote cockpit status (RPC-1) and authenticated human decision transport (RPC-2A).",
-    version: "2.1.0",
+    title: "DAIO Unified Remote Relay API (RPC-1 + RPC-2A + RPC-3B)",
+    description: "Unified edge relay providing remote cockpit status (RPC-1), authenticated human decision transport (RPC-2A), and iPhone Owner Cockpit web UI (RPC-3B).",
+    version: "3.0.0",
   },
   servers: [
     {
@@ -27,6 +552,13 @@ const OPENAPI_SPEC = {
         summary: "Relay Service Information and Catalog",
         operationId: "getRelayInfo",
         responses: { "200": { description: "Service Catalog" } },
+      },
+    },
+    "/cockpit": {
+      get: {
+        summary: "iPhone Owner Cockpit Web Application (RPC-3B)",
+        operationId: "getCockpitUI",
+        responses: { "200": { description: "HTML/CSS/JS Cockpit UI" } },
       },
     },
     "/api/v1/status": {
@@ -140,11 +672,33 @@ export default {
     const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
 
     // =========================================================================
-    // 1. META & CATALOG ROUTES
+    // 1. META, CATALOG & COCKPIT ROUTES
     // =========================================================================
 
-    // GET / (Service Catalog)
+    // GET /cockpit or /ui (iPhone Owner Cockpit Web Application)
+    if ((path === "/cockpit" || path === "/ui") && request.method === "GET") {
+      return new Response(COCKPIT_HTML, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
+    // GET / (Service Catalog or Cockpit for browser text/html accept)
     if (path === "/" && request.method === "GET") {
+      const accept = request.headers.get("Accept") || "";
+      if (accept.includes("text/html") && !accept.includes("application/json")) {
+        return new Response(COCKPIT_HTML, {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      }
+
       let publishedAvailable = false;
       if (statusKV) {
         const latest = await statusKV.get("status:latest");
@@ -154,8 +708,8 @@ export default {
       return new Response(
         JSON.stringify({
           status: "OK",
-          service: "DAIO Unified Remote Relay (RPC-1 Status + RPC-2A Decision Transport)",
-          version: "daio-rpc/v2.1",
+          service: "DAIO Unified Remote Relay (RPC-1 Status + RPC-2A Decision Transport + RPC-3B Cockpit)",
+          version: "daio-rpc/v3.0",
           published_status_available: publishedAvailable,
           planes: {
             rpc1_status_plane: {
@@ -167,8 +721,12 @@ export default {
               submit_decision: `${url.origin}/api/v1/decisions`,
               poll_decisions: `${url.origin}/api/v1/decisions?project_id=awin-fintech`,
             },
+            rpc3b_owner_cockpit: {
+              cockpit_ui: `${url.origin}/cockpit`,
+            },
           },
           endpoints: {
+            cockpit_ui: `${url.origin}/cockpit`,
             status_query: `${url.origin}/api/v1/status`,
             publish_endpoint: `${url.origin}/api/v1/publish`,
             openapi_spec: `${url.origin}/openapi.json`,
