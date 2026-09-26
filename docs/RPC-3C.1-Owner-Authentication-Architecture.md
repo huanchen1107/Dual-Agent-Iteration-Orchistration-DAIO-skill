@@ -1,7 +1,7 @@
-# RPC-3C.1: iPhone Owner Authentication Architecture & Security Specification
+# RPC-3C.1: iPhone Owner Authentication Architecture & Security Hardening Specification
 
-**Protocol Phase**: `RPC-3C.1 Owner Authentication Architecture`  
-**Target Device**: Apple iPhone (Mobile Safari / iOS WebAuthn / Face ID)  
+**Protocol Phase**: `RPC-3C.1A Security Hardening & WebAuthn Correctness Review`  
+**Target Device**: Apple iPhone (Mobile Safari / WebAuthn / Passkey)  
 **Upstream Repository**: `Dual-Agent-Iteration-Orchistration-DAIO-skill`  
 **Downstream Consumer**: `_AwinFinTechHybridSystem_`  
 **Lifecycle Status**: `RPC-2B.3 = WAITING_FOR_NATURAL_PRODUCTION_HUMAN_GATE`  
@@ -10,206 +10,197 @@
 
 ## 1. Executive Summary & Design Invariants
 
-The goal of **RPC-3C.1** is to design the canonical authentication and session architecture for the iPhone Owner Cockpit before enabling production `APPROVE`, `REVISE`, or `STOP` decision mutations.
+The goal of **RPC-3C.1A** is to establish the standards-correct, hardened authentication architecture for the iPhone Owner Cockpit before enabling production `APPROVE`, `REVISE`, or `STOP` decision mutations.
 
 ### Mandatory Security Invariants:
-1. **Zero Permanent Secrets on Client**: The permanent `DAIO_RELAY_SECRET` must **NEVER** be stored in iPhone `localStorage`, `sessionStorage`, client cookies, HTML, JavaScript bundles, Git repositories, or device backups.
-2. **Asymmetric Biometric Hardware Authentication (Passkey / WebAuthn)**: The iPhone uses the hardware **Secure Enclave** (Face ID / Touch ID) to generate and hold an asymmetric private key. The Cloudflare Worker stores only the public key in `STATUS_KV` / `AUTH_KV`.
-3. **Short-Lived, Work-Scoped Authorization Tickets**: When the Owner approves a Human Gate, an ephemeral, cryptographic authorization ticket (TTL: 180–300 seconds) is issued for the specific `work_id` and `gate_id`.
-4. **Zero Inbound Ports on Mac Host**: The Mac host remains strictly outbound-only. Decisions are buffered in Cloudflare `DECISION_KV` and polled by the Mac host over outbound HTTPS.
-5. **Fail-Closed Live-State Revalidation**: SQLite `apply_decision_transition_atomically()` inside `BEGIN IMMEDIATE` guarantees that even if a valid decision is transmitted, it will abort with zero mutation if the local work state has evolved.
+1. **Zero Permanent Secrets on Client**: The permanent `DAIO_RELAY_SECRET` must **NEVER** be stored in iPhone `localStorage`, `sessionStorage`, cookies, HTML, JavaScript bundles, Git repositories, or logs.
+2. **Asymmetric Public-Key Authentication (WebAuthn / Passkey)**: The client signs challenges using a private key (managed by device biometrics / secure storage). Cloudflare stores only the public key in `STATUS_KV` / `AUTH_KV`.
+3. **Strictly Bound Action Tickets (Fail-Closed, Single-Use)**: A verified WebAuthn assertion generates an ephemeral, opaque Action Ticket stored in Cloudflare KV (TTL: $\le 180$ seconds). The ticket is strictly bound to: `project_id`, `work_id`, `gate_id`, `current_phase`, `decision`, `action`, `instruction_hash`, `credential_id`, and `expires_at`. An action ticket authorized for `APPROVE` **CANNOT** be reused for `STOP`, `REVISE`, another work item, another gate, or another phase.
+4. **Outbound-Only Mac Architecture**: Zero inbound network ports on Mac. Mac daemon polls Cloudflare `DECISION_KV` over outbound HTTPS.
+5. **Authoritative Atomic Live-State Revalidation**: SQLite `apply_decision_transition_atomically()` inside `BEGIN IMMEDIATE` guarantees that even if an authenticated decision is received, it will abort with zero mutation if the canonical live state has transitioned.
 
 ---
 
-## 2. Current RPC-3B Architecture Audit
+## 2. Standards-Correct WebAuthn Specification (W3C Level 3 via WebCrypto)
 
-| Component | Current Implementation | Security & Boundary Audit |
-| :--- | :--- | :--- |
-| **`/cockpit`** | Static HTML/CSS/JS served from Worker edge | **Clean**: Read-only, zero embedded secrets, zero decision submit calls. |
-| **`/api/v1/status`** | Returns `live_plane` and `durable_plane` from `STATUS_KV` | **Clean**: Public read-only status telemetry. |
-| **`/api/v1/health`** | Worker ping & latency check | **Clean**: Public read-only telemetry. |
-| **`/api/v1/decisions` (POST)** | Ingress for decision envelopes | **Needs Auth Upgrade**: Currently protected by static `DAIO_RELAY_SECRET` Bearer header. Must accept short-lived Passkey-derived authorization tokens. |
-| **`/api/v1/decisions` (GET)** | Polled by Mac host outbound | **Preserved**: Host uses `DAIO_RELAY_SECRET` to fetch pending decisions. |
-| **`/api/v1/decisions/:id/ack`** | Acknowledged by Mac host | **Preserved**: Host uses `DAIO_RELAY_SECRET` to delete processed envelopes. |
-| **KV Storage** | `STATUS_KV` & `DECISION_KV` | **Preserved**: Ephemeral buffer with TTL. |
-| **Mac Host Mutation** | `SqliteDAIOWorkStore.apply_decision_transition_atomically` | **Preserved**: Authoritative `BEGIN IMMEDIATE` compare-and-apply. |
-
----
-
-## 3. Comparison of Authentication Alternatives
-
-| Evaluation Criteria | Option 1: WebAuthn / Passkey (Face ID Native) | Option 2: Cloudflare Access / Zero Trust (IdP / OTP) | Option 3: Worker-Issued Signed JWT / Password | Option 4: TOTP Authenticator App |
-| :--- | :--- | :--- | :--- | :--- |
-| **iPhone Safari Usability** | **Exceptional**: 1-tap Face ID prompt directly in Mobile Safari. | Good: Redirects to Cloudflare login portal, then redirects back. | Moderate: Requires typing master passphrase on mobile keyboard. | Moderate: Requires switching between Authenticator app and Safari. |
-| **Face ID / Hardware Enclave** | **Yes (Direct)**: Private key hardware-bound in Apple Secure Enclave. | Indirect: WebAuthn can be configured as IdP factor. | No: Software passphrase / secret. | No: Software TOTP seed. |
-| **Permanent Secret on iPhone** | **ZERO**: Device stores only private key in Enclave; server stores public key. | **ZERO**: Relies on Cloudflare IdP session cookies. | High Risk: Shared secret must be entered / cached. | High Risk: TOTP seed stored on device. |
-| **Token Lifetime** | Ephemeral (Single-action ticket, 180s TTL). | IdP session (Typically 24h+). | Session token (1h – 24h). | 30-second rotating code. |
-| **Revocation** | Instant: Delete public key from Cloudflare KV. | Instant: Revoke user in Cloudflare Zero Trust. | Requires rotating signing key. | Requires rotating TOTP secret in KV. |
-| **Replay Resistance** | **Absolute**: Cryptographic challenge + sign-counter + nonce. | Good: Session cookie + Cloudflare edge validation. | Moderate: JWT signature check. | Moderate: 30-second replay window. |
-| **CSRF / XSS Impact** | **Immune**: WebAuthn requires explicit user gesture + origin binding. | Cookie-based: Requires SameSite + CSRF protection. | Vulnerable if token stored in JS storage. | Vulnerable to automated form submission if unlocked. |
-| **Stolen-iPhone Scenario** | **Protected**: Attacker cannot trigger Face ID without Owner's physical presence. | Vulnerable if device is unlocked and session cookie is active. | Vulnerable if browser remembers password. | Vulnerable if phone is unlocked. |
-| **Cloudflare Complexity** | **Low**: Native WebCrypto APIs in Cloudflare Worker standard library. | High: Requires Cloudflare Zero Trust account, domain binding, and IdP setup. | Low: Pure Worker code. | Low: Pure Worker code. |
-| **Maintenance Burden** | **Zero External Services**: Self-contained in Generic DAIO repo. | High: Requires external IdP & Zero Trust policies. | Low: Minimal code. | Low: Minimal code. |
-| **Device Replacement Recovery** | Easy: Register new passkey via Mac admin script (`daio passkey register`). | Handled by external IdP. | Reset master passphrase. | Re-scan QR code. |
-| **Outbound-Only Mac Compatibility** | **100% Compatible**: Zero changes to Mac host poller. | 100% Compatible. | 100% Compatible. | 100% Compatible. |
-
----
-
-## 4. Recommended Canonical Architecture: Native WebAuthn Passkey + Ephemeral Action Ticket
-
-### Why WebAuthn (Passkey / Face ID) is the Canonical Choice:
-1. **Zero Permanent Shared Secrets**: The iPhone holds only an asymmetric private key inside its hardware Secure Enclave. Cloudflare holds only the public key.
-2. **Native iOS Safari Integration**: No external identity providers, no redirect loops, and zero password typing. Face ID triggers seamlessly via `navigator.credentials.get()`.
-3. **Cryptographic Origin Binding**: WebAuthn assertions are cryptographically bound to `daio-relay.huanchen1107.workers.dev`, preventing phishing and man-in-the-middle attacks.
-4. **Single-Action Ephemeral Tickets**: An assertion generates a single-use authorization ticket valid for **180 seconds**, explicitly bound to the current `work_id` and `gate_id`.
-
----
-
-## 5. End-to-End Authentication & Execution Sequence Diagram
+Cloudflare Worker natively supports `crypto.subtle` (WebCrypto API), which is fully sufficient to perform standards-correct WebAuthn Level 3 assertion and attestation verification without heavyweight external dependencies.
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Owner as Project Owner (iPhone)
-    participant Safari as iPhone Mobile Safari
-    participant Enclave as Apple Secure Enclave (Face ID)
-    participant CF as Cloudflare Unified Relay
-    participant KV as Cloudflare KV (STATUS & DECISION)
-    participant Mac as Mac DAIO Host (Outbound-Only)
-    participant Store as SqliteDAIOWorkStore
+flowchart TD
+    subgraph Client_iPhone [iPhone Mobile Safari]
+        UserAction["Owner taps [APPROVE]"]
+        PromptEnclave["navigator.credentials.get() (Face ID / Passkey)"]
+        UserAction --> PromptEnclave
+    end
 
-    Note over Owner,Store: Phase A: Detecting Human Gate (Read-Only)
-    Safari->>CF: GET /api/v1/status
-    CF-->>Safari: 200 OK (live_plane: HUMAN_GATE_REQUIRED, work_id: daio-1327528c)
-    Safari->>Safari: Render Active Human Decision Banner
+    subgraph Edge_Cloudflare [Cloudflare Worker: relay_worker.js]
+        GenChallenge["1. Issue Challenge Nonce (TTL 60s in KV)"]
+        VerifyAssert["2. WebAuthn Verification Pipeline"]
+        StoreTicket["3. Issue Opaque Action Ticket in KV (TTL 180s)"]
+        
+        VerifyAssert -->|Parse clientDataJSON| V_Client["Verify type == 'webauthn.get', challenge match, origin match"]
+        VerifyAssert -->|Parse authenticatorData| V_Auth["Verify rpIdHash == SHA-256(rpId), UP bit == 1, UV bit == 1"]
+        VerifyAssert -->|Verify ECDSA P-256| V_Sig["crypto.subtle.verify(ECDSA, pubKey, sig, authData + clientDataHash)"]
+        
+        V_Client --> V_Auth --> V_Sig --> StoreTicket
+    end
 
-    Note over Owner,Store: Phase B: Owner Biometric Authorization (WebAuthn)
-    Owner->>Safari: Tap [APPROVE] button
-    Safari->>CF: POST /api/v1/auth/challenge { project_id: "awin-fintech", work_id: "daio-1327528c" }
-    CF-->>Safari: 200 OK { challenge: "nonce-xyz", rpId: "daio-relay.workers.dev" }
-    Safari->>Enclave: navigator.credentials.get({ challenge, rpId })
-    Enclave->>Owner: Prompt Face ID / Biometrics
-    Owner-->>Enclave: Biometric Verified (Face Match)
-    Enclave-->>Safari: Signed WebAuthn Assertion (signature, clientDataJSON, authenticatorData)
-    
-    Safari->>CF: POST /api/v1/auth/verify { assertion, work_id: "daio-1327528c", decision: "APPROVE" }
-    CF->>CF: Verify signature using stored Passkey Public Key (WebCrypto)
-    CF->>KV: Issue Ephemeral Action Ticket (ticket_id, TTL: 180s, work_id)
-    CF-->>Safari: 200 OK { action_ticket: "ticket-abc-123" }
+    subgraph Host_Mac [Mac DAIO Host]
+        Poll["Outbound Poller"]
+        Store["SqliteDAIOWorkStore (BEGIN IMMEDIATE)"]
+        Poll --> Store
+    end
 
-    Note over Owner,Store: Phase C: Decision Ingress & Buffering
-    Safari->>CF: POST /api/v1/decisions { ticket: "ticket-abc-123", work_id: "daio-1327528c", decision: "APPROVE" }
-    CF->>CF: Validate Ticket (Consume single-use token)
-    CF->>KV: Buffer in DECISION_KV (decision:awin-fintech:dec-001)
-    CF-->>Safari: 201 SUBMITTED { decision_id: "dec-001", status: "SUBMITTED" }
-    Safari->>Safari: Render Optimistic Status ("SUBMITTED • Awaiting Mac DAIO Ingestion")
-
-    Note over Owner,Store: Phase D: Outbound Mac Ingestion & Atomic Application
-    Mac->>CF: GET /api/v1/decisions?project_id=awin-fintech (Bearer DAIO_RELAY_SECRET)
-    CF-->>Mac: 200 OK [ { decision_id: "dec-001", decision: "APPROVE", work_id: "daio-1327528c" } ]
-    Mac->>Store: apply_decision_transition_atomically() [BEGIN IMMEDIATE]
-    Store->>Store: Re-verify live status == HUMAN_GATE_REQUIRED
-    Store->>Store: Apply APPROVE -> Transition to S3_EXECUTION -> Commit
-    Mac->>CF: POST /api/v1/decisions/dec-001/ack (Bearer DAIO_RELAY_SECRET)
-    CF->>KV: Delete decision from DECISION_KV & Index
-    CF-->>Mac: 200 OK (ACK_PROCESSED)
-
-    Note over Owner,Store: Phase E: Realtime Cockpit Observation
-    Safari->>CF: GET /api/v1/status (Auto-poll 3.5s)
-    CF-->>Safari: 200 OK (live_plane: S3_EXECUTION, status: IN_PROGRESS)
-    Safari->>Safari: Render "🟢 DAIO is operating autonomously in S3_EXECUTION"
+    PromptEnclave -->|Assertion| VerifyAssert
+    StoreTicket -->|Decision Ingress| Edge_Cloudflare
+    Edge_Cloudflare -->|DECISION_KV| Poll
 ```
 
----
+### 2.1 WebAuthn Verification Pipeline:
 
-## 6. Comprehensive Threat Model Matrix
-
-| Threat Scenario | Risk Level | Existing RPC-2 Protection | RPC-3C Passkey / Auth Addition | Net Security Outcome |
-| :--- | :---: | :--- | :--- | :--- |
-| **1. Stolen / Lost iPhone** | HIGH | None (if secrets were in storage) | **Hardware Biometrics**: Private key cannot be accessed without Owner Face ID. | **BLOCKED**: Attacker cannot sign decisions. |
-| **2. Leaked Browser Storage** | HIGH | None (if secrets were in storage) | **Zero Secrets**: No tokens or keys stored in localStorage/sessionStorage. | **BLOCKED**: No secrets to steal. |
-| **3. XSS in Cockpit Page** | MEDIUM | Strict Content-Security-Policy | WebAuthn requires explicit physical user gesture (Face ID). Script alone cannot forge signature. | **BLOCKED**: Silent decision submission is impossible. |
-| **4. CSRF / Phishing Site** | HIGH | None | WebAuthn assertions cryptographically check `rpId` matching Cloudflare domain. | **BLOCKED**: Foreign domain assertions are rejected. |
-| **5. Replayed APPROVE Decision** | HIGH | `decision_id` ledger deduplication in SQLite | WebAuthn challenge nonce + single-use ephemeral ticket. | **BLOCKED**: Replay rejected at both Edge & Mac. |
-| **6. Replayed STOP Decision** | HIGH | `decision_id` ledger deduplication in SQLite | Single-use ephemeral ticket expires in 180s. | **BLOCKED**: Replay rejected at Edge and SQLite. |
-| **7. Expired Authorization** | MEDIUM | Decision envelope `expires_at` | Ephemeral ticket TTL is strictly 180 seconds. | **BLOCKED**: Expired ticket rejected at Cloudflare Edge. |
-| **8. Forged `work_id` / `gate_id`** | HIGH | Fail-closed validation against live SQLite state | Ticket is cryptographically bound to specific `work_id`. | **BLOCKED**: Mutation rejected if work_id mismatches. |
-| **9. Stale Human Gate (TOCTOU)** | HIGH | `apply_decision_transition_atomically()` inside `BEGIN IMMEDIATE` | Live state revalidation on Mac host. | **BLOCKED**: Zero mutation committed if gate changed. |
-| **10. Concurrent State Change** | HIGH | SQLite atomic compare-and-apply fails closed | Transaction aborts cleanly with error. | **BLOCKED**: No illegal state corruption. |
-| **11. Duplicate Button Tap** | LOW | SQLite idempotent ledger | Single-use ticket consumed on first POST; duplicate tap gets 409 Conflict. | **BLOCKED**: Single execution guaranteed. |
-| **12. Cloudflare Network Retry** | LOW | Cloudflare idempotent KV keying | KV `put` is idempotent by `decision_id`. | **SAFE**: Zero duplicate envelopes created. |
-| **13. Mac Crash Before ACK** | HIGH | Mac re-polls on startup; checks ledger; ACKs without re-applying | Ledger records `decision_id` during transaction. | **SAFE**: Idempotent recovery. |
-| **14. Mac Crash After Commit** | HIGH | Next poll checks ledger; detects `APPLIED`; immediately sends ACK | Decision is cleared from queue without second execution. | **SAFE**: Zero double-execution. |
-
----
-
-## 7. Secrets & Credential Ownership Table
-
-| Credential / Key | Held By | Stored In | Lifetime | Function |
-| :--- | :--- | :--- | :--- | :--- |
-| **Passkey Private Key** | iPhone Owner | Apple Secure Enclave | Permanent (Per-device) | Signs Face ID authentication challenges. |
-| **Passkey Public Key** | Cloudflare Relay | `STATUS_KV` (`auth:passkey:<id>`) | Permanent until revoked | Verifies Face ID signatures using WebCrypto. |
-| **Ephemeral Action Ticket** | iPhone Safari Memory | Cloudflare KV (`ticket:<id>`) | **180 Seconds** | Authorizes a single decision POST for an active work item. |
-| **`DAIO_RELAY_SECRET`** | Cloudflare & Mac Host | Mac Env / CF Worker Secret | Long-term | Authenticates Mac outbound poller and ACK endpoints. |
-| **`DAIO_RPC_PUBLISH_TOKEN`** | Cloudflare & Mac Host | Mac Env / CF Worker Secret | Long-term | Authenticates Mac outbound status publisher. |
+1. **Challenge Verification**:
+   - Worker generates a 32-byte cryptographically secure random nonce via `crypto.getRandomValues(new Uint8Array(32))`.
+   - Challenge is stored in KV (`auth:challenge:<nonce>`) with a strict **60-second TTL** and single-use flag.
+   - Client sends base64url-encoded `clientDataJSON`. Worker parses JSON and confirms `parsed.challenge === originalChallenge`. The challenge key is deleted immediately to prevent replay.
+2. **Origin & RP ID Verification**:
+   - Worker verifies `parsed.origin === "https://daio-relay.huanchen1107.workers.dev"`.
+   - Worker computes `SHA-256("daio-relay.huanchen1107.workers.dev")` and confirms it matches the first 32 bytes (`rpIdHash`) of `authenticatorData`.
+3. **Authenticator Flags Verification**:
+   - Byte 32 of `authenticatorData` contains the flag bitfield:
+     - Bit 0 (`UP` - User Present): Must be `1`.
+     - Bit 2 (`UV` - User Verified): Must be `1` (enforcing biometric / device PIN verification).
+4. **Signature Verification (ECDSA P-256 / ES256)**:
+   - Worker extracts the ASN.1 DER signature from `assertion.signature`.
+   - Formats signed data: `authenticatorData || SHA-256(rawClientDataJSON)`.
+   - Fetches registered public key (stored as JWK or raw SPKI in KV).
+   - Verifies signature using `crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, publicKey, signature, signedData)`.
+5. **Sign-Count / Replay Check**:
+   - `signCount` (bytes 33–36 of `authenticatorData`) is checked against stored `last_sign_count`. If non-zero and `signCount <= last_sign_count`, the assertion is flagged as potential clone/replay and rejected.
 
 ---
 
-## 8. iPhone UX Interaction Flow
+## 3. Action Ticket Architecture & Schema
 
-```
-┌────────────────────────────────────────────────────────┐
-│ ④ OWNER ACTION                                         │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │ ⚠️ HUMAN DECISION REQUIRED                          │ │
-│ │ Work: smc-orderbook-v1  •  Gate: HUMAN_GATE         │ │
-│ │ "Contract review complete. Owner signoff required." │ │
-│ │                                                    │ │
-│ │  [  ✅ APPROVE (Face ID)  ]   [  🔄 REVISE  ]       │ │
-│ │                                                    │ │
-│ │  [              🛑 STOP LOOP             ]           │ │
-│ └────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────┘
-                          │
-            Tapping [APPROVE (Face ID)]
-                          │
-                          ▼
-┌────────────────────────────────────────────────────────┐
-│ 📱 Apple Face ID System Sheet                          │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │  Authenticate for DAIO Cockpit                     │ │
-│ │  "Approve Work: daio-1327528c"                     │ │
-│ │                                                    │ │
-│ │               [ 😊 Face ID Icon ]                  │ │
-│ └────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────┘
-                          │
-               Biometric Verification
-                          │
-                          ▼
-┌────────────────────────────────────────────────────────┐
-│ ④ OWNER ACTION                                         │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │ ⏳ DECISION SUBMITTED • Awaiting Mac Ingestion      │ │
-│ │ Ticket: tk-89f2 • Decision ID: dec-001 (APPROVE)    │ │
-│ │ 🔄 Mac DAIO polling (est. 2s)...                   │ │
-│ └────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────┘
+### Decision on Ticket Storage:
+**Option A (Selected)**: **Opaque Server-Side Single-Use Records in KV**.
+- **Rationale**: Storing the ticket as an opaque UUID key in KV with atomic delete-on-read ensures fail-closed single-use semantics without requiring additional asymmetric token signing infrastructure or revocation lists.
+
+### 3.1 Strict Multi-Dimensional Ticket Schema (`ticket:<project_id>:<ticket_id>`):
+```json
+{
+  "ticket_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "project_id": "awin-fintech",
+  "work_id": "daio-1327528c",
+  "gate_id": "HUMAN_GATE",
+  "current_phase": "S3_EXECUTION",
+  "decision": "APPROVE",
+  "action": "RUN",
+  "instruction_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "credential_id": "cred_apple_enclave_01",
+  "issued_at": "2026-09-26T20:45:00Z",
+  "expires_at": "2026-09-26T20:48:00Z",
+  "consumed": false
+}
 ```
 
+### 3.2 Single-Use Ingestion Boundary:
+When `POST /api/v1/decisions` is invoked with `X-Action-Ticket: <ticket_id>`:
+1. Worker retrieves ticket from KV: `ticket:<project_id>:<ticket_id>`. If not found or expired $\rightarrow$ `HTTP 401 Unauthorized (FAIL-CLOSED)`.
+2. Worker strictly validates that payload fields match ticket bindings:
+   - `payload.project_id === ticket.project_id`
+   - `payload.work_id === ticket.work_id`
+   - `payload.gate_id === ticket.gate_id`
+   - `payload.current_phase === ticket.current_phase`
+   - `payload.decision === ticket.decision`
+   - `payload.action === ticket.action`
+3. **Atomic Consumption**: Ticket is **deleted immediately from KV** before buffering into `DECISION_KV`.
+4. If validation passes, the decision envelope is buffered in `DECISION_KV` with `delivery_status: "SUBMITTED"`.
+
 ---
 
-## 9. Proposed Changes & Implementation Plan for RPC-3C.2
+## 4. Enrollment, Recovery & Credential Lifecycle Architecture
 
-When authorized to proceed to **RPC-3C.2 (Passkey Ingress Implementation)**:
-1. **Cloudflare Worker Enhancements (`relay_worker.js`)**:
-   - Add `POST /api/v1/auth/challenge` (generates cryptographic challenge nonce).
-   - Add `POST /api/v1/auth/verify` (verifies WebAuthn assertion with WebCrypto & issues ephemeral ticket).
-   - Update `POST /api/v1/decisions` to accept either `Bearer DAIO_RELAY_SECRET` (Mac/CLI) OR `X-Action-Ticket: <ticket_id>` (iPhone Cockpit).
-2. **Cockpit Web UI Enhancements**:
-   - Embed WebAuthn JavaScript client in `COCKPIT_HTML` using standard `navigator.credentials.get()`.
-   - Add Passkey registration management modal for initial device enrollment.
-   - Render interactive action buttons (`APPROVE`, `REVISE` modal, `STOP` confirmation) active **only** when `human_gate_required` is true.
-3. **Automated Test Suite**:
-   - Add WebAuthn challenge/verification unit tests in `tests/test_cockpit_worker.py`.
-   - Add ephemeral ticket expiration and single-use enforcement tests.
+Passkey enrollment is strictly separated from the public read-only cockpit and **cannot be triggered by unauthenticated public web traffic**.
+
+```mermaid
+flowchart TD
+    subgraph Enrollment_Flow [Passkey Registration & Lifecycle]
+        MacAdmin["1. Mac Host: daio passkey enroll"]
+        WorkerIssue["2. Worker issues Single-Use Enrollment Token (TTL 10m)"]
+        QR["3. Display Secure QR / Enrollment Link to Owner"]
+        SafariEnroll["4. iPhone Safari opens link & prompts Face ID registration"]
+        StorePub["5. Worker stores Passkey Public Key in KV (auth:passkey:<id>)"]
+        
+        MacAdmin -->|POST /api/v1/auth/enroll/token (Bearer DAIO_RELAY_SECRET)| WorkerIssue
+        WorkerIssue --> QR
+        QR --> SafariEnroll
+        SafariEnroll -->|POST /api/v1/auth/enroll/verify (attestation)| StorePub
+    end
+```
+
+### 4.1 Enrollment & Recovery Operations:
+1. **Bootstrap / First Device Enrollment**:
+   - Initial passkey registration requires the Mac host admin CLI: `python -m daio_closed_loop.tools.passkey_admin enroll`.
+   - Mac daemon uses `DAIO_RELAY_SECRET` to request a one-time enrollment token from `POST /api/v1/auth/enroll/token` (TTL: 10 minutes).
+   - Owner scans a single-use enrollment QR code or clicks the temporary admin link on iPhone Safari to complete `navigator.credentials.create()`.
+2. **Additional Device Enrollment**:
+   - Adding a second device (e.g. iPad / secondary phone) requires re-authentication with an existing active Passkey OR a new Mac CLI enrollment token.
+3. **Credential Revocation**:
+   - Mac admin runs `python -m daio_closed_loop.tools.passkey_admin revoke --cred-id <id>`.
+   - Worker immediately deletes `auth:passkey:<credential_id>` from KV.
+4. **Lost / Stolen iPhone Recovery**:
+   - Mac admin runs `python -m daio_closed_loop.tools.passkey_admin reset-all`.
+   - Worker purges all registered credentials and pending action tickets, immediately invalidating the lost device. A new enrollment token is generated for the replacement device.
+
+---
+
+## 5. Browser Surface Hardening & Content Security Policy (CSP)
+
+To eliminate browser injection and XSS attack vectors:
+1. **HTTP Response Security Headers**:
+   ```http
+   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';
+   X-Content-Type-Options: nosniff
+   X-Frame-Options: DENY
+   Referrer-Policy: strict-origin-when-cross-origin
+   Permissions-Policy: publickey-credentials-get=(self), publickey-credentials-create=(self)
+   ```
+2. **DOM Safety**:
+   - Cockpit JavaScript uses `textContent` strictly for all dynamic telemetry values (`project_name`, `work_id`, `human_gate_reason`, etc.). Zero `innerHTML` injection of server or user strings.
+3. **Zero Browser Persistence**:
+   - No tokens, session cookies, passkey secrets, or relay tokens are written to `localStorage` or `sessionStorage`.
+
+---
+
+## 6. Hardened Threat Model Matrix
+
+| Threat Scenario | Assessment | Defense Mechanism & Mitigation | Residual Risk |
+| :--- | :---: | :--- | :--- |
+| **1. Stolen / Lost iPhone** | **MITIGATED** | Device biometrics (Face ID / Passkey) required to sign assertions. No plaintext credentials in storage. | Attacker coercing Owner biometrics or obtaining device passcode (mitigated by prompt-time biometric requirement). |
+| **2. Leaked Browser Storage** | **MITIGATED** | Zero credentials or tokens stored in browser storage. | None from storage leakage. |
+| **3. XSS in Cockpit Page** | **MITIGATED (Defense in Depth)** | Strict CSP + textContent DOM safety + WebAuthn physical user gesture requirement. | Compromised script requesting assertion during legitimate user tap (mitigated by explicit work_id binding in prompt). |
+| **4. CSRF / Phishing Site** | **MITIGATED** | WebAuthn browser origin verification cryptographically rejects foreign origins. | Reverse-proxy phishing on spoofed domain (mitigated by WebAuthn rpId binding). |
+| **5. Replayed APPROVE / STOP** | **FAIL-CLOSED** | Edge challenge nonce single-use + Action Ticket single-use + SQLite `decision_id` ledger deduplication. | None; replay rejected at Edge and Mac SQLite. |
+| **6. Expired Action Ticket** | **FAIL-CLOSED** | Ticket TTL strictly enforced at $\le 180$ seconds. | None. |
+| **7. Cross-Action Ticket Reuse (e.g. APPROVE ticket used for STOP)** | **FAIL-CLOSED** | Ticket strictly binds `decision`, `work_id`, `gate_id`, `current_phase`. Mismatch causes immediate 401 rejection. | None. |
+| **8. TOCTOU Race / Stale Gate** | **FAIL-CLOSED** | Mac host executes `apply_decision_transition_atomically()` inside `BEGIN IMMEDIATE`. Revalidates live status before commit. | State transition aborted with zero mutation if work item evolved concurrently. |
+| **9. Concurrent Mac Daemon Crash** | **DEFENSE IN DEPTH** | SQLite transaction rollback on crash + idempotent decision ledger on recovery. | Zero double-execution or orphaned state. |
+| **10. Synced Passkey Exposure (iCloud / Cloud sync)** | **MITIGATED** | End-to-end encrypted passkey sync managed by platform OS; instant revocation supported via Mac admin CLI. | Compromise of Owner Apple ID account (mitigated by Apple multi-factor authentication). |
+
+---
+
+## 7. Implementation Contract for Phase RPC-3C.2
+
+When authorized by Lead Architect, **RPC-3C.2** will implement:
+1. **`cloudflare/relay_worker.js`**:
+   - WebAuthn verification helper module using `crypto.subtle`.
+   - `POST /api/v1/auth/enroll/token` & `POST /api/v1/auth/enroll/verify` (Registration ceremony).
+   - `POST /api/v1/auth/challenge` & `POST /api/v1/auth/verify` (Authentication ceremony & Action Ticket issuance).
+   - Update `POST /api/v1/decisions` to validate and atomically consume `X-Action-Ticket`.
+2. **`COCKPIT_HTML`**:
+   - WebAuthn client script handling biometric challenge/assertion.
+   - Interactive action sheet (`APPROVE`, `REVISE` modal, `STOP` confirmation) active only upon `HUMAN_GATE_REQUIRED`.
+3. **Mac Admin Tool**:
+   - `scripts/daio_closed_loop/adapters/passkey_admin.py` for bootstrap enrollment and revocation.
+4. **Automated Test Suite**:
+   - Unit tests covering challenge expiration, signature validation, ticket field binding enforcement, and single-use consumption.
