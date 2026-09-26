@@ -531,7 +531,7 @@ const COCKPIT_HTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>
-\`;
+`;
 
 const OPENAPI_SPEC = {
   openapi: "3.1.0",
@@ -675,9 +675,9 @@ export default {
     // 1. META, CATALOG & COCKPIT ROUTES
     // =========================================================================
 
-    // GET /cockpit or /ui (iPhone Owner Cockpit Web Application)
-    if ((path === "/cockpit" || path === "/ui") && request.method === "GET") {
-      return new Response(COCKPIT_HTML, {
+    // GET/HEAD /cockpit or /ui (iPhone Owner Cockpit Web Application)
+    if ((path === "/cockpit" || path === "/ui") && (request.method === "GET" || request.method === "HEAD")) {
+      return new Response(request.method === "HEAD" ? null : COCKPIT_HTML, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -686,11 +686,11 @@ export default {
       });
     }
 
-    // GET / (Service Catalog or Cockpit for browser text/html accept)
-    if (path === "/" && request.method === "GET") {
+    // GET/HEAD / (Service Catalog or Cockpit for browser text/html accept)
+    if (path === "/" && (request.method === "GET" || request.method === "HEAD")) {
       const accept = request.headers.get("Accept") || "";
       if (accept.includes("text/html") && !accept.includes("application/json")) {
-        return new Response(COCKPIT_HTML, {
+        return new Response(request.method === "HEAD" ? null : COCKPIT_HTML, {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -705,60 +705,57 @@ export default {
         publishedAvailable = !!latest;
       }
 
-      return new Response(
-        JSON.stringify({
-          status: "OK",
-          service: "DAIO Unified Remote Relay (RPC-1 Status + RPC-2A Decision Transport + RPC-3B Cockpit)",
-          version: "daio-rpc/v3.0",
-          published_status_available: publishedAvailable,
-          planes: {
-            rpc1_status_plane: {
-              status_query: `${url.origin}/api/v1/status`,
-              publish_endpoint: `${url.origin}/api/v1/publish`,
-            },
-            rpc2a_decision_plane: {
-              health: `${url.origin}/api/v1/health`,
-              submit_decision: `${url.origin}/api/v1/decisions`,
-              poll_decisions: `${url.origin}/api/v1/decisions?project_id=awin-fintech`,
-            },
-            rpc3b_owner_cockpit: {
-              cockpit_ui: `${url.origin}/cockpit`,
-            },
-          },
-          endpoints: {
-            cockpit_ui: `${url.origin}/cockpit`,
+      const catalogBody = JSON.stringify({
+        status: "OK",
+        service: "DAIO Unified Remote Relay (RPC-1 Status + RPC-2A Decision Transport + RPC-3B Cockpit)",
+        version: "daio-rpc/v3.0",
+        published_status_available: publishedAvailable,
+        planes: {
+          rpc1_status_plane: {
             status_query: `${url.origin}/api/v1/status`,
             publish_endpoint: `${url.origin}/api/v1/publish`,
-            openapi_spec: `${url.origin}/openapi.json`,
           },
-        }),
-        { headers: corsHeaders }
-      );
+          rpc2a_decision_plane: {
+            health: `${url.origin}/api/v1/health`,
+            submit_decision: `${url.origin}/api/v1/decisions`,
+            poll_decisions: `${url.origin}/api/v1/decisions?project_id=awin-fintech`,
+          },
+          rpc3b_owner_cockpit: {
+            cockpit_ui: `${url.origin}/cockpit`,
+          },
+        },
+        endpoints: {
+          cockpit_ui: `${url.origin}/cockpit`,
+          status_query: `${url.origin}/api/v1/status`,
+          publish_endpoint: `${url.origin}/api/v1/publish`,
+          openapi_spec: `${url.origin}/openapi.json`,
+        },
+      });
+
+      return new Response(request.method === "HEAD" ? null : catalogBody, { headers: corsHeaders });
     }
 
-    // GET /openapi.json
-    if (path === "/openapi.json" && request.method === "GET") {
-      return new Response(JSON.stringify(OPENAPI_SPEC, null, 2), { headers: corsHeaders });
+    // GET/HEAD /openapi.json
+    if (path === "/openapi.json" && (request.method === "GET" || request.method === "HEAD")) {
+      return new Response(request.method === "HEAD" ? null : JSON.stringify(OPENAPI_SPEC, null, 2), { headers: corsHeaders });
     }
 
-    // GET /api/v1/health (RPC-2A Health)
-    if (path === "/api/v1/health" && request.method === "GET") {
-      return new Response(
-        JSON.stringify({
-          status: "OK",
-          timestamp: new Date().toISOString(),
-          relay: "daio-unified-relay",
-        }),
-        { headers: corsHeaders }
-      );
+    // GET/HEAD /api/v1/health (RPC-2A Health)
+    if (path === "/api/v1/health" && (request.method === "GET" || request.method === "HEAD")) {
+      const healthBody = JSON.stringify({
+        status: "OK",
+        timestamp: new Date().toISOString(),
+        relay: "daio-unified-relay",
+      });
+      return new Response(request.method === "HEAD" ? null : healthBody, { headers: corsHeaders });
     }
 
     // =========================================================================
     // 2. RPC-1 STATUS PLANE ROUTES
     // =========================================================================
 
-    // GET /api/v1/status (Read published status)
-    if (path === "/api/v1/status" && request.method === "GET") {
+    // GET/HEAD /api/v1/status (Read published status)
+    if (path === "/api/v1/status" && (request.method === "GET" || request.method === "HEAD")) {
       if (!statusKV) {
         return new Response(JSON.stringify({ error: "Storage Unconfigured", reason: "Status KV store binding not found" }), {
           status: 500,
@@ -768,32 +765,30 @@ export default {
 
       const statusJson = await statusKV.get("status:latest");
       if (!statusJson) {
-        return new Response(
-          JSON.stringify({
-            live_plane: {
-              project_name: "DAIO",
-              host: "unknown",
-              host_status: "UNKNOWN",
-              freshness: "UNKNOWN",
-              supervisor_running: false,
-              heartbeat_age_seconds: null,
-              degraded_note: "No status published yet from DAIO host instance.",
-            },
-            durable_plane: {
-              repository: null,
-              push_synchronized: false,
-            },
-            provenance: {
-              protocol_version: "daio-rpc/v1",
-              relay_node: "cloudflare-edge",
-              server_timestamp: new Date().toISOString(),
-            },
-          }),
-          { status: 200, headers: corsHeaders }
-        );
+        const defaultStatus = JSON.stringify({
+          live_plane: {
+            project_name: "DAIO",
+            host: "unknown",
+            host_status: "UNKNOWN",
+            freshness: "UNKNOWN",
+            supervisor_running: false,
+            heartbeat_age_seconds: null,
+            degraded_note: "No status published yet from DAIO host instance.",
+          },
+          durable_plane: {
+            repository: null,
+            push_synchronized: false,
+          },
+          provenance: {
+            protocol_version: "daio-rpc/v1",
+            relay_node: "cloudflare-edge",
+            server_timestamp: new Date().toISOString(),
+          },
+        });
+        return new Response(request.method === "HEAD" ? null : defaultStatus, { status: 200, headers: corsHeaders });
       }
 
-      return new Response(statusJson, { headers: corsHeaders });
+      return new Response(request.method === "HEAD" ? null : statusJson, { headers: corsHeaders });
     }
 
     // POST /api/v1/publish (Publish status from Mac host)
