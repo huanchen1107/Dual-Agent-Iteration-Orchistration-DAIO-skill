@@ -33,6 +33,8 @@ from .adapters.executor import EngineeringExecutorAdapter, SubprocessWorkspaceEx
 from .adapters.bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
 from .adapters.factory import create_engineering_agent_adapter
 from .adapters.remote_relay import RemoteDecisionAdapter, RemoteDecisionRelayClient
+from .adapters.rpc_status_collector import DAIOStatusCollector
+from .adapters.rpc_status_publisher import DAIOStatusPublisher
 
 logger = logging.getLogger("DAIO_Supervisor")
 
@@ -116,6 +118,23 @@ class DAIOSupervisor:
             self.remote_relay_adapter = self._init_remote_relay_adapter(cfg_dict)
         else:
             self.remote_relay_adapter = None
+
+        # Resolve remote status publisher (keeps Cloudflare Cockpit FRESH & ONLINE)
+        self.status_publisher: Optional[DAIOStatusPublisher] = None
+        if self.remote_relay_adapter and getattr(self.remote_relay_adapter, "client", None):
+            try:
+                collector = DAIOStatusCollector(
+                    project_root=str(self.project_root),
+                    store=self.store,
+                )
+                self.status_publisher = DAIOStatusPublisher(
+                    collector=collector,
+                    relay_url=self.remote_relay_adapter.client.endpoint_url,
+                    publish_token=self.remote_relay_adapter.client.auth_token,
+                    interval_seconds=self.poll_interval_seconds,
+                )
+            except Exception as ex:
+                logger.warning(f"Could not initialize DAIOStatusPublisher: {ex}")
 
         self.orchestrator = DAIOClosedLoopOrchestrator(
             store=self.store,
@@ -310,6 +329,13 @@ class DAIOSupervisor:
         except Exception as ex:
             logger.warning(f"Could not record supervisor heartbeat: {ex}")
 
+        # 5. Continuous Live Status Publishing to Cloudflare Relay
+        if self.status_publisher:
+            try:
+                self.status_publisher.publish_once()
+            except Exception as ex:
+                logger.debug(f"Cloudflare status publication non-fatal: {ex}")
+
         return {
             "supervisor_id": self.supervisor_id,
             "timestamp": now_iso,
@@ -401,3 +427,147 @@ async def run_supervisor(
         poll_interval_seconds=poll_interval_seconds,
     )
     return await supervisor.start(max_iterations=max_iterations)
+
+
+def is_pid_alive(pid: Optional[int]) -> bool:
+    """Verifies if a process PID is currently alive on the host OS."""
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError, PermissionError):
+        return False
+
+
+def start_supervisor_daemon(
+    project_root: str,
+    supervisor_id: Optional[str] = None,
+    poll_interval_seconds: float = 2.0,
+    pid_file: Optional[str] = None,
+    log_file: Optional[str] = None,
+) -> int:
+    """
+    Spawns DAIOSupervisor as a true detached double-fork UNIX daemon on macOS/Linux.
+    Survives parent process and terminal termination.
+    """
+    root_p = Path(project_root).resolve()
+    evidence_dir = root_p / "_daio" / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    pid_path = Path(pid_file) if pid_file else root_p / "_daio" / "supervisor.pid"
+    log_path = Path(log_file) if log_file else evidence_dir / "supervisor_daemon.log"
+
+    # Check if already running
+    if pid_path.exists():
+        try:
+            existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
+            if is_pid_alive(existing_pid):
+                logger.info(f"Supervisor daemon already running with PID {existing_pid}")
+                return existing_pid
+        except Exception:
+            pass
+
+    # First fork
+    pid = os.fork()
+    if pid > 0:
+        # Parent returns first child PID
+        return pid
+
+    # First child: create new session
+    os.setsid()
+    os.umask(0)
+
+    # Second fork: decouple from session leader
+    pid2 = os.fork()
+    if pid2 > 0:
+        os._exit(0)
+
+    # Grandchild: write PID file and redirect stdio
+    daemon_pid = os.getpid()
+    pid_path.write_text(str(daemon_pid), encoding="utf-8")
+
+    log_fp = open(log_path, "a", encoding="utf-8")
+    os.dup2(log_fp.fileno(), sys.stdout.fileno())
+    os.dup2(log_fp.fileno(), sys.stderr.fileno())
+    try:
+        devnull = open(os.devnull, "r")
+        os.dup2(devnull.fileno(), sys.stdin.fileno())
+    except Exception:
+        pass
+
+    import signal
+
+    def _handle_sigterm(signum, frame):
+        logger.info(f"🛑 Received signal {signum}. Stopping supervisor daemon PID {daemon_pid}...")
+        try:
+            if pid_path.exists():
+                pid_path.unlink()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+    logger.info(f"🌟 DAIOSupervisor daemon spawned: PID={daemon_pid}, log={log_path}")
+
+    try:
+        asyncio.run(run_supervisor(
+            project_root=str(root_p),
+            supervisor_id=supervisor_id,
+            poll_interval_seconds=poll_interval_seconds,
+        ))
+    finally:
+        try:
+            if pid_path.exists():
+                pid_path.unlink()
+        except Exception:
+            pass
+        sys.exit(0)
+
+
+def stop_supervisor_daemon(project_root: str, pid_file: Optional[str] = None) -> bool:
+    """Stops the running supervisor daemon by PID."""
+    import time
+    root_p = Path(project_root).resolve()
+    pid_path = Path(pid_file) if pid_file else root_p / "_daio" / "supervisor.pid"
+
+    if not pid_path.exists():
+        logger.info("No supervisor PID file found.")
+        return False
+
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        if is_pid_alive(pid):
+            import signal
+            os.kill(pid, signal.SIGTERM)
+            for _ in range(25):
+                if not is_pid_alive(pid):
+                    break
+                time.sleep(0.1)
+            logger.info(f"Stopped supervisor daemon PID {pid}")
+        if pid_path.exists():
+            pid_path.unlink()
+        return True
+    except Exception as ex:
+        logger.warning(f"Error stopping supervisor daemon: {ex}")
+        if pid_path.exists():
+            pid_path.unlink()
+        return False
+
+
+def get_supervisor_daemon_status(project_root: str, pid_file: Optional[str] = None) -> Dict[str, Any]:
+    """Returns daemon running status and PID."""
+    root_p = Path(project_root).resolve()
+    pid_path = Path(pid_file) if pid_file else root_p / "_daio" / "supervisor.pid"
+
+    if not pid_path.exists():
+        return {"running": False, "pid": None}
+
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        alive = is_pid_alive(pid)
+        return {"running": alive, "pid": pid if alive else None}
+    except Exception:
+        return {"running": False, "pid": None}

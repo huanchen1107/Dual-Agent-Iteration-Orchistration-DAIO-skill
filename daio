@@ -209,20 +209,49 @@ def do_rpc_publish(relay_url: Optional[str] = None, token: Optional[str] = None,
 
 
 
-def do_start():
+def do_start(daemon: bool = False):
     """Start DAIO Autonomous Supervisor with Queue Poller & Handoff Watchdog."""
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    print(f"🚀 Starting DAIO Autonomous Supervisor in: {PROJECT_ROOT}")
-    from daio_closed_loop.supervisor import run_supervisor
-    asyncio.run(run_supervisor(project_root=str(PROJECT_ROOT)))
+    if daemon:
+        print(f"🌟 Starting DAIO Autonomous Supervisor daemon in: {PROJECT_ROOT}")
+        from daio_closed_loop.supervisor import start_supervisor_daemon
+        daemon_pid = start_supervisor_daemon(project_root=str(PROJECT_ROOT))
+        print(f"✅ DAIO Supervisor daemon started successfully. (PID: {daemon_pid})")
+        print(f"   Log: {PROJECT_ROOT / '_daio' / 'evidence' / 'supervisor_daemon.log'}")
+        print(f"   PID: {PROJECT_ROOT / '_daio' / 'supervisor.pid'}")
+    else:
+        print(f"🚀 Starting DAIO Autonomous Supervisor in foreground: {PROJECT_ROOT}")
+        from daio_closed_loop.supervisor import run_supervisor
+        asyncio.run(run_supervisor(project_root=str(PROJECT_ROOT)))
+
+
+def do_stop():
+    """Stop running DAIO Supervisor daemon."""
+    from daio_closed_loop.supervisor import stop_supervisor_daemon
+    ok = stop_supervisor_daemon(project_root=str(PROJECT_ROOT))
+    if ok:
+        print(f"🛑 DAIO Supervisor daemon stopped.")
+    else:
+        print(f"ℹ️ No active DAIO Supervisor daemon found.")
+
+
+def do_daemon_status():
+    """Check DAIO Supervisor daemon status."""
+    from daio_closed_loop.supervisor import get_supervisor_daemon_status
+    st = get_supervisor_daemon_status(project_root=str(PROJECT_ROOT))
+    if st["running"]:
+        print(f"🟢 DAIO Supervisor daemon is RUNNING (PID: {st['pid']})")
+    else:
+        print(f"⚪ DAIO Supervisor daemon is STOPPED")
 
 
 def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI (Generic DAIO v2.1)")
-    parser.add_argument("action", nargs="?", default="start", choices=["start", "init", "doctor", "status", "board", "run", "loop", "rpc-status", "rpc-publish"],
-                        help="Action to perform: start, init, doctor, status, board, rpc-status, rpc-publish")
+    parser.add_argument("action", nargs="?", default="start", choices=["start", "stop", "init", "doctor", "status", "daemon-status", "board", "run", "loop", "rpc-status", "rpc-publish"],
+                        help="Action to perform: start, stop, init, doctor, status, daemon-status, board, rpc-status, rpc-publish")
     parser.add_argument("--project", "-C", default=os.environ.get("DAIO_PROJECT_ROOT"), help="Target project root directory (default: current working directory)")
+    parser.add_argument("--daemon", "-d", action="store_true", help="Run supervisor in detached background daemon mode")
     parser.add_argument("--relay", default=None, help="Cloudflare Relay URL for RPC publication")
     parser.add_argument("--token", default=None, help="Bearer authorization token for Cloudflare Relay")
     parser.add_argument("--loop", action="store_true", help="Run publisher continuously in a loop")
@@ -239,12 +268,16 @@ def main():
         do_doctor()
     elif args.action == "status":
         do_status()
+    elif args.action == "daemon-status":
+        do_daemon_status()
+    elif args.action == "stop":
+        do_stop()
     elif args.action == "rpc-status":
         do_rpc_status()
     elif args.action == "rpc-publish":
         do_rpc_publish(relay_url=args.relay, token=args.token, loop_mode=args.loop, interval=args.interval)
     elif args.action in ["start", "loop", "run"]:
-        do_start()
+        do_start(daemon=args.daemon)
     elif args.action == "board":
         board_path = PROJECT_ROOT / "taskboard.html"
         if board_path.exists():
