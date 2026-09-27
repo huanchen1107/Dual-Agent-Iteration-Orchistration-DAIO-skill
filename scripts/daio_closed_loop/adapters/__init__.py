@@ -43,6 +43,10 @@ from .agent_contract import (
     HumanDecisionEnvelope,
     HumanChannelAdapter,
 )
+from .antigravity_cli_agent import AntigravityCLIAdapter, find_antigravity_cli_path
+from .gemini_cli_agent import GeminiCLIAdapter, find_gemini_cli_path
+from .codex_cli_agent import CodexCLIAdapter, find_codex_cli_path
+from .gemini_agent import GeminiEngineeringAgentAdapter
 from .registry import AgentAdapterRegistry
 from .discovery import CLIProviderDiscovery
 
