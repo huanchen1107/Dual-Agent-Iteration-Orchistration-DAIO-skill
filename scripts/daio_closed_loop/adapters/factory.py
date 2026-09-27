@@ -74,6 +74,15 @@ def create_engineering_agent_adapter(config: Optional[Dict[str, Any]] = None) ->
             model_name=cfg.get("model_name", "gemini-2.5-pro")
         )
 
+    if provider in ("ROUTER", "FAILOVER", "FEDERATION", "AGENT_FEDERATION"):
+        from .router import ProviderRouter, RoutingEngineeringAgentAdapter
+        policy = cfg.get("policy")
+        router = ProviderRouter(policy=policy) if policy else None
+        return RoutingEngineeringAgentAdapter(
+            router=router,
+            policy=policy,
+        )
+
     if provider == "MOCK":
         return MockEngineeringAgentAdapter()
 

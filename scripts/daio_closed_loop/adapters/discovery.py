@@ -19,6 +19,7 @@ from .agent_contract import (
     AvailabilityStatus,
     InstallationStatus,
     ProviderDescriptor,
+    ProviderState,
     ProviderTransport,
 )
 
@@ -237,11 +238,20 @@ class CLIProviderDiscovery:
             version = cls._extract_version(executable)
             auth_status = cls._detect_auth_status(spec, executable)
             installation_status = InstallationStatus.INSTALLED
-            availability = AvailabilityStatus.AVAILABLE if auth_status == AuthStatus.AUTHENTICATED else AvailabilityStatus.DEGRADED
+            if spec["auth_mode"] == AuthMode.PROVIDER_DEPENDENT:
+                state = ProviderState.AVAILABLE
+                availability = AvailabilityStatus.AVAILABLE
+            elif auth_status == AuthStatus.AUTHENTICATED:
+                state = ProviderState.AVAILABLE
+                availability = AvailabilityStatus.AVAILABLE
+            else:
+                state = ProviderState.AUTH_REQUIRED
+                availability = AvailabilityStatus.DEGRADED
         else:
             version = None
             auth_status = AuthStatus.NOT_AUTHENTICATED
             installation_status = InstallationStatus.NOT_INSTALLED
+            state = ProviderState.NOT_INSTALLED
             availability = AvailabilityStatus.UNAVAILABLE
 
         return ProviderDescriptor(
@@ -249,6 +259,7 @@ class CLIProviderDiscovery:
             display_name=spec["display_name"],
             transport=ProviderTransport.CLI,
             auth_mode=spec["auth_mode"],
+            state=state,
             installation_status=installation_status,
             auth_status=auth_status,
             availability=availability,

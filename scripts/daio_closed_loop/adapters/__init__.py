@@ -39,6 +39,10 @@ from .agent_contract import (
     AvailabilityStatus,
     ProviderTransport,
     ProviderDescriptor,
+    ProviderState,
+    RoutingFailureType,
+    ProviderRoutingAttempt,
+    FailoverAuditRecord,
     HumanChannelType,
     HumanDecisionEnvelope,
     HumanChannelAdapter,
@@ -50,6 +54,7 @@ from .opencode_cli_agent import OpenCodeCLIAdapter, find_opencode_cli_path
 from .gemini_agent import GeminiEngineeringAgentAdapter
 from .registry import AgentAdapterRegistry
 from .discovery import CLIProviderDiscovery
+from .router import ProviderRouter, RoutingEngineeringAgentAdapter, DEFAULT_ROUTING_POLICY
 
 __all__ = [
     "EngineeringExecutorAdapter",
@@ -89,11 +94,27 @@ __all__ = [
     "AvailabilityStatus",
     "ProviderTransport",
     "ProviderDescriptor",
+    "ProviderState",
+    "RoutingFailureType",
+    "ProviderRoutingAttempt",
+    "FailoverAuditRecord",
     "HumanChannelType",
     "HumanDecisionEnvelope",
     "HumanChannelAdapter",
     "AgentAdapterRegistry",
     "CLIProviderDiscovery",
+    "ProviderRouter",
+    "RoutingEngineeringAgentAdapter",
+    "DEFAULT_ROUTING_POLICY",
+    "AntigravityCLIAdapter",
+    "find_antigravity_cli_path",
+    "GeminiCLIAdapter",
+    "find_gemini_cli_path",
+    "CodexCLIAdapter",
+    "find_codex_cli_path",
+    "OpenCodeCLIAdapter",
+    "find_opencode_cli_path",
+    "GeminiEngineeringAgentAdapter",
 ]
 
 

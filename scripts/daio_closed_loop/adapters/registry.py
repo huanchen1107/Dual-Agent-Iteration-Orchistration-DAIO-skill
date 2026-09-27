@@ -19,6 +19,7 @@ from .agent_contract import (
     AvailabilityStatus,
     InstallationStatus,
     ProviderDescriptor,
+    ProviderState,
     ProviderTransport,
 )
 
@@ -142,6 +143,32 @@ class AgentAdapterRegistry:
     def list_descriptors(self) -> List[ProviderDescriptor]:
         """Lists all registered provider descriptors."""
         return list(self._descriptors.values())
+
+    def get_provider_state(self, provider_id: str) -> ProviderState:
+        """Retrieves current operational state of a provider descriptor."""
+        d = self.get_descriptor(provider_id)
+        if not d:
+            from .discovery import CLIProviderDiscovery
+            d = CLIProviderDiscovery.inspect_provider(provider_id)
+            self.register_descriptor(d)
+        return d.state
+
+    def is_provider_routable(self, provider_id: str) -> bool:
+        """
+        Determines whether a provider is operational and ready to accept routed work.
+        Enforces DISCOVERED != AVAILABLE.
+        """
+        state = self.get_provider_state(provider_id)
+        return state in (ProviderState.AVAILABLE, ProviderState.DEGRADED)
+
+    def get_provider_metadata(self, provider_id: str) -> Optional[Dict[str, Any]]:
+        """Returns normalized metadata dictionary for a provider descriptor."""
+        d = self.get_descriptor(provider_id)
+        if not d:
+            from .discovery import CLIProviderDiscovery
+            d = CLIProviderDiscovery.inspect_provider(provider_id)
+            self.register_descriptor(d)
+        return d.to_dict()
 
     def discover_and_register_cli_providers(self) -> List[ProviderDescriptor]:
         """Discovers host CLI providers and registers their descriptors dynamically."""

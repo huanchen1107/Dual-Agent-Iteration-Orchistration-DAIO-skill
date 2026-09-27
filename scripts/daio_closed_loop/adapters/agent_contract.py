@@ -387,6 +387,98 @@ class ProviderTransport(str, Enum):
     IPC = "IPC"
 
 
+class ProviderState(str, Enum):
+    """
+    Standard operational state of an agent provider in the federation.
+    Strictly separates binary discovery on disk from operational availability (DISCOVERED != AVAILABLE).
+    """
+    NOT_INSTALLED = "NOT_INSTALLED"
+    DISCOVERED = "DISCOVERED"
+    AVAILABLE = "AVAILABLE"
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class RoutingFailureType(str, Enum):
+    """
+    Standardized taxonomy for provider-level failover events.
+    Failover is ONLY permitted for provider/runtime availability failures,
+    NEVER for workflow outcomes (e.g. test failure, scope violation, human gate).
+    """
+    BINARY_UNAVAILABLE = "BINARY_UNAVAILABLE"
+    AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
+    SESSION_EXPIRED = "SESSION_EXPIRED"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    TIMEOUT = "TIMEOUT"
+    RATE_LIMIT = "RATE_LIMIT"
+    TRANSIENT_NETWORK_ERROR = "TRANSIENT_NETWORK_ERROR"
+    MALFORMED_PROVIDER_RESPONSE = "MALFORMED_PROVIDER_RESPONSE"
+
+
+@dataclass
+class ProviderRoutingAttempt:
+    """Audit record for a single provider attempt in a routing sequence."""
+    provider_id: str
+    timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    status: str = "SUCCESS"  # "SUCCESS", "FAILURE", "SKIPPED"
+    failure_reason: Optional[str] = None
+    latency_ms: float = 0.0
+    model: Optional[str] = None
+    underlying_provider: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "timestamp": self.timestamp,
+            "status": self.status,
+            "failure_reason": self.failure_reason,
+            "latency_ms": self.latency_ms,
+            "model": self.model,
+            "underlying_provider": self.underlying_provider,
+            "details": self.details,
+        }
+
+
+@dataclass
+class FailoverAuditRecord:
+    """
+    Canonical audit trail documenting provider selection, fallback sequence, and timing.
+    Guarantees that provider failover is fully reconstructable and never happens silently.
+    """
+    routing_id: str
+    work_id: str
+    requested_capabilities: List[str] = field(default_factory=list)
+    preferred_order: List[str] = field(default_factory=list)
+    provider_attempts: List[ProviderRoutingAttempt] = field(default_factory=list)
+    selected_provider: Optional[str] = None
+    fallback_occurred: bool = False
+    fallback_reason: Optional[str] = None
+    model: Optional[str] = None
+    underlying_provider: Optional[str] = None
+    started_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    completed_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    evidence_path: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "routing_id": self.routing_id,
+            "work_id": self.work_id,
+            "requested_capabilities": self.requested_capabilities,
+            "preferred_order": self.preferred_order,
+            "provider_attempts": [a.to_dict() for a in self.provider_attempts],
+            "selected_provider": self.selected_provider,
+            "fallback_occurred": self.fallback_occurred,
+            "fallback_reason": self.fallback_reason,
+            "model": self.model,
+            "underlying_provider": self.underlying_provider,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "evidence_path": self.evidence_path,
+        }
+
+
 @dataclass
 class ProviderDescriptor:
     """
@@ -397,6 +489,7 @@ class ProviderDescriptor:
     display_name: str
     transport: ProviderTransport
     auth_mode: AuthMode
+    state: ProviderState = ProviderState.DISCOVERED
     installation_status: InstallationStatus = InstallationStatus.UNKNOWN
     auth_status: AuthStatus = AuthStatus.UNKNOWN
     availability: AvailabilityStatus = AvailabilityStatus.UNAVAILABLE
@@ -408,6 +501,10 @@ class ProviderDescriptor:
     supports_structured_output: bool = True
     supports_sandbox: bool = True
     supports_unattended: bool = True
+    model: Optional[str] = None
+    underlying_provider: Optional[str] = None
+    health: str = "HEALTHY"
+    last_probe_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -416,6 +513,7 @@ class ProviderDescriptor:
             "display_name": self.display_name,
             "transport": self.transport.value if isinstance(self.transport, ProviderTransport) else str(self.transport),
             "auth_mode": self.auth_mode.value if isinstance(self.auth_mode, AuthMode) else str(self.auth_mode),
+            "state": self.state.value if isinstance(self.state, ProviderState) else str(self.state),
             "installation_status": self.installation_status.value if isinstance(self.installation_status, InstallationStatus) else str(self.installation_status),
             "auth_status": self.auth_status.value if isinstance(self.auth_status, AuthStatus) else str(self.auth_status),
             "availability": self.availability.value if isinstance(self.availability, AvailabilityStatus) else str(self.availability),
@@ -427,6 +525,10 @@ class ProviderDescriptor:
             "supports_structured_output": self.supports_structured_output,
             "supports_sandbox": self.supports_sandbox,
             "supports_unattended": self.supports_unattended,
+            "model": self.model,
+            "underlying_provider": self.underlying_provider,
+            "health": self.health,
+            "last_probe_at": self.last_probe_at,
             "metadata": self.metadata,
         }
 
