@@ -29,8 +29,9 @@ from .router import DAIORoleRouter
 from .adapters.agent_contract import EngineeringAgentAdapter
 from .adapters.executor import EngineeringExecutorAdapter, SubprocessWorkspaceExecutor
 from .adapters.bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
-from .adapters.factory import create_engineering_agent_adapter
+from .adapters.factory import create_engineering_agent_adapter, create_architect_bridge_adapter
 from .orchestrator import DAIOClosedLoopOrchestrator
+
 
 logger = logging.getLogger("DAIO_Persistent_Worker")
 
@@ -111,7 +112,13 @@ class DAIOPersistentWorker:
         if bridge:
             self.bridge = bridge
         else:
-            self.bridge = ChromeCDPBridgeAdapter(endpoint=endpoint_config, cdp_port=cdp_port)
+            arch_cfg = cfg_dict.get("architect", {})
+            if "endpoint" not in arch_cfg and endpoint_config:
+                arch_cfg["endpoint"] = endpoint_config
+            if "cdp_port" not in arch_cfg and cdp_port:
+                arch_cfg["cdp_port"] = cdp_port
+            self.bridge = create_architect_bridge_adapter(arch_cfg)
+
 
         self.orchestrator = DAIOClosedLoopOrchestrator(
             store=self.store,
@@ -136,21 +143,7 @@ class DAIOPersistentWorker:
             ttl_seconds=self.lease_ttl_seconds
         )
         if not claimed:
-            # Check if any completed work item has an unhandled next_phase handoff
-            all_items = self.store.list_all_work_items()
-            for it in all_items:
-                if it.status == DAIOStatus.COMPLETED and it.authorized_next_phase:
-                    if not is_terminal_phase(it.authorized_next_phase):
-                        resolved = self.orchestrator.resolve_next_work_item(it, it.authorized_next_phase)
-                        if resolved and resolved.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
-                            claimed = self.store.claim_next_available_work_item(
-                                worker_id=self.worker_id,
-                                ttl_seconds=self.lease_ttl_seconds
-                            )
-                            if claimed:
-                                break
-            if not claimed:
-                return None
+            return None
 
         self._active_work_id = claimed.work_id
         logger.info(f"⚡ WORKER_CLAIMED_ITEM: work_id={claimed.work_id}, change_id={claimed.change_id}, gate={claimed.current_gate.value}, status={claimed.status.value}")

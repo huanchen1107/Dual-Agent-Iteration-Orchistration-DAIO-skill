@@ -33,12 +33,13 @@ from .worker import DAIOPersistentWorker
 from .orchestrator import DAIOClosedLoopOrchestrator
 from .adapters.executor import EngineeringExecutorAdapter, SubprocessWorkspaceExecutor
 from .adapters.bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
-from .adapters.factory import create_engineering_agent_adapter
+from .adapters.factory import create_engineering_agent_adapter, create_architect_bridge_adapter
 from .adapters.remote_relay import RemoteDecisionAdapter, RemoteDecisionRelayClient
 from .adapters.rpc_status_collector import DAIOStatusCollector
 from .adapters.rpc_status_publisher import DAIOStatusPublisher
 
 logger = logging.getLogger("DAIO_Supervisor")
+
 
 
 class DAIOSupervisor:
@@ -111,7 +112,13 @@ class DAIOSupervisor:
         if bridge:
             self.bridge = bridge
         else:
-            self.bridge = ChromeCDPBridgeAdapter(endpoint=endpoint_config, cdp_port=cdp_port)
+            arch_cfg = cfg_dict.get("architect", {})
+            if "endpoint" not in arch_cfg and endpoint_config:
+                arch_cfg["endpoint"] = endpoint_config
+            if "cdp_port" not in arch_cfg and cdp_port:
+                arch_cfg["cdp_port"] = cdp_port
+            self.bridge = create_architect_bridge_adapter(arch_cfg)
+
 
         # Resolve remote relay adapter (RPC-2 / RPC-3 persistent ingress)
         if remote_relay_adapter:

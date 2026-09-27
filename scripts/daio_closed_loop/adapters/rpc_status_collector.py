@@ -175,15 +175,34 @@ class DAIOStatusCollector:
         # 5. Retrieve active work items & human gate state
         items: List[DAIOWorkItem] = store.list_work_items()
         active_item: Optional[DAIOWorkItem] = None
-        queue_depth = len(items)
+        
+        # Only count genuinely active/pending queue depth
+        active_queue_statuses = {DAIOStatus.QUEUED, DAIOStatus.IN_PROGRESS, DAIOStatus.AWAITING_REVIEW}
+        queue_depth = len([w for w in items if w.status in active_queue_statuses])
 
-        # Look for in-progress or human gate work items
+        # Priority 1: IN_PROGRESS
         for w in items:
-            if w.status in (DAIOStatus.IN_PROGRESS, DAIOStatus.HUMAN_GATE_REQUIRED):
+            if w.status == DAIOStatus.IN_PROGRESS:
                 active_item = w
                 break
+
+        # Priority 2: HUMAN_GATE_REQUIRED
+        if active_item is None:
+            for w in items:
+                if w.status == DAIOStatus.HUMAN_GATE_REQUIRED or w.current_gate == DAIOGate.HUMAN_GATE:
+                    active_item = w
+                    break
+
+        # Priority 3: AWAITING_REVIEW or QUEUED
+        if active_item is None:
+            for w in items:
+                if w.status in (DAIOStatus.AWAITING_REVIEW, DAIOStatus.QUEUED):
+                    active_item = w
+                    break
+
+        # Priority 4: Most recently updated item (never arbitrarily picking index 0)
         if active_item is None and items:
-            active_item = items[0]
+            active_item = max(items, key=lambda x: x.updated_at or x.created_at or "")
 
         active_work_id = active_item.work_id if active_item else None
         active_work_name = active_item.change_id if active_item else None

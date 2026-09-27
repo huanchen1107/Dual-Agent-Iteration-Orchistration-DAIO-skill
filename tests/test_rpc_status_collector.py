@@ -199,3 +199,52 @@ def test_collector_runtime_discovery_paths():
         assert status.live_plane.project_name == "DiscoveredProject"
         assert status.live_plane.last_heartbeat_timestamp == now_utc.isoformat()
 
+
+def test_collector_queue_depth_and_active_work_selection():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        db_path = tmp_path / "_daio" / "daio_work.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+
+        # Insert 3 completed historical items
+        for i in range(3):
+            store.save_work_item(DAIOWorkItem(
+                work_id=f"work-comp-{i}",
+                project_root=str(tmp_path),
+                change_id=f"change-old-{i}",
+                current_stage="S3",
+                current_gate=DAIOGate.IMPLEMENTATION_GATE,
+                assigned_role=DAIORole.LEAD_ARCHITECT_REVIEW,
+                status=DAIOStatus.COMPLETED,
+                created_at=f"2026-09-20T10:0{i}:00Z",
+                updated_at=f"2026-09-20T10:0{i}:00Z",
+            ))
+
+        collector = DAIOStatusCollector(project_root=str(tmp_path), store=store)
+        live = collector.collect_live_plane()
+
+        # Queue depth must be 0 because all items are COMPLETED
+        assert live.queue_depth == 0
+        # Active work id should fallback to the most recent one (work-comp-2), not index 0
+        assert live.active_work_id == "work-comp-2"
+
+        # Now insert an active QUEUED item
+        store.save_work_item(DAIOWorkItem(
+            work_id="work-active-queued",
+            project_root=str(tmp_path),
+            change_id="change-new",
+            current_stage="S1",
+            current_gate=DAIOGate.CONTRACT_GATE,
+            assigned_role=DAIORole.ENGINEERING_EXECUTION,
+            status=DAIOStatus.QUEUED,
+            created_at="2026-09-27T10:00:00Z",
+            updated_at="2026-09-27T10:00:00Z",
+        ))
+
+        live2 = collector.collect_live_plane()
+        assert live2.queue_depth == 1
+        assert live2.active_work_id == "work-active-queued"
+
+
