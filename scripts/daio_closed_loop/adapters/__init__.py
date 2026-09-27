@@ -14,6 +14,27 @@ from .bridge import (
 from .rpc_status_collector import DAIOStatusCollector
 from .rpc_status_publisher import DAIOStatusPublisher
 from .factory import create_engineering_agent_adapter, create_architect_bridge_adapter
+from .agent_contract import (
+    AgentRole,
+    AgentCapability,
+    AgentIdentity,
+    AgentFailureType,
+    RecoveryClassification,
+    AgentFailure,
+    AgentDecision,
+    AgentEvidence,
+    ProposedFileEdit,
+    AgentRequest,
+    AgentResponse,
+    AgentHealthStatus,
+    AgentHealth,
+    AgentAdapter,
+    EngineeringAgentAdapter,
+    MockEngineeringAgentAdapter,
+    AgentTaskRequest,
+    AgentTaskProposal,
+)
+from .registry import AgentAdapterRegistry
 
 __all__ = [
     "EngineeringExecutorAdapter",
@@ -29,7 +50,27 @@ __all__ = [
     "DAIOStatusPublisher",
     "create_engineering_agent_adapter",
     "create_architect_bridge_adapter",
+    "AgentRole",
+    "AgentCapability",
+    "AgentIdentity",
+    "AgentFailureType",
+    "RecoveryClassification",
+    "AgentFailure",
+    "AgentDecision",
+    "AgentEvidence",
+    "ProposedFileEdit",
+    "AgentRequest",
+    "AgentResponse",
+    "AgentHealthStatus",
+    "AgentHealth",
+    "AgentAdapter",
+    "EngineeringAgentAdapter",
+    "MockEngineeringAgentAdapter",
+    "AgentTaskRequest",
+    "AgentTaskProposal",
+    "AgentAdapterRegistry",
 ]
+
 
 
 
