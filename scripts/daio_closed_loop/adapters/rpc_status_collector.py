@@ -180,27 +180,34 @@ class DAIOStatusCollector:
         active_queue_statuses = {DAIOStatus.QUEUED, DAIOStatus.IN_PROGRESS, DAIOStatus.AWAITING_REVIEW}
         queue_depth = len([w for w in items if w.status in active_queue_statuses])
 
-        # Priority 1: IN_PROGRESS
+        # Priority 1: IN_PROGRESS (currently executing)
         for w in items:
             if w.status == DAIOStatus.IN_PROGRESS:
                 active_item = w
                 break
 
-        # Priority 2: HUMAN_GATE_REQUIRED
+        # Priority 2: HUMAN_GATE_REQUIRED (actively waiting for human decision)
         if active_item is None:
             for w in items:
-                if w.status == DAIOStatus.HUMAN_GATE_REQUIRED or w.current_gate == DAIOGate.HUMAN_GATE:
+                if w.status == DAIOStatus.HUMAN_GATE_REQUIRED:
                     active_item = w
                     break
 
-        # Priority 3: AWAITING_REVIEW or QUEUED
+        # Priority 3: AWAITING_REVIEW or QUEUED (runnable/queued)
         if active_item is None:
             for w in items:
                 if w.status in (DAIOStatus.AWAITING_REVIEW, DAIOStatus.QUEUED):
                     active_item = w
                     break
 
-        # Priority 4: Most recently updated item (never arbitrarily picking index 0)
+        # Priority 4: BLOCKED
+        if active_item is None:
+            for w in items:
+                if w.status == DAIOStatus.BLOCKED:
+                    active_item = w
+                    break
+
+        # Priority 5: Fallback to most recently updated item (idle / historical)
         if active_item is None and items:
             active_item = max(items, key=lambda x: x.updated_at or x.created_at or "")
 
@@ -209,20 +216,15 @@ class DAIOStatusCollector:
         current_phase = active_item.current_stage if active_item else None
         current_gate = active_item.current_gate.value if active_item else None
         assigned_role = active_item.assigned_role.value if active_item else None
-        human_gate_req = False
-        human_gate_reason = None
-
-        if active_item:
-            human_gate_req = (
-                active_item.status == DAIOStatus.HUMAN_GATE_REQUIRED
-                or active_item.current_gate == DAIOGate.HUMAN_GATE
-                or active_item.assigned_role == DAIORole.HUMAN_PROJECT_OWNER
-            )
-            human_gate_reason = active_item.human_gate_reason
+        
+        # Human Gate is ONLY required when the work item status is strictly HUMAN_GATE_REQUIRED
+        human_gate_req = (active_item is not None and active_item.status == DAIOStatus.HUMAN_GATE_REQUIRED)
+        human_gate_reason = active_item.human_gate_reason if human_gate_req else None
 
         # 6. Retrieve active recovery epoch / handoff watch
         watches = store.list_active_handoff_watches()
         active_epoch = watches[0].recovery_epoch_id if watches else None
+
 
         return LivePlaneStatus(
             project_name=project_name,

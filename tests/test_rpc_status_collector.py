@@ -248,3 +248,139 @@ def test_collector_queue_depth_and_active_work_selection():
         assert live2.active_work_id == "work-active-queued"
 
 
+def test_scenario_a_completed_human_gate_not_active_and_no_human_gate_required():
+    """A. COMPLETED + HUMAN_GATE + HUMAN_PROJECT_OWNER -> not active, human_gate_required=false, queue_depth=0."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        db_path = tmp_path / "_daio" / "daio_work.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+
+        store.save_work_item(DAIOWorkItem(
+            work_id="daio-root-change_051_openspec_scaffold",
+            project_root=str(tmp_path),
+            change_id="CHANGE_051_OPENSPEC_SCAFFOLD",
+            current_stage="CHANGE_051_OPENSPEC_SCAFFOLD",
+            current_gate=DAIOGate.HUMAN_GATE,
+            assigned_role=DAIORole.HUMAN_PROJECT_OWNER,
+            status=DAIOStatus.COMPLETED,
+            human_gate_reason="Historical human gate reason text",
+            created_at="2026-09-24T23:06:52Z",
+            updated_at="2026-09-25T02:47:47Z",
+        ))
+
+        collector = DAIOStatusCollector(project_root=str(tmp_path), store=store)
+        live = collector.collect_live_plane()
+
+        assert live.human_gate_required is False
+        assert live.human_gate_reason is None
+        assert live.queue_depth == 0
+
+
+def test_scenario_b_active_human_gate_required():
+    """B. HUMAN_GATE_REQUIRED + HUMAN_GATE + HUMAN_PROJECT_OWNER -> active, human_gate_required=true."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        db_path = tmp_path / "_daio" / "daio_work.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+
+        store.save_work_item(DAIOWorkItem(
+            work_id="work-active-gate",
+            project_root=str(tmp_path),
+            change_id="CHANGE_GATE_TEST",
+            current_stage="S3",
+            current_gate=DAIOGate.HUMAN_GATE,
+            assigned_role=DAIORole.HUMAN_PROJECT_OWNER,
+            status=DAIOStatus.HUMAN_GATE_REQUIRED,
+            human_gate_reason="Legitimate Human Gate required for review",
+            created_at="2026-09-27T12:00:00Z",
+            updated_at="2026-09-27T12:00:00Z",
+        ))
+
+        collector = DAIOStatusCollector(project_root=str(tmp_path), store=store)
+        live = collector.collect_live_plane()
+
+        assert live.active_work_id == "work-active-gate"
+        assert live.human_gate_required is True
+        assert live.human_gate_reason == "Legitimate Human Gate required for review"
+
+
+def test_scenario_c_completed_human_gate_does_not_shadow_active_engineering_work():
+    """C. COMPLETED historical Human Gate + active engineering item -> engineering item selected, not shadowed."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        db_path = tmp_path / "_daio" / "daio_work.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+
+        # 1. Historical completed human gate
+        store.save_work_item(DAIOWorkItem(
+            work_id="work-hist-human-gate",
+            project_root=str(tmp_path),
+            change_id="CHANGE_051_SCAFFOLD",
+            current_stage="CHANGE_051_SCAFFOLD",
+            current_gate=DAIOGate.HUMAN_GATE,
+            assigned_role=DAIORole.HUMAN_PROJECT_OWNER,
+            status=DAIOStatus.COMPLETED,
+            human_gate_reason="Old human reason",
+            created_at="2026-09-25T01:00:00Z",
+            updated_at="2026-09-25T02:00:00Z",
+        ))
+
+        # 2. Genuinely active engineering work item (QUEUED / IN_PROGRESS)
+        store.save_work_item(DAIOWorkItem(
+            work_id="work-active-eng",
+            project_root=str(tmp_path),
+            change_id="CHANGE_052_ENG",
+            current_stage="S3",
+            current_gate=DAIOGate.IMPLEMENTATION_GATE,
+            assigned_role=DAIORole.ENGINEERING_EXECUTION,
+            status=DAIOStatus.QUEUED,
+            created_at="2026-09-27T10:00:00Z",
+            updated_at="2026-09-27T10:00:00Z",
+        ))
+
+        collector = DAIOStatusCollector(project_root=str(tmp_path), store=store)
+        live = collector.collect_live_plane()
+
+        # Active item must be the queued engineering work, not the historical completed gate
+        assert live.active_work_id == "work-active-eng"
+        assert live.human_gate_required is False
+        assert live.human_gate_reason is None
+        assert live.queue_depth == 1
+
+
+def test_scenario_d_multiple_completed_historical_human_gates_no_active_work():
+    """D. Multiple COMPLETED historical Human Gates with no active work -> no active Human Gate reported, queue_depth=0."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        db_path = tmp_path / "_daio" / "daio_work.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteDAIOWorkStore(db_path=str(db_path))
+
+        for i in range(5):
+            store.save_work_item(DAIOWorkItem(
+                work_id=f"work-hist-gate-{i}",
+                project_root=str(tmp_path),
+                change_id=f"CHANGE_05{i}",
+                current_stage=f"STAGE_05{i}",
+                current_gate=DAIOGate.HUMAN_GATE,
+                assigned_role=DAIORole.HUMAN_PROJECT_OWNER,
+                status=DAIOStatus.COMPLETED,
+                human_gate_reason=f"Reason {i}",
+                created_at=f"2026-09-2{i}T10:00:00Z",
+                updated_at=f"2026-09-2{i}T12:00:00Z",
+            ))
+
+        collector = DAIOStatusCollector(project_root=str(tmp_path), store=store)
+        live = collector.collect_live_plane()
+
+        assert live.human_gate_required is False
+        assert live.human_gate_reason is None
+        assert live.queue_depth == 0
+        # Active work id falls back to the most recently updated item
+        assert live.active_work_id == "work-hist-gate-4"
+
+
+
