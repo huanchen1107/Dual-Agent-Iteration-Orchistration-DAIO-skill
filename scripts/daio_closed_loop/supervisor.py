@@ -31,6 +31,7 @@ from .store import DAIOWorkStore, SqliteDAIOWorkStore
 from .watchdog import DAIOHandoffWatchdog
 from .worker import DAIOPersistentWorker
 from .orchestrator import DAIOClosedLoopOrchestrator
+from .inbox import DAIORootWorkInbox
 from .adapters.executor import EngineeringExecutorAdapter, SubprocessWorkspaceExecutor
 from .adapters.bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
 from .adapters.factory import create_engineering_agent_adapter, create_architect_bridge_adapter
@@ -64,6 +65,7 @@ class DAIOSupervisor:
         watchdog_progress_timeout: float = 360.0,
         max_recovery_attempts: int = 3,
         default_test_command: Optional[str] = None,
+        inbox_dir: Optional[Path | str] = None,
     ) -> None:
         self.project_root = Path(project_root).resolve()
         self.supervisor_id = supervisor_id or f"supervisor-{uuid.uuid4().hex[:6]}"
@@ -71,6 +73,10 @@ class DAIOSupervisor:
         self.lease_ttl_seconds = lease_ttl_seconds
         self.default_test_command = default_test_command
         self._running = False
+
+        # Resolve durable file inbox (DEFECT-C1-SUPERVISOR-INGRESS-002)
+        inbox_path = Path(inbox_dir) if inbox_dir else self.project_root / "_daio" / "inbox"
+        self.inbox = DAIORootWorkInbox(inbox_dir=inbox_path)
 
         # Resolve store
         if store:
@@ -231,6 +237,7 @@ class DAIOSupervisor:
     async def run_tick(self) -> Dict[str, Any]:
         """
         Execute one complete supervisor tick:
+        0. Poll and ingest filesystem-backed durable root work requests.
         1. Auto-register watches for completed works with authorized next_phase.
         2. Evaluate active watchdog monitors & execute bounded stall recoveries.
         3. Poll and process next available work item.
@@ -238,6 +245,17 @@ class DAIOSupervisor:
         """
         now = datetime.datetime.now(datetime.timezone.utc)
         now_iso = now.isoformat()
+
+        # 0. Filesystem-backed Root Work Inbox Ingress (DEFECT-C1-SUPERVISOR-INGRESS-002)
+        inbox_results = []
+        if hasattr(self, "inbox") and self.inbox:
+            try:
+                inbox_results = self.inbox.poll_and_ingest(
+                    store=self.store,
+                    project_root=str(self.project_root),
+                )
+            except Exception as ex:
+                logger.warning(f"⚠️ Inbox polling error (non-fatal): {ex}")
 
         # 1. Register watches for any completed items with unmonitored next_phase
         all_items = self.store.list_work_items()

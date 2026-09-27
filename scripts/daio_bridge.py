@@ -80,8 +80,8 @@ class UniversalCDPClient:
     async def get_status(self) -> Dict[str, Any]:
         check_js = """
         (() => {
-            const assistantEls = document.querySelectorAll('[data-message-author-role="assistant"], .font-claude-message, [data-is-streaming]');
-            const markdowns = document.querySelectorAll('.markdown, .prose');
+            const assistantEls = document.querySelectorAll('[data-message-author-role="assistant"], .agent-turn, .font-claude-message, [data-is-streaming]');
+            const markdowns = document.querySelectorAll('.markdown, .prose, article');
             
             let lastText = '';
             if (assistantEls.length > 0) {
@@ -91,11 +91,11 @@ class UniversalCDPClient:
             }
             
             // Detection across ChatGPT, Claude, and generic web UIs
-            const isStreaming = !!document.querySelector('button[aria-label="Stop streaming"], button[data-testid="stop-button"], .result-streaming, .streaming');
+            const isStreaming = !!document.querySelector('button[aria-label="Stop streaming"], button[aria-label="停止串流"], button[aria-label="停止產生"], button[aria-label="停止"], button[data-testid="stop-button"], .result-streaming, .streaming');
             const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"], textarea');
             
             return {
-                assistantCount: assistantEls.length,
+                assistantCount: assistantEls.length > 0 ? assistantEls.length : markdowns.length,
                 lastText: lastText,
                 isGenerating: isStreaming,
                 hasInput: !!promptEl
@@ -105,6 +105,11 @@ class UniversalCDPClient:
         return await self.evaluate(check_js)
 
     async def send_message(self, message_text: str, timeout_seconds: int = 240) -> Dict[str, Any]:
+        # Capture initial state
+        initial_status = await self.get_status() or {}
+        initial_count = initial_status.get("assistantCount", 0)
+        initial_text = (initial_status.get("lastText") or "").strip()
+
         # 1. Fill Text Input
         input_js = f"""
         (() => {{
@@ -112,12 +117,30 @@ class UniversalCDPClient:
             if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
             
             promptEl.focus();
+            const text = {json.dumps(message_text)};
             if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {{
-                promptEl.value = {json.dumps(message_text)};
+                promptEl.value = text;
                 promptEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 promptEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
             }} else {{
-                promptEl.innerHTML = '<p>' + {json.dumps(message_text)}.replace(/\\n/g, '</p><p>') + '</p>';
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+                try {{
+                    const dt = new DataTransfer();
+                    dt.setData('text/plain', text);
+                    const pasteEvent = new ClipboardEvent('paste', {{
+                        clipboardData: dt,
+                        bubbles: true,
+                        cancelable: true
+                    }});
+                    promptEl.dispatchEvent(pasteEvent);
+                }} catch (e) {{}}
+                if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
+                    document.execCommand('insertText', false, text);
+                }}
+                if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
+                    promptEl.innerHTML = '<p>' + text.replace(/\\n/g, '</p><p>') + '</p>';
+                }}
                 promptEl.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText' }}));
             }}
             return {{ success: true }};
@@ -135,8 +158,11 @@ class UniversalCDPClient:
             const sendBtn = document.querySelector('button[data-testid="send-button"]') 
                 || document.querySelector('button[aria-label="Send prompt"]')
                 || document.querySelector('button[aria-label="傳送提示詞"]')
+                || document.querySelector('button[aria-label="傳送"]')
+                || document.querySelector('button[aria-label*="傳送"]')
                 || document.querySelector('button[aria-label="Send message"]')
                 || document.querySelector('button[aria-label="Send Message"]')
+                || document.querySelector('button[data-testid="fruitjuice-send-button"]')
                 || document.querySelector('fieldset button:last-of-type')
                 || document.querySelector('form button:last-of-type');
             if (sendBtn && !sendBtn.disabled) {
@@ -151,28 +177,39 @@ class UniversalCDPClient:
             return { clicked: false, error: "No send button found" };
         })()
         """
+
         click_res = await self.evaluate(click_send_js)
         logger.info(f"Send action dispatched: {click_res}")
 
-        # 3. Wait for generation to finish
+        # 3. Wait for generation to start and finish
         logger.info("Waiting for Web LLM response stream to finish...")
         await asyncio.sleep(2.0)
         
         start_time = asyncio.get_event_loop().time()
+        saw_generating = False
+
         while True:
-            status = await self.get_status()
-            if not status.get("isGenerating"):
-                reply = status.get("lastText", "").strip()
-                if len(reply) > 0:
+            status = await self.get_status() or {}
+            is_gen = status.get("isGenerating", False)
+            curr_count = status.get("assistantCount", 0)
+            curr_text = (status.get("lastText") or "").strip()
+
+            if is_gen:
+                saw_generating = True
+
+            # If stream finished or new response text appeared
+            if not is_gen and (saw_generating or curr_count > initial_count or (len(curr_text) > 0 and curr_text != initial_text)):
+                if len(curr_text) > 0:
                     logger.info("Stream generation complete!")
                     return {
                         "success": True,
-                        "reply": reply,
-                        "assistant_count": status.get("assistantCount", 0)
+                        "reply": curr_text,
+                        "assistant_count": curr_count,
                     }
             if asyncio.get_event_loop().time() - start_time > timeout_seconds:
                 return {"success": False, "error": f"Timeout waiting for response after {timeout_seconds}s"}
             await asyncio.sleep(2.0)
+
 
     async def post_message_only(self, message_text: str) -> Dict[str, Any]:
         """Dispatch a one-way message/telemetry without waiting for or parsing a reply."""
@@ -183,12 +220,30 @@ class UniversalCDPClient:
             if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
             
             promptEl.focus();
+            const text = {json.dumps(message_text)};
             if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {{
-                promptEl.value = {json.dumps(message_text)};
+                promptEl.value = text;
                 promptEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
                 promptEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
             }} else {{
-                promptEl.innerHTML = '<p>' + {json.dumps(message_text)}.replace(/\\n/g, '</p><p>') + '</p>';
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+                try {{
+                    const dt = new DataTransfer();
+                    dt.setData('text/plain', text);
+                    const pasteEvent = new ClipboardEvent('paste', {{
+                        clipboardData: dt,
+                        bubbles: true,
+                        cancelable: true
+                    }});
+                    promptEl.dispatchEvent(pasteEvent);
+                }} catch (e) {{}}
+                if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
+                    document.execCommand('insertText', false, text);
+                }}
+                if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
+                    promptEl.innerHTML = '<p>' + text.replace(/\\n/g, '</p><p>') + '</p>';
+                }}
                 promptEl.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText' }}));
             }}
             return {{ success: true }};
