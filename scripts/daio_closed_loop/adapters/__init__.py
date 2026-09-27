@@ -33,8 +33,18 @@ from .agent_contract import (
     MockEngineeringAgentAdapter,
     AgentTaskRequest,
     AgentTaskProposal,
+    AuthMode,
+    AuthStatus,
+    InstallationStatus,
+    AvailabilityStatus,
+    ProviderTransport,
+    ProviderDescriptor,
+    HumanChannelType,
+    HumanDecisionEnvelope,
+    HumanChannelAdapter,
 )
 from .registry import AgentAdapterRegistry
+from .discovery import CLIProviderDiscovery
 
 __all__ = [
     "EngineeringExecutorAdapter",
@@ -68,8 +78,19 @@ __all__ = [
     "MockEngineeringAgentAdapter",
     "AgentTaskRequest",
     "AgentTaskProposal",
+    "AuthMode",
+    "AuthStatus",
+    "InstallationStatus",
+    "AvailabilityStatus",
+    "ProviderTransport",
+    "ProviderDescriptor",
+    "HumanChannelType",
+    "HumanDecisionEnvelope",
+    "HumanChannelAdapter",
     "AgentAdapterRegistry",
+    "CLIProviderDiscovery",
 ]
+
 
 
 

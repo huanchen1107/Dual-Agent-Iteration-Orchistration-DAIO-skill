@@ -14,6 +14,12 @@ from .agent_contract import (
     AgentHealthStatus,
     AgentIdentity,
     AgentRole,
+    AuthMode,
+    AuthStatus,
+    AvailabilityStatus,
+    InstallationStatus,
+    ProviderDescriptor,
+    ProviderTransport,
 )
 
 logger = logging.getLogger("DAIO_Agent_Registry")
@@ -21,14 +27,16 @@ logger = logging.getLogger("DAIO_Agent_Registry")
 
 class AgentAdapterRegistry:
     """
-    Central provider-neutral registry for agent adapters.
-    Matches incoming AgentRequests to compatible, healthy adapters without hardcoding vendor names.
+    Central provider-neutral registry for agent adapters and provider capability descriptors.
+    Matches incoming AgentRequests to compatible, healthy adapters and discovers local CLI providers.
     """
 
     def __init__(self) -> None:
         # role -> list of (priority, adapter)
         self._registry: Dict[AgentRole, List[Tuple[int, AgentAdapter]]] = {}
         self._instances: Dict[str, AgentAdapter] = {}
+        self._descriptors: Dict[str, ProviderDescriptor] = {}
+
 
     def register(self, adapter: AgentAdapter, priority: int = 100) -> None:
         """
@@ -122,3 +130,61 @@ class AgentAdapterRegistry:
 
         logger.warning(f"No healthy, compatible adapter found for role: {role.value} with caps: {req_caps}")
         return None
+
+    def register_descriptor(self, descriptor: ProviderDescriptor) -> None:
+        """Registers a canonical provider capability descriptor."""
+        self._descriptors[descriptor.provider_id] = descriptor
+
+    def get_descriptor(self, provider_id: str) -> Optional[ProviderDescriptor]:
+        """Retrieves a provider descriptor by ID."""
+        return self._descriptors.get(provider_id)
+
+    def list_descriptors(self) -> List[ProviderDescriptor]:
+        """Lists all registered provider descriptors."""
+        return list(self._descriptors.values())
+
+    def discover_and_register_cli_providers(self) -> List[ProviderDescriptor]:
+        """Discovers host CLI providers and registers their descriptors dynamically."""
+        from .discovery import CLIProviderDiscovery
+        descriptors = CLIProviderDiscovery.discover_all_cli_providers()
+        for d in descriptors:
+            self.register_descriptor(d)
+        return descriptors
+
+    def find_matching_descriptors(
+        self,
+        required_capabilities: Optional[Set[AgentCapability]] = None,
+        preferred_auth_mode: Optional[AuthMode] = None,
+        preferred_transport: Optional[ProviderTransport] = None,
+        role: Optional[AgentRole] = None,
+        only_installed: bool = True,
+    ) -> List[ProviderDescriptor]:
+        """
+        Queries registered provider descriptors by capability, role, preferred auth mode, and transport.
+        Login-first and CLI-preferred ranking is applied without vendor hardcoding.
+        """
+        req_caps = required_capabilities or set()
+        matches: List[ProviderDescriptor] = []
+
+        for d in self._descriptors.values():
+            if only_installed and d.installation_status != InstallationStatus.INSTALLED:
+                continue
+            if role is not None and d.supported_roles and role not in d.supported_roles:
+                continue
+            if req_caps and not req_caps.issubset(d.capabilities):
+                continue
+            matches.append(d)
+
+        # Apply preference sorting:
+        # 1. Matching preferred_auth_mode (e.g. LOGIN_SESSION > API_KEY)
+        # 2. Matching preferred_transport (e.g. CLI > API)
+        # 3. Availability (AVAILABLE > DEGRADED > UNAVAILABLE)
+        def sort_key(d: ProviderDescriptor) -> Tuple[int, int, int]:
+            auth_score = 0 if (preferred_auth_mode and d.auth_mode == preferred_auth_mode) else 1
+            trans_score = 0 if (preferred_transport and d.transport == preferred_transport) else 1
+            avail_score = 0 if d.availability == AvailabilityStatus.AVAILABLE else (1 if d.availability == AvailabilityStatus.DEGRADED else 2)
+            return (auth_score, trans_score, avail_score)
+
+        matches.sort(key=sort_key)
+        return matches
+

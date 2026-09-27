@@ -346,3 +346,149 @@ class MockEngineeringAgentAdapter(EngineeringAgentAdapter):
             ]
         )
 
+
+class AuthMode(str, Enum):
+    """Canonical authentication mechanism used by an agent or CLI tool."""
+    LOGIN_SESSION = "LOGIN_SESSION"
+    API_KEY = "API_KEY"
+    OAUTH = "OAUTH"
+    LOCAL_CREDENTIAL = "LOCAL_CREDENTIAL"
+    PROVIDER_DEPENDENT = "PROVIDER_DEPENDENT"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class AuthStatus(str, Enum):
+    """Current authentication health status detected non-destructively."""
+    AUTHENTICATED = "AUTHENTICATED"
+    NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
+    UNKNOWN = "UNKNOWN"
+
+
+class InstallationStatus(str, Enum):
+    """System binary / environment installation status."""
+    INSTALLED = "INSTALLED"
+    NOT_INSTALLED = "NOT_INSTALLED"
+    UNKNOWN = "UNKNOWN"
+
+
+class AvailabilityStatus(str, Enum):
+    """Operational availability status of the provider."""
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+    DEGRADED = "DEGRADED"
+
+
+class ProviderTransport(str, Enum):
+    """Transport protocol or medium used to interact with the provider."""
+    CLI = "CLI"
+    API = "API"
+    CDP = "CDP"
+    SUBPROCESS = "SUBPROCESS"
+    IPC = "IPC"
+
+
+@dataclass
+class ProviderDescriptor:
+    """
+    Canonical provider descriptor representing capability, authentication,
+    and invocation features of an agent provider.
+    """
+    provider_id: str
+    display_name: str
+    transport: ProviderTransport
+    auth_mode: AuthMode
+    installation_status: InstallationStatus = InstallationStatus.UNKNOWN
+    auth_status: AuthStatus = AuthStatus.UNKNOWN
+    availability: AvailabilityStatus = AvailabilityStatus.UNAVAILABLE
+    capabilities: Set[AgentCapability] = field(default_factory=set)
+    supported_roles: Set[AgentRole] = field(default_factory=set)
+    executable: Optional[str] = None
+    version: Optional[str] = None
+    supports_non_interactive: bool = True
+    supports_structured_output: bool = True
+    supports_sandbox: bool = True
+    supports_unattended: bool = True
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "display_name": self.display_name,
+            "transport": self.transport.value if isinstance(self.transport, ProviderTransport) else str(self.transport),
+            "auth_mode": self.auth_mode.value if isinstance(self.auth_mode, AuthMode) else str(self.auth_mode),
+            "installation_status": self.installation_status.value if isinstance(self.installation_status, InstallationStatus) else str(self.installation_status),
+            "auth_status": self.auth_status.value if isinstance(self.auth_status, AuthStatus) else str(self.auth_status),
+            "availability": self.availability.value if isinstance(self.availability, AvailabilityStatus) else str(self.availability),
+            "capabilities": [c.value if isinstance(c, AgentCapability) else str(c) for c in self.capabilities],
+            "supported_roles": [r.value if isinstance(r, AgentRole) else str(r) for r in self.supported_roles],
+            "executable": self.executable,
+            "version": self.version,
+            "supports_non_interactive": self.supports_non_interactive,
+            "supports_structured_output": self.supports_structured_output,
+            "supports_sandbox": self.supports_sandbox,
+            "supports_unattended": self.supports_unattended,
+            "metadata": self.metadata,
+        }
+
+
+class HumanChannelType(str, Enum):
+    """Supported human communication channels for notification and decision transport."""
+    WEB_COCKPIT = "WEB_COCKPIT"
+    LINE = "LINE"
+    TELEGRAM = "TELEGRAM"
+    MESSENGER = "MESSENGER"
+    DISCORD = "DISCORD"
+    CUSTOM = "CUSTOM"
+
+
+@dataclass
+class HumanDecisionEnvelope:
+    """
+    Canonical Human Gate Decision Envelope.
+    Transported across human interaction channels while preserving strict DAIO Human Gate authority.
+    """
+    envelope_id: str
+    work_id: str
+    action_ticket_id: str
+    channel: HumanChannelType
+    operator_identity: str
+    decision: str  # APPROVE, REVISE, REJECT, STOP, RESUME
+    instruction: Optional[str] = None
+    timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    auth_proof: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "envelope_id": self.envelope_id,
+            "work_id": self.work_id,
+            "action_ticket_id": self.action_ticket_id,
+            "channel": self.channel.value if isinstance(self.channel, HumanChannelType) else str(self.channel),
+            "operator_identity": self.operator_identity,
+            "decision": self.decision,
+            "instruction": self.instruction,
+            "timestamp": self.timestamp,
+            "auth_proof": self.auth_proof,
+            "metadata": self.metadata,
+        }
+
+
+class HumanChannelAdapter(ABC):
+    """
+    Abstract extension interface for human notification and decision transport channels.
+    Notification and interaction transport only; canonical DAIO Human Gate remains the sole authorization authority.
+    """
+
+    @abstractmethod
+    def get_channel_type(self) -> HumanChannelType:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def send_gate_notification(self, work_item: Any, gate_reason: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def receive_human_decision(self, envelope: HumanDecisionEnvelope) -> bool:
+        raise NotImplementedError
+
+
