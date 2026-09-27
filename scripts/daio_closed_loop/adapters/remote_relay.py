@@ -247,7 +247,7 @@ class RemoteDecisionRelayClient:
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
         self.project_id = project_id
-        self.auth_token = auth_token or os.environ.get(auth_token_env, "")
+        self.auth_token = auth_token or os.environ.get("DAIO_RELAY_SECRET") or os.environ.get(auth_token_env, "")
         self.timeout_seconds = timeout_seconds
 
     def _get_headers(self) -> Dict[str, str]:

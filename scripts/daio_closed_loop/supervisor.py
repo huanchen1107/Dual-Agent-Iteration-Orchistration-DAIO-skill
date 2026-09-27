@@ -32,6 +32,7 @@ from .orchestrator import DAIOClosedLoopOrchestrator
 from .adapters.executor import EngineeringExecutorAdapter, SubprocessWorkspaceExecutor
 from .adapters.bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
 from .adapters.factory import create_engineering_agent_adapter
+from .adapters.remote_relay import RemoteDecisionAdapter, RemoteDecisionRelayClient
 
 logger = logging.getLogger("DAIO_Supervisor")
 
@@ -48,6 +49,8 @@ class DAIOSupervisor:
         store: Optional[DAIOWorkStore] = None,
         executor: Optional[EngineeringExecutorAdapter] = None,
         bridge: Optional[ArchitectBridgeAdapter] = None,
+        remote_relay_adapter: Optional[RemoteDecisionAdapter] = None,
+        enable_remote_ingress: bool = True,
         supervisor_id: Optional[str] = None,
         poll_interval_seconds: float = 2.0,
         lease_ttl_seconds: int = 480,
@@ -81,14 +84,15 @@ class DAIOSupervisor:
         endpoint_config = {}
         cdp_port = 9222
         agent_provider = "AUTO"
+        cfg_dict: Dict[str, Any] = {}
         if config_file.exists():
             try:
-                cfg = json.loads(config_file.read_text(encoding="utf-8"))
-                endpoint_config = cfg.get("architect_endpoint", {})
-                cdp_port = cfg.get("cdp_port", cdp_port)
+                cfg_dict = json.loads(config_file.read_text(encoding="utf-8"))
+                endpoint_config = cfg_dict.get("architect_endpoint", {})
+                cdp_port = cfg_dict.get("cdp_port", cdp_port)
                 if not self.default_test_command:
-                    self.default_test_command = cfg.get("test_gate_command")
-                agent_provider = cfg.get("provider", "AUTO")
+                    self.default_test_command = cfg_dict.get("test_gate_command")
+                agent_provider = cfg_dict.get("provider", "AUTO")
             except Exception as ex:
                 logger.warning(f"Could not load config file {config_file}: {ex}")
 
@@ -104,6 +108,14 @@ class DAIOSupervisor:
             self.bridge = bridge
         else:
             self.bridge = ChromeCDPBridgeAdapter(endpoint=endpoint_config, cdp_port=cdp_port)
+
+        # Resolve remote relay adapter (RPC-2 / RPC-3 persistent ingress)
+        if remote_relay_adapter:
+            self.remote_relay_adapter = remote_relay_adapter
+        elif enable_remote_ingress:
+            self.remote_relay_adapter = self._init_remote_relay_adapter(cfg_dict)
+        else:
+            self.remote_relay_adapter = None
 
         self.orchestrator = DAIOClosedLoopOrchestrator(
             store=self.store,
@@ -136,6 +148,25 @@ class DAIOSupervisor:
 
         self.started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.pid = os.getpid()
+
+    def _init_remote_relay_adapter(self, cfg: Dict[str, Any]) -> Optional[RemoteDecisionAdapter]:
+        """Auto-configures RemoteDecisionAdapter from config or environment variables."""
+        relay_url = cfg.get("relay_url") or os.environ.get("DAIO_RELAY_URL")
+        relay_secret = cfg.get("relay_secret") or os.environ.get("DAIO_RELAY_SECRET") or os.environ.get("DAIO_RELAY_TOKEN")
+        project_id = cfg.get("project_id") or os.environ.get("DAIO_PROJECT_ID") or "awin-fintech"
+
+        if relay_url and relay_secret:
+            try:
+                client = RemoteDecisionRelayClient(
+                    endpoint_url=relay_url,
+                    project_id=project_id,
+                    auth_token=relay_secret,
+                )
+                logger.info(f"🌐 Remote decision ingress poller initialized: {relay_url} (project: {project_id})")
+                return RemoteDecisionAdapter(project_id=project_id, client=client)
+            except Exception as ex:
+                logger.warning(f"Could not initialize RemoteDecisionAdapter: {ex}")
+        return None
 
     def stop(self) -> None:
         """Signal the supervisor to stop."""
@@ -210,6 +241,30 @@ class DAIOSupervisor:
                         )
                         await self.orchestrator.process_incoming_architect_decision(it.work_id, dec)
 
+        # 2c. Remote decision ingress polling (RPC-2 / RPC-3 persistent ingress)
+        remote_decisions_processed = []
+        if self.remote_relay_adapter:
+            try:
+                polled_envelopes = self.remote_relay_adapter.client.poll_decisions()
+                for env in polled_envelopes:
+                    logger.info(f"📥 Remote decision detected on edge: {env.decision_id} (work_id={env.work_id}, decision={env.decision})")
+                    app_res = self.remote_relay_adapter.validate_and_apply(
+                        envelope=env,
+                        store=self.store,
+                        project_root=str(self.project_root),
+                        send_ack=True,
+                    )
+                    remote_decisions_processed.append({
+                        "decision_id": env.decision_id,
+                        "work_id": env.work_id,
+                        "applied": app_res.applied,
+                        "status": app_res.status,
+                        "reason": app_res.reason,
+                        "decision_hash": app_res.decision_hash,
+                    })
+            except Exception as ex:
+                logger.warning(f"⚠️ Remote decision poller warning (non-fatal): {ex}")
+
         # 3. Worker polling & execution
         worker_result = await self.worker.run_once()
 
@@ -227,7 +282,10 @@ class DAIOSupervisor:
             last_progress_at=last_prog,
             active_work_id=worker_result.work_id if worker_result else self.worker._active_work_id,
             queue_depth=queue_depth,
-            metadata={"watch_count": len(watch_results)}
+            metadata={
+                "watch_count": len(watch_results),
+                "remote_ingress_configured": bool(self.remote_relay_adapter),
+            }
         )
         try:
             self.store.record_supervisor_heartbeat(hb)
@@ -238,6 +296,7 @@ class DAIOSupervisor:
             "supervisor_id": self.supervisor_id,
             "timestamp": now_iso,
             "watch_evaluations": watch_results,
+            "remote_decisions_processed": remote_decisions_processed,
             "worker_processed_item": worker_result.work_id if worker_result else None,
         }
 
