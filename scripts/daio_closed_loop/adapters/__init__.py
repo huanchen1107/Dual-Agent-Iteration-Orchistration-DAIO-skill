@@ -46,6 +46,7 @@ from .agent_contract import (
 from .antigravity_cli_agent import AntigravityCLIAdapter, find_antigravity_cli_path
 from .gemini_cli_agent import GeminiCLIAdapter, find_gemini_cli_path
 from .codex_cli_agent import CodexCLIAdapter, find_codex_cli_path
+from .opencode_cli_agent import OpenCodeCLIAdapter, find_opencode_cli_path
 from .gemini_agent import GeminiEngineeringAgentAdapter
 from .registry import AgentAdapterRegistry
 from .discovery import CLIProviderDiscovery

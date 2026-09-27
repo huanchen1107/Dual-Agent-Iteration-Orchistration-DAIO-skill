@@ -40,6 +40,7 @@ def test_factory_capability_detection(monkeypatch):
     monkeypatch.setattr("scripts.daio_closed_loop.adapters.factory.find_antigravity_cli_path", lambda: None)
     monkeypatch.setattr("scripts.daio_closed_loop.adapters.factory.find_gemini_cli_path", lambda: None)
     monkeypatch.setattr("scripts.daio_closed_loop.adapters.factory.find_codex_cli_path", lambda: None)
+    monkeypatch.setattr("scripts.daio_closed_loop.adapters.factory.find_opencode_cli_path", lambda: None)
     adapter_fallback = create_engineering_agent_adapter()
     assert isinstance(adapter_fallback, GeminiEngineeringAgentAdapter)
 
