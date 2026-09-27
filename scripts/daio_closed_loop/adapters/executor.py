@@ -9,6 +9,7 @@ import asyncio
 from dataclasses import dataclass, field
 import datetime
 import fnmatch
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -159,8 +160,78 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             return out.strip()
         return "UNKNOWN_HEAD"
 
+    def _compute_file_fingerprint(self, rel_path: str) -> str:
+        """Compute content hash and existence fingerprint for a given workspace relative path."""
+        p = Path(self.project_root) / rel_path
+        if not p.exists():
+            return "__NON_EXISTENT__"
+        if p.is_file():
+            try:
+                return hashlib.sha256(p.read_bytes()).hexdigest()
+            except Exception:
+                return "__UNREADABLE__"
+        if p.is_dir():
+            try:
+                file_hashes = []
+                for child in sorted(p.rglob("*")):
+                    if child.is_file():
+                        file_hashes.append(f"{child.relative_to(p)}:{hashlib.sha256(child.read_bytes()).hexdigest()}")
+                return hashlib.sha256("\n".join(file_hashes).encode("utf-8")).hexdigest()
+            except Exception:
+                return "__DIR__"
+        return "__OTHER__"
+
+    def capture_workspace_snapshot(self) -> Dict[str, str]:
+        """
+        Capture a full fingerprint snapshot of all modified, untracked, and deleted files in the workspace.
+        Uses git status --porcelain -uall to detect individual untracked files within folders.
+        """
+        code, out = self.run_cmd("git status --porcelain -uall")
+        if code != 0:
+            return {}
+        snapshot: Dict[str, str] = {}
+        for line in out.splitlines():
+            clean = line.strip()
+            if not clean:
+                continue
+            parts = clean.split(maxsplit=1)
+            if len(parts) == 2:
+                rel_path = parts[1].strip()
+                if " -> " in rel_path:
+                    rel_path = rel_path.split(" -> ")[-1].strip()
+                norm_f = rel_path.replace("\\", "/")
+                snapshot[norm_f] = self._compute_file_fingerprint(norm_f)
+        return snapshot
+
+    def compute_execution_delta(
+        self,
+        pre_snapshot: Dict[str, str],
+        post_snapshot: Dict[str, str]
+    ) -> List[str]:
+        """
+        Compute DAIO-002 Execution Delta: Only files newly modified, created, deleted, or altered
+        between PRE and POST snapshots are attributed to the current execution attempt.
+        """
+        delta: List[str] = []
+
+        # 1. Check all files present in post_snapshot
+        for path, post_fp in post_snapshot.items():
+            if path not in pre_snapshot:
+                # Newly introduced dirty or untracked file
+                delta.append(path)
+            elif pre_snapshot[path] != post_fp:
+                # Pre-existing dirty/untracked file that was mutated by provider during this execution
+                delta.append(path)
+
+        # 2. Check files in pre_snapshot that disappeared from post_snapshot (reverted/deleted by provider)
+        for path in pre_snapshot:
+            if path not in post_snapshot:
+                delta.append(path)
+
+        return sorted(list(set(delta)))
+
     def get_modified_files(self) -> List[str]:
-        code, out = self.run_cmd("git status --porcelain")
+        code, out = self.run_cmd("git status --porcelain -uall")
         if code != 0:
             return []
         files = []
@@ -170,7 +241,10 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 continue
             parts = clean.split(maxsplit=1)
             if len(parts) == 2:
-                files.append(parts[1].strip())
+                rel_path = parts[1].strip()
+                if " -> " in rel_path:
+                    rel_path = rel_path.split(" -> ")[-1].strip()
+                files.append(rel_path.replace("\\", "/"))
         return files
 
     def classify_diff_files(
@@ -258,6 +332,7 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         out_logs = []
         proposal = None
         base_sha = self.get_current_head()
+        pre_snapshot = self.capture_workspace_snapshot()
 
         # Fast-Path / Existing Workspace Check:
         # If requested_action, daio_config.json, or metadata indicates validating existing workspace, bypass agent proposal synthesis.
@@ -365,10 +440,20 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }, indent=2), encoding="utf-8")
 
-        # 2. Check modified files & Scope Violations
-        diff_files = self.get_modified_files()
-        target_ws, control_plane, unauthorized = self.classify_diff_files(
+        # 2. Check modified files & Scope Violations (DAIO-002 Execution Delta Attribution)
+        post_snapshot = self.capture_workspace_snapshot()
+        diff_files = self.compute_execution_delta(pre_snapshot, post_snapshot)
+        all_modified = self.get_modified_files()
+
+        # Scope enforcement and target workspace diff evaluate strictly against current execution delta
+        target_ws, _, unauthorized = self.classify_diff_files(
             diff_files,
+            work.allowed_scope,
+            getattr(work, "frozen_paths", None)
+        )
+        # DAIO control plane diff tracks control plane artifacts across workspace (runtime state, DBs, logs)
+        _, control_plane, _ = self.classify_diff_files(
+            all_modified,
             work.allowed_scope,
             getattr(work, "frozen_paths", None)
         )
