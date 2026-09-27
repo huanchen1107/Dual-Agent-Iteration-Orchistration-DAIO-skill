@@ -74,6 +74,17 @@ from .human_contract import (
     HumanChannelRegistry,
     HumanChannelRouter,
     DEFAULT_HUMAN_CHANNEL_POLICY,
+    HumanChannelEventType,
+    HumanChannelEvent,
+    HumanChannelAuditRecord,
+    HumanChannelCommand,
+    HumanChannelResponse,
+    HumanChannelIdentity,
+)
+from .telegram_channel import (
+    TelegramHumanChannelAdapter,
+    TelegramCommandClassifier,
+    TelegramNotificationFormatter,
 )
 
 __all__ = [
@@ -153,7 +164,17 @@ __all__ = [
     "HumanChannelRegistry",
     "HumanChannelRouter",
     "DEFAULT_HUMAN_CHANNEL_POLICY",
+    "HumanChannelEventType",
+    "HumanChannelEvent",
+    "HumanChannelAuditRecord",
+    "HumanChannelCommand",
+    "HumanChannelResponse",
+    "HumanChannelIdentity",
+    "TelegramHumanChannelAdapter",
+    "TelegramCommandClassifier",
+    "TelegramNotificationFormatter",
 ]
+
 
 
 

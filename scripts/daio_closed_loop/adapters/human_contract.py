@@ -96,12 +96,158 @@ class DecisionStatus(str, Enum):
 
 class HumanChannelState(str, Enum):
     """Operational state of a channel in the registry."""
+    NOT_INSTALLED = "NOT_INSTALLED"
     NOT_CONFIGURED = "NOT_CONFIGURED"
     DISCOVERED = "DISCOVERED"
+    CONFIGURED = "CONFIGURED"
     AUTH_REQUIRED = "AUTH_REQUIRED"
     AVAILABLE = "AVAILABLE"
     DEGRADED = "DEGRADED"
     UNAVAILABLE = "UNAVAILABLE"
+
+
+class HumanChannelEventType(str, Enum):
+    """Canonical event types emitted for proactive human notification."""
+    WORK_STARTED = "WORK_STARTED"
+    WORK_COMPLETED = "WORK_COMPLETED"
+    WORK_FAILED = "WORK_FAILED"
+    HUMAN_GATE_REQUIRED = "HUMAN_GATE_REQUIRED"
+    PROVIDER_FAILOVER = "PROVIDER_FAILOVER"
+    SUPERVISOR_DEGRADED = "SUPERVISOR_DEGRADED"
+    SUPERVISOR_RECOVERED = "SUPERVISOR_RECOVERED"
+    GENERAL_NOTIFICATION = "GENERAL_NOTIFICATION"
+
+
+@dataclass
+class HumanChannelEvent:
+    """Canonical event envelope dispatched to human notification channels."""
+    event_id: str = field(default_factory=lambda: f"evt-{uuid.uuid4().hex[:8]}")
+    event_type: HumanChannelEventType = HumanChannelEventType.GENERAL_NOTIFICATION
+    work_id: str = "general"
+    change_id: Optional[str] = None
+    project_id: str = "awin-fintech"
+    stage: Optional[str] = None
+    gate: Optional[str] = None
+    recovery_epoch: int = 0
+    summary: str = ""
+    reason: Optional[str] = None
+    requires_strong_auth: bool = False
+    cockpit_url: Optional[str] = None
+    timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type.value if isinstance(self.event_type, HumanChannelEventType) else str(self.event_type),
+            "work_id": self.work_id,
+            "change_id": self.change_id,
+            "project_id": self.project_id,
+            "stage": self.stage,
+            "gate": self.gate,
+            "recovery_epoch": self.recovery_epoch,
+            "summary": self.summary,
+            "reason": self.reason,
+            "requires_strong_auth": self.requires_strong_auth,
+            "cockpit_url": self.cockpit_url,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class HumanChannelAuditRecord:
+    """Canonical audit record for an incoming human channel command."""
+    timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    channel: str = "TELEGRAM"
+    external_user_id: str = "unknown"
+    project_id: str = "awin-fintech"
+    command: str = ""
+    authorization_class: str = "READ_ONLY"  # READ_ONLY, OPERATIONAL_LOW_RISK, STRONG_AUTH_REQUIRED
+    accepted: bool = True
+    reason: Optional[str] = None
+    correlation_id: str = field(default_factory=lambda: f"corr-{uuid.uuid4().hex[:8]}")
+    work_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "timestamp": self.timestamp,
+            "channel": self.channel,
+            "external_user_id": self.external_user_id,
+            "project_id": self.project_id,
+            "command": self.command,
+            "authorization_class": self.authorization_class,
+            "accepted": self.accepted,
+            "reason": self.reason,
+            "correlation_id": self.correlation_id,
+            "work_id": self.work_id,
+        }
+
+
+@dataclass
+class HumanChannelCommand:
+    """Canonical command structure received from a human channel (e.g. Telegram /status)."""
+    command_id: str = field(default_factory=lambda: f"hcmd-{uuid.uuid4().hex[:8]}")
+    channel_type: HumanChannelType = HumanChannelType.TELEGRAM
+    external_user_id: str = "unknown"
+    chat_id: Optional[str] = None
+    command_text: str = ""
+    project_id: str = "awin-fintech"
+    work_id: Optional[str] = None
+    change_id: Optional[str] = None
+    correlation_id: str = field(default_factory=lambda: f"corr-{uuid.uuid4().hex[:8]}")
+    timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "channel_type": self.channel_type.value if isinstance(self.channel_type, HumanChannelType) else str(self.channel_type),
+            "external_user_id": self.external_user_id,
+            "chat_id": self.chat_id,
+            "command_text": self.command_text,
+            "project_id": self.project_id,
+            "work_id": self.work_id,
+            "change_id": self.change_id,
+            "correlation_id": self.correlation_id,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class HumanChannelResponse:
+    """Canonical response returned to a human channel after command processing."""
+    command_id: str
+    status: str = "SUCCESS"  # "SUCCESS", "REJECTED", "STRONG_AUTH_REQUIRED", "ERROR"
+    message: str = ""
+    mobile_formatted: str = ""
+    requires_strong_auth: bool = False
+    deep_link: Optional[str] = None
+    audit_record: Optional[HumanChannelAuditRecord] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "status": self.status,
+            "message": self.message,
+            "mobile_formatted": self.mobile_formatted,
+            "requires_strong_auth": self.requires_strong_auth,
+            "deep_link": self.deep_link,
+            "audit_record": self.audit_record.to_dict() if self.audit_record else None,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class HumanChannelIdentity:
+    """Identity profile for an external human channel user."""
+    channel_type: HumanChannelType
+    external_user_id: str
+    chat_id: Optional[str] = None
+    username: Optional[str] = None
+    is_allowlisted: bool = False
 
 
 @dataclass
@@ -465,6 +611,33 @@ class HumanChannelAdapter(ABC):
     @abstractmethod
     def get_descriptor(self) -> HumanChannelDescriptor:
         raise NotImplementedError
+
+    async def send_notification(self, event: HumanChannelEvent) -> DeliveryStatus:
+        """Sends a proactive event notification (B7 canonical interface)."""
+        # Default bridge to send_interaction
+        req = HumanInteractionRequest(
+            interaction_id=event.event_id,
+            work_id=event.work_id,
+            change_id=event.change_id,
+            interaction_type=HumanInteractionType.APPROVAL if event.event_type == HumanChannelEventType.HUMAN_GATE_REQUIRED else HumanInteractionType.INFORMATION,
+            summary=event.summary,
+            reason=event.reason or "",
+            requires_strong_auth=event.requires_strong_auth,
+            metadata=event.metadata,
+        )
+        return await self.send_interaction(req)
+
+    async def receive_command(self, command: HumanChannelCommand) -> HumanChannelResponse:
+        """Processes an incoming channel command (e.g. /status, /queue)."""
+        raise NotImplementedError
+
+    async def send_response(self, response: HumanChannelResponse) -> bool:
+        """Sends a structured command response back to the human channel."""
+        return await self.send_command_acknowledgement(response.command_id, response.status, response.message)
+
+    async def health_check(self) -> HumanChannelState:
+        """Performs non-destructive health and connectivity probe."""
+        return self.get_descriptor().state
 
     @abstractmethod
     async def send_interaction(self, request: HumanInteractionRequest) -> DeliveryStatus:
