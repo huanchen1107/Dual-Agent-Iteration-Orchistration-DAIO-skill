@@ -55,6 +55,26 @@ from .gemini_agent import GeminiEngineeringAgentAdapter
 from .registry import AgentAdapterRegistry
 from .discovery import CLIProviderDiscovery
 from .router import ProviderRouter, RoutingEngineeringAgentAdapter, DEFAULT_ROUTING_POLICY
+from .human_contract import (
+    HumanCommandIntent,
+    HumanRiskClass,
+    HumanAuthLevel,
+    HumanInteractionType,
+    DeliveryStatus,
+    DecisionStatus,
+    HumanChannelState,
+    HumanCommand,
+    HumanInteractionRequest,
+    HumanInteractionResponse,
+    HumanChannelDescriptor,
+    HumanCommandNormalizer,
+    ConversationReferenceMapping,
+    CockpitChannelAdapter,
+    MockHumanChannelAdapter,
+    HumanChannelRegistry,
+    HumanChannelRouter,
+    DEFAULT_HUMAN_CHANNEL_POLICY,
+)
 
 __all__ = [
     "EngineeringExecutorAdapter",
@@ -115,6 +135,24 @@ __all__ = [
     "OpenCodeCLIAdapter",
     "find_opencode_cli_path",
     "GeminiEngineeringAgentAdapter",
+    "HumanCommandIntent",
+    "HumanRiskClass",
+    "HumanAuthLevel",
+    "HumanInteractionType",
+    "DeliveryStatus",
+    "DecisionStatus",
+    "HumanChannelState",
+    "HumanCommand",
+    "HumanInteractionRequest",
+    "HumanInteractionResponse",
+    "HumanChannelDescriptor",
+    "HumanCommandNormalizer",
+    "ConversationReferenceMapping",
+    "CockpitChannelAdapter",
+    "MockHumanChannelAdapter",
+    "HumanChannelRegistry",
+    "HumanChannelRouter",
+    "DEFAULT_HUMAN_CHANNEL_POLICY",
 ]
 
 
