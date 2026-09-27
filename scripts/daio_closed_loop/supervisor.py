@@ -151,9 +151,27 @@ class DAIOSupervisor:
 
     def _init_remote_relay_adapter(self, cfg: Dict[str, Any]) -> Optional[RemoteDecisionAdapter]:
         """Auto-configures RemoteDecisionAdapter from config or environment variables."""
-        relay_url = cfg.get("relay_url") or os.environ.get("DAIO_RELAY_URL")
-        relay_secret = cfg.get("relay_secret") or os.environ.get("DAIO_RELAY_SECRET") or os.environ.get("DAIO_RELAY_TOKEN")
-        project_id = cfg.get("project_id") or os.environ.get("DAIO_PROJECT_ID") or "awin-fintech"
+        rr_cfg = cfg.get("remote_relay") if isinstance(cfg.get("remote_relay"), dict) else {}
+        relay_url = (
+            cfg.get("relay_url")
+            or rr_cfg.get("endpoint_url")
+            or os.environ.get("DAIO_RELAY_URL")
+            or os.environ.get("DAIO_RPC_RELAY_URL")
+        )
+        relay_secret = (
+            cfg.get("relay_secret")
+            or rr_cfg.get("auth_token")
+            or os.environ.get("DAIO_RELAY_SECRET")
+            or os.environ.get("DAIO_RELAY_TOKEN")
+            or os.environ.get("DAIO_RPC_PUBLISH_TOKEN")
+        )
+        project_id = (
+            cfg.get("project_id")
+            or cfg.get("project_name")
+            or rr_cfg.get("project_id")
+            or os.environ.get("DAIO_PROJECT_ID")
+            or "awin-fintech"
+        )
 
         if relay_url and relay_secret:
             try:
