@@ -86,6 +86,14 @@ from .telegram_channel import (
     TelegramCommandClassifier,
     TelegramNotificationFormatter,
 )
+from .architect_contract import (
+    ChatGPTConversationDescriptor,
+    ChatGPTConversationRegistry,
+    ProjectAwareArchitectRouter,
+    ArchitectEvidencePacket,
+    CanonicalArchitectDecision,
+    validate_canonical_architect_decision,
+)
 
 __all__ = [
     "EngineeringExecutorAdapter",
@@ -173,7 +181,14 @@ __all__ = [
     "TelegramHumanChannelAdapter",
     "TelegramCommandClassifier",
     "TelegramNotificationFormatter",
+    "ChatGPTConversationDescriptor",
+    "ChatGPTConversationRegistry",
+    "ProjectAwareArchitectRouter",
+    "ArchitectEvidencePacket",
+    "CanonicalArchitectDecision",
+    "validate_canonical_architect_decision",
 ]
+
 
 
 
