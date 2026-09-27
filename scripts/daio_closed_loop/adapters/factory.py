@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from .agent_contract import EngineeringAgentAdapter, MockEngineeringAgentAdapter
 from .gemini_agent import GeminiEngineeringAgentAdapter
 from .antigravity_cli_agent import AntigravityCLIAdapter, find_antigravity_cli_path
-from .bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
+from .bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter, GeminiArchitectBridgeAdapter
 
 
 def create_engineering_agent_adapter(config: Optional[Dict[str, Any]] = None) -> EngineeringAgentAdapter:
@@ -73,7 +73,7 @@ def create_architect_bridge_adapter(config: Optional[Dict[str, Any]] = None) -> 
     """
     Factory to instantiate the appropriate ArchitectBridgeAdapter.
     Priority:
-    1. Explicit config['provider'] ("MOCK", "TEST", "CHROME_CDP", "CHATGPT_WEB", "CDP")
+    1. Explicit config['provider'] ("MOCK", "TEST", "GEMINI", "CHROME_CDP", "CHATGPT_WEB", "CDP")
     2. Fallback to ChromeCDPBridgeAdapter
     """
     cfg = config or {}
@@ -82,11 +82,27 @@ def create_architect_bridge_adapter(config: Optional[Dict[str, Any]] = None) -> 
     if provider in ("MOCK", "TEST"):
         return MockArchitectBridgeAdapter(canned_decisions=cfg.get("canned_decisions"))
 
+    if provider == "GEMINI":
+        return GeminiArchitectBridgeAdapter(
+            api_key=cfg.get("api_key"),
+            model_name=cfg.get("model_name", "gemini-2.5-pro")
+        )
+
+    if provider in ("CHROME_CDP", "CHATGPT_WEB", "CDP", "CHROME"):
+        return ChromeCDPBridgeAdapter(
+            endpoint=cfg.get("endpoint"),
+            url_pattern=cfg.get("url_pattern", "chatgpt.com"),
+            cdp_port=cfg.get("cdp_port", 9222),
+            max_discovery_retries=cfg.get("max_discovery_retries", 3),
+        )
+
+    # Default fallback
     return ChromeCDPBridgeAdapter(
         endpoint=cfg.get("endpoint"),
         url_pattern=cfg.get("url_pattern", "chatgpt.com"),
         cdp_port=cfg.get("cdp_port", 9222),
         max_discovery_retries=cfg.get("max_discovery_retries", 3),
     )
+
 
 

@@ -388,3 +388,69 @@ class MockArchitectBridgeAdapter(ArchitectBridgeAdapter):
     async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
         self.telemetry_history.append(telemetry_markdown)
         return True
+
+
+class GeminiArchitectBridgeAdapter(ArchitectBridgeAdapter):
+    """
+    Genuine provider-neutral LLM Architect Bridge using Google Gemini API.
+    Consumes engineering report and returns parsed ArchitectDecision.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: str = "gemini-2.5-pro",
+    ) -> None:
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        self.model_name = model_name
+
+    async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
+        if not self.api_key:
+            raise RuntimeError("GeminiArchitectBridgeAdapter: GEMINI_API_KEY or GOOGLE_API_KEY is not configured.")
+
+        system_instruction = (
+            "You are the Lead System Architect reviewing an automated engineering report.\n"
+            "Analyze the changes, verify correctness, and provide an architectural decision.\n"
+            "At the end of your review, you MUST output a standard JSON code block:\n"
+            "```json\n"
+            "{\n"
+            '  "decision": "APPROVE",\n'
+            f'  "current_phase": "{work.current_stage}",\n'
+            f'  "next_phase": "{work.authorized_next_phase or "COMPLETED"}",\n'
+            '  "action": "RUN",\n'
+            '  "human_approval_required": false,\n'
+            '  "instruction": "Summary of architectural review decision"\n'
+            "}\n"
+            "```\n"
+        )
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": f"{system_instruction}\n\nEngineering Report:\n{report_markdown}"}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.1,
+                "responseMimeType": "text/plain"
+            }
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
+        data = json.dumps(payload).encode("utf-8")
+        import urllib.request
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+        loop = asyncio.get_event_loop()
+        def _call_api():
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        resp_data = await loop.run_in_executor(None, _call_api)
+        text = resp_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        return parse_decision_from_text(text)
+
+    async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
+        logger.info(f"📡 Gemini Architect Telemetry recorded for work {work.work_id}: {telemetry_markdown[:120]}...")
+        return True
+
