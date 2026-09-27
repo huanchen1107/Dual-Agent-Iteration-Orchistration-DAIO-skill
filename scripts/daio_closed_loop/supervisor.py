@@ -338,12 +338,20 @@ class DAIOSupervisor:
         except Exception as ex:
             logger.warning(f"Could not record supervisor heartbeat: {ex}")
 
-        # 5. Continuous Live Status Publishing to Cloudflare Relay
+        # 5. Continuous Live Status Publishing to Cloudflare Relay (throttled to conserve KV quota)
         if self.status_publisher:
-            try:
-                self.status_publisher.publish_once()
-            except Exception as ex:
-                logger.debug(f"Cloudflare status publication non-fatal: {ex}")
+            import time
+            now_mono = time.monotonic()
+            has_events = bool(worker_result or remote_decisions_processed)
+            last_pub = getattr(self, "_last_status_publish_time", None)
+            if last_pub is None or has_events or (now_mono - last_pub >= 15.0):
+                try:
+                    self.status_publisher.publish_once()
+                    self._last_status_publish_time = now_mono
+                except Exception as ex:
+                    logger.debug(f"Cloudflare status publication non-fatal: {ex}")
+
+
 
         return {
             "supervisor_id": self.supervisor_id,
