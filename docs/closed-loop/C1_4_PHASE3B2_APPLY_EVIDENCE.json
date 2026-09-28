@@ -1,0 +1,850 @@
+{
+  "source_baseline": "f14dba604e3cc78a293db1c778d0369779e1d997",
+  "contract": "daio-trusted-apply/v1",
+  "test_result": {
+    "passed": 129,
+    "new_writer_cases": 49,
+    "prior_compatibility_safety_cases": 80,
+    "seconds": 43.3
+  },
+  "normal_apply": {
+    "result": "COMMITTED",
+    "artifact_id": "artifact-75530b6d03ea4d0aae0f8a883aeff1e3",
+    "artifact_sha256": "d2d576cc9cd957647e30fdf026c8d7d67c0af5afa691d0c4f8cf9ce472cc997c",
+    "work_id": "work-3b2",
+    "attempt": "attempt-A",
+    "fence": 1,
+    "journal_phases": [
+      "PREPARED",
+      "APPLYING",
+      "APPLIED",
+      "COMMITTED"
+    ],
+    "baseline_head": "07069989f7ebf310df30c61c83b70d6645575d6b",
+    "final_revision": 3,
+    "backend_path_mutation_ignored": true,
+    "head_unchanged": true,
+    "tests_executed_by_writer": false
+  },
+  "negative_cases": {
+    "A": "PASSED",
+    "B": "PASSED",
+    "C": "PASSED",
+    "D": "PASSED",
+    "E": "PASSED",
+    "F": "PASSED",
+    "G": "PASSED",
+    "H": "PASSED",
+    "I": "PASSED",
+    "J": "PASSED",
+    "K": "PASSED",
+    "L": "PASSED",
+    "M": "PASSED"
+  },
+  "durable_case_evidence": [
+    {
+      "case": "test_commands_and_candidate_co0",
+      "journals": [
+        {
+          "apply_id": "apply-cbb9b1542f9d4899ab1318f6a9069449",
+          "state": "COMMITTED",
+          "artifact_id": "artifact-d76ac6500eb64ad0a40f3de197d3e2b9",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-cbb9b1542f9d4899ab1318f6a9069449",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-cbb9b1542f9d4899ab1318f6a9069449",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-cbb9b1542f9d4899ab1318f6a9069449",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-cbb9b1542f9d4899ab1318f6a9069449",
+          "state": "COMMITTED"
+        }
+      ],
+      "reconciliation": [],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 3,
+          "revision": 3,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "APPLY_COMMITTED"
+        }
+      ]
+    },
+    {
+      "case": "test_concurrent_writer_and_app0",
+      "journals": [
+        {
+          "apply_id": "apply-76037c6bbcaa417c8743a6c9a1df8750",
+          "state": "COMMITTED",
+          "artifact_id": "artifact-0b29fd42b5d848528583f365e0f56568",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-76037c6bbcaa417c8743a6c9a1df8750",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-76037c6bbcaa417c8743a6c9a1df8750",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-76037c6bbcaa417c8743a6c9a1df8750",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-76037c6bbcaa417c8743a6c9a1df8750",
+          "state": "COMMITTED"
+        }
+      ],
+      "reconciliation": [],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 3,
+          "revision": 3,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "APPLY_COMMITTED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 4,
+          "revision": 4,
+          "attempt": "attempt-A",
+          "fence": 2,
+          "kind": "REVOKE"
+        }
+      ]
+    },
+    {
+      "case": "test_normal_apply_and_backend_0",
+      "journals": [
+        {
+          "apply_id": "apply-d59e05fe8337461387ed33e420686db6",
+          "state": "COMMITTED",
+          "artifact_id": "artifact-75530b6d03ea4d0aae0f8a883aeff1e3",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-d59e05fe8337461387ed33e420686db6",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-d59e05fe8337461387ed33e420686db6",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-d59e05fe8337461387ed33e420686db6",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-d59e05fe8337461387ed33e420686db6",
+          "state": "COMMITTED"
+        }
+      ],
+      "reconciliation": [],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 3,
+          "revision": 3,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "APPLY_COMMITTED"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar0",
+      "journals": [
+        {
+          "apply_id": "apply-340ae680bcfa4a1ea678190ed97f8e38",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-6ce8f458af234dfb8bcddac11d9fb562",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-340ae680bcfa4a1ea678190ed97f8e38",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-340ae680bcfa4a1ea678190ed97f8e38",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-340ae680bcfa4a1ea678190ed97f8e38",
+          "classification": "NOT_APPLIED",
+          "observed_sha256": "2a9ac8d29fc242fc0dfe6b2eca0f270a8523c470b19ba65fd449cbc3c3310278"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar1",
+      "journals": [
+        {
+          "apply_id": "apply-c96ef67320cb48feaf0c76c6e7adfbed",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-40131f4db4804ceb9a46f2c0417f93cc",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-c96ef67320cb48feaf0c76c6e7adfbed",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-c96ef67320cb48feaf0c76c6e7adfbed",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-c96ef67320cb48feaf0c76c6e7adfbed",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-c96ef67320cb48feaf0c76c6e7adfbed",
+          "classification": "NOT_APPLIED",
+          "observed_sha256": "2a9ac8d29fc242fc0dfe6b2eca0f270a8523c470b19ba65fd449cbc3c3310278"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar2",
+      "journals": [
+        {
+          "apply_id": "apply-ed55e0bd40174a3e8f40683968359835",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-54a0c4cad6ac4092973e0c9d90f123f5",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-ed55e0bd40174a3e8f40683968359835",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-ed55e0bd40174a3e8f40683968359835",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-ed55e0bd40174a3e8f40683968359835",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-ed55e0bd40174a3e8f40683968359835",
+          "classification": "STAGING_REMAINS",
+          "observed_sha256": "6e95ba0f895c65501db7d0668e2814427c418dc65b54de5e66405e4b564c26eb"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar3",
+      "journals": [
+        {
+          "apply_id": "apply-fd8a3520616b4569a516f8016b74ac17",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-b0e05f7e785a40ae83dfc9b9acaa43bc",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-fd8a3520616b4569a516f8016b74ac17",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-fd8a3520616b4569a516f8016b74ac17",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-fd8a3520616b4569a516f8016b74ac17",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-fd8a3520616b4569a516f8016b74ac17",
+          "classification": "PARTIALLY_APPLIED",
+          "observed_sha256": "0d48b0c072a68e2274a73e5b6270831e7b596d49950eafd5dcc993312486677a"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar4",
+      "journals": [
+        {
+          "apply_id": "apply-b8d287cd57ee4597aad6fa132693b016",
+          "state": "COMMITTED",
+          "artifact_id": "artifact-07601783a96340b7baa948b7fbb91c18",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-b8d287cd57ee4597aad6fa132693b016",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-b8d287cd57ee4597aad6fa132693b016",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-b8d287cd57ee4597aad6fa132693b016",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-b8d287cd57ee4597aad6fa132693b016",
+          "state": "COMMITTED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-b8d287cd57ee4597aad6fa132693b016",
+          "classification": "FULLY_APPLIED",
+          "observed_sha256": "72998cb697ec73b25cac4b62daf77f5160f9f39473a3615000a276f178001327"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 3,
+          "revision": 3,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "APPLY_COMMITTED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 4,
+          "revision": 4,
+          "attempt": "attempt-A",
+          "fence": 2,
+          "kind": "REVOKE"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar5",
+      "journals": [
+        {
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "state": "COMMITTED",
+          "artifact_id": "artifact-f25e2ac4f9b642a896a71a45d4d26f7e",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "state": "APPLIED"
+        },
+        {
+          "id": 5,
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "state": "COMMITTED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-81c7a0188a394e49b4c4126e275f3a6b",
+          "classification": "FULLY_APPLIED",
+          "observed_sha256": "72998cb697ec73b25cac4b62daf77f5160f9f39473a3615000a276f178001327"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 3,
+          "revision": 3,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "APPLY_COMMITTED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 4,
+          "revision": 4,
+          "attempt": "attempt-A",
+          "fence": 2,
+          "kind": "REVOKE"
+        }
+      ]
+    },
+    {
+      "case": "test_real_process_crash_restar6",
+      "journals": [
+        {
+          "apply_id": "apply-c341478810174c5b897ab0a543b31459",
+          "state": "COMMITTED",
+          "artifact_id": "artifact-f72ec655e2b74dd88b69d9591bc9a3fd",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-c341478810174c5b897ab0a543b31459",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-c341478810174c5b897ab0a543b31459",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-c341478810174c5b897ab0a543b31459",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-c341478810174c5b897ab0a543b31459",
+          "state": "COMMITTED"
+        }
+      ],
+      "reconciliation": [],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 3,
+          "revision": 3,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "APPLY_COMMITTED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 4,
+          "revision": 4,
+          "attempt": "attempt-A",
+          "fence": 2,
+          "kind": "REVOKE"
+        }
+      ]
+    },
+    {
+      "case": "test_recovery_rejects_post_cra0",
+      "journals": [
+        {
+          "apply_id": "apply-dd49e44ce2d9482a961d185664cf4f87",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-29e2c56656b74b73aeaa16eb04790b2a",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-dd49e44ce2d9482a961d185664cf4f87",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-dd49e44ce2d9482a961d185664cf4f87",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-dd49e44ce2d9482a961d185664cf4f87",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-dd49e44ce2d9482a961d185664cf4f87",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-dd49e44ce2d9482a961d185664cf4f87",
+          "classification": "BASELINE_DRIFT",
+          "observed_sha256": "0d48b0c072a68e2274a73e5b6270831e7b596d49950eafd5dcc993312486677a"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    },
+    {
+      "case": "test_recovery_rejects_post_cra1",
+      "journals": [
+        {
+          "apply_id": "apply-a4bf74eb6d9140ba87813d046f6f7082",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-fc78ea6b0d6a40c6848e6f60095104e5",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-a4bf74eb6d9140ba87813d046f6f7082",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-a4bf74eb6d9140ba87813d046f6f7082",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-a4bf74eb6d9140ba87813d046f6f7082",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-a4bf74eb6d9140ba87813d046f6f7082",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-a4bf74eb6d9140ba87813d046f6f7082",
+          "classification": "BASELINE_DRIFT",
+          "observed_sha256": "0d48b0c072a68e2274a73e5b6270831e7b596d49950eafd5dcc993312486677a"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    },
+    {
+      "case": "test_recovery_rejects_post_cra2",
+      "journals": [
+        {
+          "apply_id": "apply-bbee61a441b4410a87ee7e32c85f54d4",
+          "state": "RECONCILIATION_REQUIRED",
+          "artifact_id": "artifact-d8e05b4122b04d819805defa66caf594",
+          "work_id": "work-3b2"
+        }
+      ],
+      "journal_events": [
+        {
+          "id": 1,
+          "apply_id": "apply-bbee61a441b4410a87ee7e32c85f54d4",
+          "state": "PREPARED"
+        },
+        {
+          "id": 2,
+          "apply_id": "apply-bbee61a441b4410a87ee7e32c85f54d4",
+          "state": "APPLYING"
+        },
+        {
+          "id": 3,
+          "apply_id": "apply-bbee61a441b4410a87ee7e32c85f54d4",
+          "state": "APPLIED"
+        },
+        {
+          "id": 4,
+          "apply_id": "apply-bbee61a441b4410a87ee7e32c85f54d4",
+          "state": "RECONCILIATION_REQUIRED"
+        }
+      ],
+      "reconciliation": [
+        {
+          "id": 1,
+          "apply_id": "apply-bbee61a441b4410a87ee7e32c85f54d4",
+          "classification": "DIVERGENT_BYTES",
+          "observed_sha256": "526ee9292ea929dbe89a63b5ac51264c80df8badcb60afc5a69fc26421a78a84"
+        }
+      ],
+      "work_events": [
+        {
+          "work_id": "work-3b2",
+          "sequence": 1,
+          "revision": 1,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "AUTHORIZED"
+        },
+        {
+          "work_id": "work-3b2",
+          "sequence": 2,
+          "revision": 2,
+          "attempt": "attempt-A",
+          "fence": 1,
+          "kind": "ARTIFACT_SEALED"
+        }
+      ]
+    }
+  ],
+  "scope": "Disposable Git/SQLite only; COMMITTED is journal finalization, not Git commit; no live provider",
+  "source_sha256": {
+    "scripts/daio_closed_loop/trusted_writer.py": "2f2e14cb9d5025c63d56d94f82211a16b139542fc0663b03f34ebbd272cbd5fb",
+    "tests/test_c14_trusted_writer.py": "a178e76dbb74af0edf700383f2ab2ccc95349bc25a516cc00cccacd6337a1266"
+  }
+}
