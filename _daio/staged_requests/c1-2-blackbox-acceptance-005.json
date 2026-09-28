@@ -1,0 +1,30 @@
+{
+  "schema_version": "daio-root-work/v1",
+  "request_id": "c1-2-blackbox-acceptance-005",
+  "project_id": "awin-fintech",
+  "change_id": "c1.2-blackbox-acceptance-005",
+  "endpoint_key": "daio_governance",
+  "requested_action": "Execute read-only verification of DAIO runtime environment and emit evidence to _daio/evidence/c1_2_blackbox_acceptance.json. DO NOT modify any SMC7S domain files, DO NOT edit existing test files, DO NOT create marker files in workspace root. Only inspect repository environment and write the single authorized evidence artifact.",
+  "requested_role": "ENGINEERING_EXECUTION",
+  "allowed_scope": [
+    "_daio/evidence/c1_2_blackbox_acceptance.json"
+  ],
+  "architect_endpoint": {
+    "endpoint_key": "daio_governance",
+    "provider": "CHATGPT_WEB",
+    "domain": "DAIO_GOVERNANCE",
+    "chatgpt_project_id": "g-p-6ab0712af5848191afeace514396d91f-zhuan-an-daio-shuang-dai-li-agent-xie-tong",
+    "chatgpt_project_name": "DAIO 雙代理 Agent 協同",
+    "project_id": "g-p-6ab0712af5848191afeace514396d91f-zhuan-an-daio-shuang-dai-li-agent-xie-tong",
+    "conversation_id": "6ab65f8e-2d00-83e8-93c9-df017a69f274",
+    "canonical_url": "https://chatgpt.com/g/g-p-6ab0712af5848191afeace514396d91f-zhuan-an-daio-shuang-dai-li-agent-xie-tong/c/6ab65f8e-2d00-83e8-93c9-df017a69f274",
+    "routing_policy": "EXACT_CONVERSATION"
+  },
+  "metadata": {
+    "acceptance_stage": "C1.2",
+    "execution_mode": "READ_ONLY_OR_ISOLATED_EVIDENCE",
+    "evidence_file": "_daio/evidence/c1_2_blackbox_acceptance.json",
+    "endpoint_onboarding_protocol": "EOMP",
+    "audit_note": "C1.2 Blackbox Acceptance Run 005 bound to canonical DAIO Governance ChatGPT Project and Conversation under DAIO-004 exact dual-identifier routing"
+  }
+}

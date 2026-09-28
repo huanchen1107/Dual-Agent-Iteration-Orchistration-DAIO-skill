@@ -187,73 +187,200 @@ class ArchitectBridgeAdapter(ABC):
         raise NotImplementedError
 
 
+def normalize_canonical_url(url_str: Optional[str]) -> Optional[str]:
+    """Strip any surrounding Markdown link wrapping or angle brackets from URL."""
+    if not url_str or not isinstance(url_str, str):
+        return None
+    clean = url_str.strip()
+    m = re.match(r"^\[.*?\]\((https?://[^\s\)]+)\)$", clean)
+    if m:
+        clean = m.group(1).strip()
+    m2 = re.match(r"^<(https?://[^>]+)>$", clean)
+    if m2:
+        clean = m2.group(1).strip()
+    return clean
+
+
+def extract_chatgpt_identifiers(url: str) -> Tuple[Optional[str], Optional[str]]:
+    """Extract (chatgpt_project_id, conversation_id) tuple from ChatGPT URL."""
+    if not url or not isinstance(url, str):
+        return None, None
+    clean_url = normalize_canonical_url(url) or url
+    proj_m = re.search(r'/g/([a-zA-Z0-9\-_]+)', clean_url)
+    conv_m = re.search(r'/c/([a-zA-Z0-9\-_]+)', clean_url)
+    proj_id = proj_m.group(1) if proj_m else None
+    conv_id = conv_m.group(1) if conv_m else None
+    return proj_id, conv_id
+
+
+def resolve_architect_endpoint(
+    endpoint: Optional[Dict[str, Any]] = None,
+    config: Optional[Dict[str, Any]] = None,
+    project_root: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    """
+    Resolve effective architect endpoint by looking up endpoint_key or default_architect_endpoint in registry.
+    """
+    cfg = dict(config) if config else {}
+    if not cfg:
+        p_root = Path(project_root).resolve() if project_root else Path.cwd()
+        cfg_file = p_root / "_daio" / "daio_config.json"
+        if not cfg_file.exists():
+            cfg_file = p_root / "daio_config.json"
+        if cfg_file.exists():
+            try:
+                cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    ep = dict(endpoint) if isinstance(endpoint, dict) else {}
+    registry = cfg.get("architect_endpoints", {})
+    endpoint_key = ep.get("endpoint_key") or (cfg.get("default_architect_endpoint") if not ep else None)
+
+    resolved: Dict[str, Any] = {}
+    if endpoint_key and endpoint_key in registry:
+        resolved = dict(registry[endpoint_key])
+    elif not ep and cfg.get("architect_endpoint"):
+        resolved = dict(cfg.get("architect_endpoint"))
+
+    resolved.update(ep)
+
+    if "canonical_url" in resolved and resolved["canonical_url"]:
+        resolved["canonical_url"] = normalize_canonical_url(resolved["canonical_url"])
+
+    # If project_id or conversation_id missing, extract from canonical_url
+    if resolved.get("canonical_url"):
+        c_proj, c_conv = extract_chatgpt_identifiers(resolved["canonical_url"])
+        if not resolved.get("chatgpt_project_id") and c_proj:
+            resolved["chatgpt_project_id"] = c_proj
+        if not resolved.get("project_id") and c_proj:
+            resolved["project_id"] = c_proj
+        if not resolved.get("conversation_id") and c_conv:
+            resolved["conversation_id"] = c_conv
+
+    return resolved
+
+
 def discover_tab_by_endpoint(
     endpoint: Optional[Dict[str, Any]] = None,
     url_pattern: str = "chatgpt.com",
     cdp_port: int = 9222,
     max_retries: int = 3,
     raw_tabs: Optional[List[Dict[str, Any]]] = None,
+    auto_recover_closed_tab: bool = True,
+    config: Optional[Dict[str, Any]] = None,
+    project_root: Optional[str | Path] = None,
 ) -> Tuple[str, str, str]:
     """
     Discover Chrome tab matching exact Architect Endpoint.
-    Enforces 'EXACT_CONVERSATION' routing policy and fail-closed safety with bounded retry budget.
+    Enforces 'DAIO-004 EXACT_CONVERSATION' routing policy and fail-closed safety with bounded retry budget.
+    Verifies BOTH ChatGPT Project ID and Conversation ID before selection or dispatch.
+    If canonical tab is not open, safely opens exact canonical URL on authenticated profile and re-verifies.
     """
     import urllib.request
+    import urllib.parse
     import time
+
+    def fetch_tabs() -> List[Dict[str, Any]]:
+        try:
+            req = urllib.request.urlopen(f"http://localhost:{cdp_port}/json/list", timeout=3)
+            return json.loads(req.read().decode("utf-8"))
+        except Exception:
+            return []
 
     tabs: List[Dict[str, Any]] = []
     if raw_tabs is not None:
         tabs = raw_tabs
     else:
-        last_err = None
         for attempt in range(1, max_retries + 1):
-            try:
-                req = urllib.request.urlopen(f"http://localhost:{cdp_port}/json/list", timeout=3)
-                tabs = json.loads(req.read().decode("utf-8"))
+            tabs = fetch_tabs()
+            if tabs:
                 break
-            except Exception as e:
-                last_err = e
-                if attempt < max_retries:
-                    time.sleep(0.5)
-        if not tabs and last_err is not None:
-            raise RuntimeError(
-                f"Could not connect to Chrome CDP at port {cdp_port} after {max_retries} attempts. "
-                f"Is Chrome running with --remote-debugging-port={cdp_port}? Error: {last_err}"
-            )
+            if attempt < max_retries:
+                time.sleep(0.5)
 
-    ep = endpoint or {}
-    proj_id = ep.get("project_id")
+    ep = resolve_architect_endpoint(endpoint=endpoint, config=config, project_root=project_root)
+    proj_id = ep.get("chatgpt_project_id") or ep.get("project_id")
     conv_id = ep.get("conversation_id")
-    canonical_url = ep.get("canonical_url")
+    canonical_url = normalize_canonical_url(ep.get("canonical_url"))
     routing_policy = ep.get("routing_policy", "EXACT_CONVERSATION")
 
-    # 1. Match on exact conversation_id
-    if conv_id:
-        for t in tabs:
-            if t.get("type") == "page":
-                tab_url = t.get("url", "")
-                if conv_id in tab_url and not ("auth/login" in tab_url or "api/auth" in tab_url):
-                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
-
-    # 2. Match on canonical_url
     if canonical_url:
-        for t in tabs:
-            if t.get("type") == "page":
-                tab_url = t.get("url", "")
-                if canonical_url in tab_url:
-                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+        canon_proj, canon_conv = extract_chatgpt_identifiers(canonical_url)
+        if not proj_id and canon_proj:
+            proj_id = canon_proj
+        if not conv_id and canon_conv:
+            conv_id = canon_conv
 
-    # 3. Match on project_id if routing_policy allows PROJECT_LEVEL
-    if proj_id and routing_policy == "PROJECT_LEVEL":
-        for t in tabs:
-            if t.get("type") == "page" and proj_id in t.get("url", ""):
+    def find_matching_tab(tab_list: List[Dict[str, Any]]) -> Optional[Tuple[str, str, str]]:
+        for t in tab_list:
+            if t.get("type") != "page":
+                continue
+            tab_url = t.get("url", "")
+            if "auth/login" in tab_url or "api/auth" in tab_url:
+                continue
+
+            tab_proj, tab_conv = extract_chatgpt_identifiers(tab_url)
+
+            # Strict Invariant 1: If BOTH proj_id and conv_id are specified, BOTH must match exactly
+            if proj_id and conv_id:
+                if tab_proj == proj_id and tab_conv == conv_id:
+                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                continue
+
+            # Strict Invariant 2: If conv_id specified without project_id, conversation must match
+            if conv_id and not proj_id:
+                if tab_conv == conv_id:
+                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                continue
+
+            # Strict Invariant 3: Project-level routing only when routing_policy allows PROJECT_LEVEL
+            if proj_id and not conv_id and routing_policy == "PROJECT_LEVEL":
+                if tab_proj == proj_id:
+                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                continue
+
+            # Strict Invariant 4: Direct canonical URL match (if neither ID parsed)
+            if canonical_url and canonical_url in tab_url:
                 return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
 
-    # If EXACT_CONVERSATION was requested, fail closed rather than sending to wrong tab!
-    if conv_id or routing_policy == "EXACT_CONVERSATION":
+        return None
+
+    match = find_matching_tab(tabs)
+    if match:
+        return match
+
+    # Auto-recovery: If exact tab is not currently open, safely open canonical URL on Chrome CDP
+    target_recovery_url = canonical_url
+    if not target_recovery_url and proj_id and conv_id:
+        target_recovery_url = f"https://chatgpt.com/g/{proj_id}/c/{conv_id}"
+
+    if auto_recover_closed_tab and target_recovery_url and raw_tabs is None:
+        try:
+            encoded_url = urllib.parse.quote(target_recovery_url, safe=":/%#?=@[]!$&'()*+,;")
+            new_tab_url = f"http://localhost:{cdp_port}/json/new?{encoded_url}"
+            req = urllib.request.Request(new_tab_url, method="PUT")
+            try:
+                urllib.request.urlopen(req, timeout=3)
+            except Exception:
+                urllib.request.urlopen(new_tab_url, timeout=3)
+
+            # Poll for new tab to register and load
+            for _ in range(10):
+                time.sleep(0.5)
+                refreshed_tabs = fetch_tabs()
+                recovered_match = find_matching_tab(refreshed_tabs)
+                if recovered_match:
+                    return recovered_match
+                tabs = refreshed_tabs
+        except Exception as ex:
+            logger.warning(f"Could not auto-open canonical tab '{target_recovery_url}': {ex}")
+
+    # If EXACT_CONVERSATION was requested (or IDs were specified), fail closed rather than sending to wrong tab!
+    if conv_id or proj_id or routing_policy == "EXACT_CONVERSATION":
         available = [f"[{t.get('title')}] -> {t.get('url')}" for t in tabs if t.get("type") == "page"]
         raise RuntimeError(
-            f"DAIO-004 Exact Conversation Routing Failed: Could not find active tab for conversation_id '{conv_id}' or canonical_url '{canonical_url}'. "
+            f"DAIO-004 Exact Conversation Routing Failed: Could not find active tab for project_id '{proj_id}', conversation_id '{conv_id}', or canonical_url '{canonical_url}'. "
             f"Fail-closed policy prevented dispatch to unrelated tabs. Available tabs:\n" + "\n".join(available)
         )
 
@@ -267,6 +394,65 @@ def discover_tab_by_endpoint(
 
     available = [f"[{t.get('title')}] -> {t.get('url')}" for t in tabs if t.get("type") == "page"]
     raise RuntimeError(f"No tab matched pattern '{url_pattern}'. Available tabs:\n" + "\n".join(available))
+
+
+def probe_architect_endpoint(
+    endpoint: Optional[Dict[str, Any]] = None,
+    cdp_port: int = 9222,
+    raw_tabs: Optional[List[Dict[str, Any]]] = None,
+    auto_recover_closed_tab: bool = True,
+    config: Optional[Dict[str, Any]] = None,
+    project_root: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    """
+    DAIO Endpoint Onboarding & Minimal-Probe Protocol (EOMP).
+    Performs non-destructive preflight verification to prove:
+    1. CDP reachable
+    2. Exact Project ID match
+    3. Exact Conversation ID match
+    4. Canonical URL identity verified
+    5. Session ready (authenticated, non-login page)
+    Fails closed if verification does not pass.
+    """
+    resolved = resolve_architect_endpoint(endpoint=endpoint, config=config, project_root=project_root)
+    proj_id = resolved.get("chatgpt_project_id") or resolved.get("project_id")
+    conv_id = resolved.get("conversation_id")
+    canonical_url = resolved.get("canonical_url")
+
+    try:
+        ws_url, tab_id, tab_title = discover_tab_by_endpoint(
+            endpoint=resolved,
+            cdp_port=cdp_port,
+            raw_tabs=raw_tabs,
+            auto_recover_closed_tab=auto_recover_closed_tab,
+            config=config,
+            project_root=project_root,
+        )
+        return {
+            "success": True,
+            "status": "VERIFIED",
+            "endpoint": resolved,
+            "project_id": proj_id,
+            "conversation_id": conv_id,
+            "canonical_url": canonical_url,
+            "tab_id": tab_id,
+            "tab_title": tab_title,
+            "webSocketDebuggerUrl": ws_url,
+            "error": None,
+        }
+    except Exception as ex:
+        return {
+            "success": False,
+            "status": "PROBE_FAILED",
+            "endpoint": resolved,
+            "project_id": proj_id,
+            "conversation_id": conv_id,
+            "canonical_url": canonical_url,
+            "tab_id": None,
+            "tab_title": None,
+            "webSocketDebuggerUrl": None,
+            "error": str(ex),
+        }
 
 
 class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
