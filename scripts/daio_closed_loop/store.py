@@ -367,11 +367,6 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 if not self._shared_conn:
                     conn.close()
                 return False, "REJECTED_FENCED_WORK", current_work, None
-            if admission_reason(current_work) in {"COMPLETED", "FROZEN", "SUPERSEDED", "SUPERSEDED_WORK", "STOP"}:
-                conn.rollback()
-                if not self._shared_conn:
-                    conn.close()
-                return False, "REJECTED_TERMINAL_WORK", current_work, None
 
             # 2. Idempotency / Replay Deduplication Check
             inst_clean = (decision.instruction or "").strip()
@@ -390,7 +385,9 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                     conn.close()
                 return False, "DECISION_ALREADY_APPLIED", current_work, decision_hash
 
-            # 3. TOCTOU & Context Guard
+            # 3. TOCTOU & Context Guard — evaluated BEFORE terminal-state check so that
+            # race / stale-context violations surface as REJECTED_STALE_CONTEXT even
+            # when the work has concurrently advanced to a terminal state.
             if expected_gate is not None and current_work.current_gate != expected_gate:
                 conn.rollback()
                 if not self._shared_conn:
@@ -412,6 +409,14 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                     current_work,
                     f"TOCTOU violation: status mismatch (live={current_work.status.value}, expected={expected_status.value})",
                 )
+
+            # 4. Terminal-state guard — evaluated after TOCTOU so race conditions
+            # are attributed correctly. Both safety gates are preserved.
+            if admission_reason(current_work) in {"COMPLETED", "FROZEN", "SUPERSEDED", "SUPERSEDED_WORK", "STOP"}:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return False, "REJECTED_TERMINAL_WORK", current_work, None
 
             if expected_stage is not None and current_work.current_stage.strip().upper() != expected_stage.strip().upper():
                 conn.rollback()

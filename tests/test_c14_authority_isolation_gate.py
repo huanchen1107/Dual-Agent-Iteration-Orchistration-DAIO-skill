@@ -9,6 +9,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 
 import pytest
@@ -91,8 +92,13 @@ def test_native_authority_survives_descendant_escape_and_controller_restart(tmp_
     shutil.copyfile(FIXTURES / 'c14_authority_backend.py', scratch / 'backend.py')
     profile = profile_for(scratch)
     profile_path = authority / 'boundary.sb'; profile_path.write_text(profile)
+    # Use a short-path tmpdir under /tmp for the AF_UNIX socket to stay within
+    # macOS's 104-character path limit, regardless of where the repo is checked out.
+    _sock_tmp = tempfile.mkdtemp(prefix='c14auth')
+    sock_path = os.path.join(_sock_tmp, 'w.sock')
+    assert len(sock_path) <= 104, f'AF_UNIX path still too long: {len(sock_path)} chars'
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(authority / 'writer.sock')); server.listen(1)
+    server.bind(sock_path); server.listen(1)
     req_r, req_w = os.pipe()
     res_r, res_w = os.pipe()
     ctl_r, ctl_w = os.pipe()
@@ -103,7 +109,7 @@ def test_native_authority_survives_descendant_escape_and_controller_restart(tmp_
     os.set_inheritable(ctl_w, True)
     for fd in (req_w, res_r):
         os.set_inheritable(fd, True)
-    config = dict(sentinels=sentinels, writer_socket=str(authority / 'writer.sock'),
+    config = dict(sentinels=sentinels, writer_socket=sock_path,
                   proposal_read=res_r, proposal_write=req_w, host_fd=host_fd,
                   other_host_fds=[server.fileno(),ctl_w], artifacts=str(artifacts),
                   path_tricks={'symlink':str(scratch / 'symlink-to-authority'),
@@ -229,6 +235,7 @@ def test_native_authority_survives_descendant_escape_and_controller_restart(tmp_
                 receive(ack_r)
                 p.wait(timeout=5)
         server.close()
+        shutil.rmtree(_sock_tmp, ignore_errors=True)
         for fd in (req_r,req_w,res_r,res_w,ctl_r,ctl_w,ack_r,ack_w,host_fd):
             os.close(fd)
     evidence['cleanup'] = 'Parent reaped; escaped descendant finished and PID absent; both controller processes exited'

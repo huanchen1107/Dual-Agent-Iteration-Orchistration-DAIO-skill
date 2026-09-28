@@ -105,6 +105,25 @@ def classify_work_status_for_watchdog(
             return WatchdogPolicyAction.RECOVERABLE_STALL, "PROGRESS_DEADLINE_EXCEEDED"
         return WatchdogPolicyAction.HEALTHY_PROGRESS, "EXECUTING_WITH_ACTIVE_LEASE"
 
+    elif status == DAIOStatus.FROZEN:
+        # FROZEN is a canonical terminal state (same family as COMPLETED/STOP).
+        # Authority is revoked; no further recovery is permitted.
+        return WatchdogPolicyAction.TERMINAL_FAILURE, "FROZEN"
+
+    elif status == DAIOStatus.SUPERSEDED:
+        # SUPERSEDED: work was replaced by a newer work item. Terminal.
+        return WatchdogPolicyAction.TERMINAL_FAILURE, "SUPERSEDED"
+
+    elif status == DAIOStatus.STOP:
+        # STOP: trusted policy revocation. Terminal.
+        return WatchdogPolicyAction.TERMINAL_FAILURE, "STOP"
+
+    elif status == DAIOStatus.WAITING_FOR_EXECUTION_CAPACITY:
+        # Capacity is temporarily unavailable. Watchdog waits; not an engineering failure.
+        if watch.progress_deadline and now_iso > watch.progress_deadline:
+            return WatchdogPolicyAction.RECOVERABLE_STALL, "CAPACITY_WAIT_DEADLINE_EXCEEDED"
+        return WatchdogPolicyAction.WAITING, "WAITING_FOR_EXECUTION_CAPACITY"
+
     else:
         return WatchdogPolicyAction.ESCALATE, f"UNKNOWN_WORK_STATUS_{status}"
 
