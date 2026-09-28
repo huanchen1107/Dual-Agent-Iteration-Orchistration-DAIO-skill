@@ -18,6 +18,7 @@ import subprocess
 import sys
 from typing import Optional
 import urllib.request
+import uuid
 
 
 PROJECT_ROOT = Path.cwd()
@@ -246,16 +247,63 @@ def do_daemon_status():
         print(f"⚪ DAIO Supervisor daemon is STOPPED")
 
 
+def do_dispatch(
+    change_id: str,
+    requested_action: str,
+    request_id: Optional[str] = None,
+    requested_role: str = "ENGINEERING_EXECUTION",
+    allowed_scope: Optional[list[str]] = None,
+):
+    """Submit root work through the canonical durable supervisor inbox."""
+    from daio_closed_loop.inbox import DAIORootWorkInbox, RootWorkRequest
+
+    cfg_file = PROJECT_ROOT / "_daio" / "daio_config.json"
+    cfg = {}
+    if cfg_file.exists():
+        cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+
+    resolved_request_id = request_id or f"dispatch-{uuid.uuid4().hex[:12]}"
+    project_id = str(cfg.get("project_id") or cfg.get("project_name") or PROJECT_ROOT.name)
+    endpoint = cfg.get("architect_endpoint", {})
+    if not isinstance(endpoint, dict):
+        raise ValueError("architect_endpoint must be an object")
+
+    request = RootWorkRequest(
+        schema_version="daio-root-work/v1",
+        request_id=resolved_request_id,
+        project_id=project_id,
+        change_id=change_id,
+        requested_action=requested_action,
+        requested_role=requested_role,
+        allowed_scope=list(allowed_scope or cfg.get("allowed_scope", [])),
+        architect_endpoint=endpoint,
+        metadata={"dispatch_source": "daio-cli"},
+    )
+    submitted = DAIORootWorkInbox.submit_request(PROJECT_ROOT / "_daio" / "inbox", request)
+    print(json.dumps({
+        "status": "SUBMITTED",
+        "request_id": resolved_request_id,
+        "work_id": f"daio-root-{resolved_request_id}",
+        "inbox_path": str(submitted),
+        "schema_version": request.schema_version,
+    }, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI (Generic DAIO v2.1)")
-    parser.add_argument("action", nargs="?", default="start", choices=["start", "stop", "init", "doctor", "status", "daemon-status", "board", "run", "loop", "rpc-status", "rpc-publish"],
-                        help="Action to perform: start, stop, init, doctor, status, daemon-status, board, rpc-status, rpc-publish")
+    parser.add_argument("action", nargs="?", default="start", choices=["start", "stop", "init", "doctor", "status", "daemon-status", "board", "run", "loop", "rpc-status", "rpc-publish", "dispatch", "create-work"],
+                        help="Action to perform: start, stop, init, doctor, status, daemon-status, board, rpc-status, rpc-publish, dispatch")
     parser.add_argument("--project", "-C", default=os.environ.get("DAIO_PROJECT_ROOT"), help="Target project root directory (default: current working directory)")
     parser.add_argument("--daemon", "-d", action="store_true", help="Run supervisor in detached background daemon mode")
     parser.add_argument("--relay", default=None, help="Cloudflare Relay URL for RPC publication")
     parser.add_argument("--token", default=None, help="Bearer authorization token for Cloudflare Relay")
     parser.add_argument("--loop", action="store_true", help="Run publisher continuously in a loop")
     parser.add_argument("--interval", type=int, default=15, help="Publishing interval in seconds (default: 15)")
+    parser.add_argument("--change-id", help="Change/stage identifier for dispatch")
+    parser.add_argument("--request-id", help="Stable idempotency key for dispatch")
+    parser.add_argument("--requested-action", help="Engineering or architect action to execute")
+    parser.add_argument("--role", default="ENGINEERING_EXECUTION", choices=["ENGINEERING_EXECUTION", "LEAD_ARCHITECT_REVIEW"], help="Initial DAIO role")
+    parser.add_argument("--allow", action="append", dest="allowed_scope", help="Allowed workspace glob; repeat as needed")
     args = parser.parse_args()
 
     global PROJECT_ROOT
@@ -276,6 +324,16 @@ def main():
         do_rpc_status()
     elif args.action == "rpc-publish":
         do_rpc_publish(relay_url=args.relay, token=args.token, loop_mode=args.loop, interval=args.interval)
+    elif args.action in ["dispatch", "create-work"]:
+        if not args.change_id or not args.requested_action:
+            parser.error("dispatch requires --change-id and --requested-action")
+        do_dispatch(
+            change_id=args.change_id,
+            requested_action=args.requested_action,
+            request_id=args.request_id,
+            requested_role=args.role,
+            allowed_scope=args.allowed_scope,
+        )
     elif args.action in ["start", "loop", "run"]:
         do_start(daemon=args.daemon)
     elif args.action == "board":
@@ -288,5 +346,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
