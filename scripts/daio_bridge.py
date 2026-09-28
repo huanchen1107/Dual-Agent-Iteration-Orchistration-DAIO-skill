@@ -126,7 +126,7 @@ class UniversalCDPClient:
     async def get_status(self) -> Dict[str, Any]:
         check_js = """
         (() => {
-            const assistantEls = document.querySelectorAll('[data-message-author-role="assistant"], .agent-turn, .font-claude-message, [data-is-streaming]');
+            const assistantEls = document.querySelectorAll('[data-chatgpt-search-unit-key*="assistant"], [data-message-author-role="assistant"], .agent-turn, .font-claude-message, [data-is-streaming]');
             const markdowns = document.querySelectorAll('.markdown, .prose, article');
             
             let lastText = '';
@@ -177,7 +177,8 @@ class UniversalCDPClient:
         # Step 0: Idempotency check on current conversation DOM
         idempotency_js = f"""
         (() => {{
-            const userArticles = document.querySelectorAll('[data-message-author-role="user"]');
+            const main = document.querySelector('main') || document.body;
+            const userArticles = document.querySelectorAll('[data-chatgpt-search-unit-key*="user"], [data-message-author-role="user"], [data-user-message-bubble="true"]');
             const targetNonce = {json.dumps(probe_nonce)};
             const targetFp = {json.dumps(fingerprint)};
             
@@ -191,6 +192,9 @@ class UniversalCDPClient:
                         return {{ alreadyCommitted: true, userCount: userArticles.length, matchedFp: true }};
                     }}
                 }}
+            }}
+            if (targetNonce && main && main.innerText.includes(targetNonce)) {{
+                return {{ alreadyCommitted: true, userCount: userArticles.length, matchedNonce: targetNonce }};
             }}
             return {{ alreadyCommitted: false, userCount: userArticles.length }};
         }})()
@@ -289,10 +293,14 @@ class UniversalCDPClient:
                         'button[data-testid="send-button"]',
                         'button[aria-label="Send prompt"]',
                         'button[aria-label="Send message"]',
+                        'button[aria-label="Send"]',
+                        'button[aria-label="傳送"]',
                         'button[aria-label="傳送提示"]',
                         'button[aria-label="傳送提示詞"]',
                         'button[aria-label="傳送訊息"]',
-                        'button[data-testid="fruitjuice-send-button"]'
+                        'button[data-testid="fruitjuice-send-button"]',
+                        'button[type="submit"].bg-composer-primary',
+                        'button[type="submit"]'
                     ];
                     let sendBtn = null;
                     for (const sel of strictSelectors) {
@@ -307,7 +315,8 @@ class UniversalCDPClient:
                         for (const b of buttons) {
                             const aria = (b.getAttribute('aria-label') || '').toLowerCase();
                             const testId = (b.getAttribute('data-testid') || '').toLowerCase();
-                            if (aria === 'send prompt' || aria === 'send message' || aria === '傳送提示' || aria === '傳送提示詞' || aria === '傳送訊息' || testId === 'send-button') {
+                            const bType = (b.getAttribute('type') || '').toLowerCase();
+                            if (aria === 'send' || aria === 'send prompt' || aria === 'send message' || aria === '傳送' || aria === '傳送提示' || aria === '傳送提示詞' || aria === '傳送訊息' || testId === 'send-button' || bType === 'submit') {
                                 sendBtn = b;
                                 break;
                             }
@@ -392,7 +401,7 @@ class UniversalCDPClient:
             (() => {{
                 const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
                 const promptText = promptEl ? (promptEl.innerText || promptEl.value || '').trim() : '';
-                const userArticles = document.querySelectorAll('[data-message-author-role="user"]');
+                const userArticles = document.querySelectorAll('[data-chatgpt-search-unit-key*="user"], [data-message-author-role="user"], [data-user-message-bubble="true"]');
                 let userMessageMatched = false;
                 let matchedNonce = false;
                 const targetNonce = {json.dumps(probe_nonce)};
@@ -409,6 +418,13 @@ class UniversalCDPClient:
                             userMessageMatched = true;
                             break;
                         }}
+                    }}
+                }}
+                if (targetNonce && !matchedNonce) {{
+                    const main = document.querySelector('main') || document.body;
+                    if (main && main.innerText.includes(targetNonce)) {{
+                        userMessageMatched = true;
+                        matchedNonce = true;
                     }}
                 }}
                 const isCleared = (promptText.length === 0);
