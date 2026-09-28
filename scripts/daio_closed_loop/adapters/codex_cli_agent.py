@@ -118,7 +118,19 @@ Ensure the entire response is wrapped in a ```json code fence.
             try:
                 event = json.loads(line)
                 if isinstance(event, dict):
+                    if event.get("type") == "item.completed":
+                        item = event.get("item")
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == "agent_message"
+                            and isinstance(item.get("text"), str)
+                            and "proposed_edits" in item["text"]
+                        ):
+                            return self._parse_json_from_text(item["text"])
+                    event_type = event.get("type")
                     msg = event.get("content") or event.get("text") or event.get("message")
+                    if event_type not in (None, "message", "assistant_message"):
+                        msg = None
                     if isinstance(msg, str) and "proposed_edits" in msg:
                         return self._parse_json_from_text(msg)
                     if "proposed_edits" in event and isinstance(event["proposed_edits"], list):
