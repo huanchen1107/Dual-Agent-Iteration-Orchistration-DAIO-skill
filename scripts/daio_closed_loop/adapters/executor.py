@@ -17,6 +17,7 @@ import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import DAIOWorkItem
+from ..handoff_contract import require_admission, SafetyError, Outcome, TestStatus
 from .agent_contract import (
     AgentTaskRequest,
     AgentTaskProposal,
@@ -45,6 +46,8 @@ class ExecutionResult:
     baseline_failures: List[str] = field(default_factory=list)
     current_failures: List[str] = field(default_factory=list)
     regression_status: str = "ALL_PASSED"
+    outcome: Outcome = Outcome.UNKNOWN_FAILURE
+    test_status: TestStatus = TestStatus.NOT_RUN
 
     @property
     def commit_sha(self) -> str:
@@ -329,6 +332,9 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
         commit_message: Optional[str] = None,
     ) -> ExecutionResult:
         """Asynchronous execution path: directly awaits agent proposal without nested event loops."""
+        require_admission(work)
+        if work.handoff_contract:
+            raise SafetyError("C1.4 work cannot use the unfenced legacy workspace executor")
         out_logs = []
         proposal = None
         base_sha = self.get_current_head()
@@ -383,6 +389,8 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                     base_sha=base_sha,
                     head_sha=base_sha,
                     generated_commit_sha=None,
+                    outcome=proposal.outcome or Outcome.UNKNOWN_FAILURE,
+                    test_status=TestStatus.NOT_RUN,
                     output=f"Agent proposal failed: {proposal.error_message}",
                     error_message=proposal.error_message,
                     proposal=proposal
@@ -544,6 +552,8 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 baseline_failures=baseline_failures,
                 current_failures=current_failures,
                 regression_status=regression_status,
+                outcome=Outcome.TEST_FAILURE,
+                test_status=TestStatus.FAILED,
             )
 
         # 4. If tests pass, commit deliverable
@@ -581,6 +591,8 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
             baseline_failures=baseline_failures,
             current_failures=current_failures,
             regression_status=regression_status,
+            outcome=Outcome.SUCCESS,
+            test_status=TestStatus.PASSED,
         )
 
     def execute_task(
@@ -610,5 +622,4 @@ class SubprocessWorkspaceExecutor(EngineeringExecutorAdapter):
                 commit_message=commit_message,
             )
         )
-
 

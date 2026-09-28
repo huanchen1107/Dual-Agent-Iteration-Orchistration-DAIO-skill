@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
+from ..handoff_contract import Outcome
 
 
 class AgentRole(str, Enum):
@@ -315,6 +316,7 @@ class AgentTaskProposal:
     started_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     completed_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     raw_response: str = ""
+    outcome: Optional[Outcome] = None
 
 
 class EngineeringAgentAdapter(ABC):

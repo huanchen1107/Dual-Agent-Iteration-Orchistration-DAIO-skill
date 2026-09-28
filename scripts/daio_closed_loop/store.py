@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import uuid
 import hashlib
 
+from .handoff_contract import admission_reason, SafetyError
+
 logger = logging.getLogger(__name__)
 
 from .models import (
@@ -268,6 +270,12 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         if "last_heartbeat_at" not in existing_cols:
             cursor.execute("ALTER TABLE daio_work_items ADD COLUMN last_heartbeat_at TEXT")
 
+        for name in ("work_revision", "event_sequence", "fencing_token"):
+            if name not in existing_cols:
+                cursor.execute(f"ALTER TABLE daio_work_items ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+        if "handoff_contract" not in existing_cols:
+            cursor.execute("ALTER TABLE daio_work_items ADD COLUMN handoff_contract TEXT")
+
         conn.commit()
         if not self._shared_conn:
             conn.close()
@@ -292,6 +300,13 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
     ) -> None:
         conn = self._get_connection()
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        enrolled = cursor.execute("SELECT handoff_contract FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+        if enrolled and enrolled[0]:
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError("C1.4 requires fenced audit publication")
         cursor.execute("""
             INSERT INTO daio_applied_decisions (
                 decision_hash, work_id, decision, current_phase, action, applied_at, status
@@ -347,6 +362,16 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 return False, "REJECTED_WORK_NOT_FOUND", None, None
 
             current_work = self._row_to_work_item(row)
+            if current_work.handoff_contract:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return False, "REJECTED_FENCED_WORK", current_work, None
+            if admission_reason(current_work) in {"COMPLETED", "FROZEN", "SUPERSEDED", "SUPERSEDED_WORK", "STOP"}:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                return False, "REJECTED_TERMINAL_WORK", current_work, None
 
             # 2. Idempotency / Replay Deduplication Check
             inst_clean = (decision.instruction or "").strip()
@@ -516,6 +541,20 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
     def save_work_item(self, item: DAIOWorkItem) -> None:
         conn = self._get_connection()
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        existing = cursor.execute("SELECT * FROM daio_work_items WHERE work_id=?", (item.work_id,)).fetchone()
+        if item.handoff_contract or (existing and existing["handoff_contract"]):
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError("C1.4 work requires fenced publication API")
+        if existing:
+            old = self._row_to_work_item(existing)
+            if admission_reason(old) and not admission_reason(item):
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                raise SafetyError("Cannot reopen protected work through save_work_item")
         cursor.execute("""
             INSERT INTO daio_work_items (
                 work_id, project_root, change_id, current_stage, current_gate,
@@ -599,6 +638,13 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
     ) -> None:
         conn = self._get_connection()
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        enrolled = cursor.execute("SELECT handoff_contract FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+        if enrolled and enrolled[0]:
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError("C1.4 requires fenced audit publication")
         cursor.execute("""
             INSERT INTO daio_turn_history (
                 turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload
@@ -676,44 +722,30 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         return self.list_work_items()
 
     def acquire_lease(self, work_id: str, worker_id: str, ttl_seconds: int = 60) -> Optional[str]:
-        """Acquire a lease lock on work_id if not already locked by another active lease."""
+        """Atomically acquire a legacy lease; C1.4 requires its fenced controller."""
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT lease_id, lease_expires_at, claimed_by FROM daio_work_items WHERE work_id = ?", (work_id,))
-        row = cursor.fetchone()
-        if not row:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+            if not row or row["handoff_contract"] or admission_reason(self._row_to_work_item(row)):
+                conn.rollback()
+                return None
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if row["lease_id"] and row["lease_expires_at"]:
+                if datetime.datetime.fromisoformat(row["lease_expires_at"]) > now and row["claimed_by"] != worker_id:
+                    conn.rollback()
+                    return None
+            lease = f"lease-{uuid.uuid4().hex[:8]}"
+            conn.execute("UPDATE daio_work_items SET lease_id=?,lease_expires_at=?,claimed_by=?,updated_at=? WHERE work_id=?",
+                         (lease, (now + datetime.timedelta(seconds=ttl_seconds)).isoformat(), worker_id, now.isoformat(), work_id))
+            conn.commit()
+            return lease
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
             if not self._shared_conn:
                 conn.close()
-            return None
-
-        now = datetime.datetime.now(datetime.timezone.utc)
-        current_lease_id = row["lease_id"]
-        expires_at_str = row["lease_expires_at"]
-        claimed_by = row["claimed_by"]
-
-        # Check if existing lease is active
-        if current_lease_id and expires_at_str:
-            try:
-                expires_at = datetime.datetime.fromisoformat(expires_at_str)
-                if expires_at > now and claimed_by != worker_id:
-                    if not self._shared_conn:
-                        conn.close()
-                    return None  # Still locked by a different worker
-            except Exception:
-                pass
-
-        # Grant new lease
-        new_lease_id = f"lease-{uuid.uuid4().hex[:8]}"
-        new_expires_at = (now + datetime.timedelta(seconds=ttl_seconds)).isoformat()
-        cursor.execute("""
-            UPDATE daio_work_items
-            SET lease_id = ?, lease_expires_at = ?, claimed_by = ?, updated_at = ?
-            WHERE work_id = ?
-        """, (new_lease_id, new_expires_at, worker_id, now.isoformat(), work_id))
-        conn.commit()
-        if not self._shared_conn:
-            conn.close()
-        return new_lease_id
 
     def release_lease(self, work_id: str, lease_id: str) -> bool:
         conn = self._get_connection()
@@ -721,7 +753,7 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor.execute("""
             UPDATE daio_work_items
             SET lease_id = NULL, lease_expires_at = NULL, updated_at = ?
-            WHERE work_id = ? AND lease_id = ?
+            WHERE work_id = ? AND lease_id = ? AND handoff_contract IS NULL
         """, (datetime.datetime.now(datetime.timezone.utc).isoformat(), work_id, lease_id))
         conn.commit()
         affected = cursor.rowcount > 0
@@ -746,13 +778,12 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
 
             # Find next runnable item (FIFO): unassigned, lease expired, or re-claimed by same worker
             cursor.execute("""
-                SELECT work_id FROM daio_work_items
-                WHERE status IN ('QUEUED', 'AWAITING_REVIEW', 'IN_PROGRESS')
+                SELECT * FROM daio_work_items
+                WHERE handoff_contract IS NULL AND status IN ('QUEUED', 'AWAITING_REVIEW', 'IN_PROGRESS')
                   AND (lease_id IS NULL OR lease_expires_at < ? OR claimed_by = ?)
                 ORDER BY created_at ASC
-                LIMIT 1
             """, (now_iso, worker_id))
-            row = cursor.fetchone()
+            row = next((r for r in cursor.fetchall() if not admission_reason(self._row_to_work_item(r))), None)
             if not row:
                 conn.commit()
                 if not self._shared_conn:
@@ -789,6 +820,10 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         keys = row.keys()
         return DAIOWorkItem(
             work_id=row["work_id"],
+            work_revision=row["work_revision"],
+            event_sequence=row["event_sequence"],
+            fencing_token=row["fencing_token"],
+            handoff_contract=row["handoff_contract"],
             project_root=row["project_root"],
             change_id=row["change_id"],
             current_stage=row["current_stage"],

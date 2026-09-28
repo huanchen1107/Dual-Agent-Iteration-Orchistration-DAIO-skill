@@ -26,6 +26,10 @@ class DAIORole(str, Enum):
 
 
 class DAIOStatus(str, Enum):
+    FROZEN = "FROZEN"
+    SUPERSEDED = "SUPERSEDED"
+    STOP = "STOP"
+    WAITING_FOR_EXECUTION_CAPACITY = "WAITING_FOR_EXECUTION_CAPACITY"
     QUEUED = "QUEUED"
     IN_PROGRESS = "IN_PROGRESS"
     AWAITING_REVIEW = "AWAITING_REVIEW"
@@ -102,6 +106,10 @@ class DAIOWorkItem:
     created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
+    work_revision: int = 0
+    event_sequence: int = 0
+    fencing_token: int = 0
+    handoff_contract: Optional[str] = None
 
 
 class DecisionLifecycleStatus(str, Enum):
@@ -396,7 +404,6 @@ class DAIOProjectStatusResponse:
             "durable_plane": self.durable_plane.to_dict(),
             "provenance": self.provenance,
         }
-
 
 
 

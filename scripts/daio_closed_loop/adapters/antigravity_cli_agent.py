@@ -10,6 +10,8 @@ Strictly preserves the DAIO security model:
 
 from __future__ import annotations
 import asyncio
+from ..handoff_contract import Outcome
+from .backend_outcomes import classify_failure
 import datetime
 import json
 import logging
@@ -163,6 +165,7 @@ Ensure the entire response is wrapped in a ```json code fence.
             return AgentTaskProposal(
                 work_id=request.work_id,
                 success=False,
+                outcome=Outcome.BACKEND_UNAVAILABLE,
                 backend_identity="ANTIGRAVITY_CLI",
                 model_name=self.model_name,
                 error_message="Antigravity CLI executable ('agy') not found on system PATH or ~/.local/bin/agy.",
@@ -205,12 +208,13 @@ Ensure the entire response is wrapped in a ```json code fence.
                 return AgentTaskProposal(
                     work_id=request.work_id,
                     success=False,
+                    outcome=classify_failure(stdout_str),
                     backend_identity="ANTIGRAVITY_CLI",
                     model_name=self.model_name,
-                    error_message=f"CLI execution failed with exit code {proc.returncode}: {stderr_str or stdout_str[:300]}",
+                    error_message="Backend execution failed: " + classify_failure(stdout_str).value,
                     started_at=started_at,
                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    raw_response=stdout_str
+                    raw_response=""
                 )
 
             # 1. Parse outer CLI JSON envelope
@@ -227,10 +231,11 @@ Ensure the entire response is wrapped in a ```json code fence.
                     success=False,
                     backend_identity="ANTIGRAVITY_CLI",
                     model_name=self.model_name,
-                    error_message=err_msg,
+                    error_message="CLI returned non-success status 'DENIED'" if cli_status == "DENIED" else "Backend returned non-success status",
+                    outcome=classify_failure(cli_envelope),
                     started_at=started_at,
                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    raw_response=stdout_str
+                    raw_response=""
                 )
 
             response_text = cli_envelope.get("response", "")
@@ -263,7 +268,7 @@ Ensure the entire response is wrapped in a ```json code fence.
                 proposed_edits=edits,
                 started_at=started_at,
                 completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                raw_response=stdout_str
+                raw_response=""
             )
 
         except asyncio.TimeoutError:
@@ -282,9 +287,9 @@ Ensure the entire response is wrapped in a ```json code fence.
                 success=False,
                 backend_identity="ANTIGRAVITY_CLI",
                 model_name=self.model_name,
-                error_message=f"Antigravity CLI adapter parse/execution failure: {str(e)}",
+                error_message="Antigravity CLI adapter parse/execution failure",
                 started_at=started_at,
                 completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                raw_response=locals().get("stdout_str", "")
+                raw_response=""
             )
 

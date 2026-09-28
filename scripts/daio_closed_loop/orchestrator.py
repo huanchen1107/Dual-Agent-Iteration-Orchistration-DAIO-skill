@@ -7,6 +7,8 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
+from .handoff_contract import require_admission, SafetyError, CAPACITY_OUTCOMES, Outcome, TestStatus
+
 from .models import (
     ArchitectDecision,
     DAIOGate,
@@ -146,6 +148,12 @@ class DAIOClosedLoopOrchestrator:
         Execute the autonomous closed loop until COMPLETED, HUMAN_GATE_REQUIRED, or BLOCKED.
         Enforces 0 human relays.
         """
+        admission_work = self.store.load_work_item(work_id)
+        if admission_work is None:
+            raise KeyError(work_id)
+        require_admission(admission_work)
+        if admission_work.handoff_contract:
+            raise SafetyError("C1.4 requires manual fenced handoff controller")
         if not worker_id:
             existing = self.store.load_work_item(work_id)
             if existing and existing.claimed_by:
@@ -390,6 +398,20 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                                 exec_res = await raw_res
                             else:
                                 exec_res = raw_res
+
+                        if exec_res.outcome in CAPACITY_OUTCOMES:
+                            work.status = DAIOStatus.WAITING_FOR_EXECUTION_CAPACITY
+                            work.metadata["execution_outcome"] = exec_res.outcome.value
+                            work.metadata["test_status"] = TestStatus.NOT_RUN.value
+                            self.store.save_work_item(work)
+                            break
+
+                        if not exec_res.success and not exec_res.scope_violation and exec_res.test_status in {TestStatus.NOT_RUN, TestStatus.UNKNOWN}:
+                            work.status = DAIOStatus.BLOCKED
+                            work.metadata["execution_outcome"] = exec_res.outcome.value
+                            work.metadata["test_status"] = exec_res.test_status.value
+                            self.store.save_work_item(work)
+                            break
 
                         # Check Scope Violation (DAIO-002)
                         if exec_res.scope_violation:
@@ -651,4 +673,3 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
             }
             logger.error(f"❌ ARCHITECT_DECISION_NOT_APPLIED: {err_report}")
             return False, work, err_report
-
