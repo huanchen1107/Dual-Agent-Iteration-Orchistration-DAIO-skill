@@ -87,6 +87,8 @@ class UniversalCDPClient:
 
     async def send_cdp_command(self, method: str, params: Dict[str, Any]) -> Any:
         """Dispatches a raw Chrome DevTools Protocol command over WebSocket."""
+        if not self.ws:
+            return {}
         self.msg_id += 1
         call = {
             "id": self.msg_id,
@@ -197,69 +199,134 @@ class UniversalCDPClient:
         if idem_res.get("alreadyCommitted"):
             logger.info(f"🔁 Message nonce/fingerprint already committed in DOM ({idem_res.get('userCount')} user messages). Skipping duplicate input/send.")
         else:
-            # 1. Fill Text Input
-            input_js = f"""
-            (() => {{
+            # 1. Focus and clear composer
+            input_prep_js = """
+            (() => {
                 const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
-                if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
+                if (!promptEl) return { success: false, error: "Prompt input element not found" };
                 
                 promptEl.focus();
-                const text = {json.dumps(message_text)};
-                if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {{
-                    promptEl.value = text;
-                    promptEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    promptEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                }} else {{
+                if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {
+                    promptEl.value = '';
+                } else {
                     document.execCommand('selectAll', false, null);
                     document.execCommand('delete', false, null);
-                    try {{
-                        const dt = new DataTransfer();
-                        dt.setData('text/plain', text);
-                        const pasteEvent = new ClipboardEvent('paste', {{
-                            clipboardData: dt,
-                            bubbles: true,
-                            cancelable: true
-                        }});
-                        promptEl.dispatchEvent(pasteEvent);
-                    }} catch (e) {{}}
-                    if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
-                        document.execCommand('insertText', false, text);
-                    }}
-                    if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
-                        promptEl.innerHTML = '<p>' + text.replace(/\\n/g, '</p><p>') + '</p>';
-                    }}
-                    promptEl.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText' }}));
-                }}
-                return {{ success: true }};
+                }
+                const rect = promptEl.getBoundingClientRect();
+                return {
+                    success: true,
+                    x: Math.round(rect.x + Math.min(20, rect.width / 2)),
+                    y: Math.round(rect.y + rect.height / 2),
+                    rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+                };
+            })()
+            """
+            prep_res = await self.evaluate(input_prep_js) or {}
+            if not prep_res.get("success"):
+                return {"success": False, "status": "SUBMISSION_NOT_COMMITTED", "error": prep_res.get("error", "Failed to focus composer")}
+
+            # Click composer center to ensure native browser focus
+            cx = prep_res.get("x")
+            cy = prep_res.get("y")
+            if cx is not None and cy is not None:
+                await self.send_cdp_command("Input.dispatchMouseEvent", {
+                    "type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1
+                })
+                await asyncio.sleep(0.05)
+                await self.send_cdp_command("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1
+                })
+                await asyncio.sleep(0.05)
+
+            # Insert complete prompt using CDP Input.insertText (updates ProseMirror/React state natively)
+            await self.send_cdp_command("Input.insertText", {"text": message_text})
+            await asyncio.sleep(0.1)
+
+            # 2. Verify composer state contains exact nonce/content before attempting submit
+            comp_check_js = f"""
+            (() => {{
+                const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                if (!promptEl) return {{ found: false, hasNonce: false }};
+                const text = promptEl.innerText || promptEl.textContent || promptEl.value || '';
+                const targetNonce = {json.dumps(probe_nonce)};
+                const hasNonce = targetNonce ? text.includes(targetNonce) : text.trim().length > 0;
+                return {{ found: true, hasNonce: hasNonce, length: text.length, sample: text.slice(0, 80) }};
             }})()
             """
-            res = await self.evaluate(input_js)
-            if not res or not res.get("success"):
-                return res
+            comp_verified = False
+            comp_start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - comp_start < 3.0:
+                c_res = await self.evaluate(comp_check_js) or {}
+                if c_res.get("hasNonce") or (c_res.get("success") and "hasNonce" not in c_res):
+                    comp_verified = True
+                    break
+                await asyncio.sleep(0.1)
 
-            # 2. Poll for send button coordinates & enablement (bounded up to 4.0s)
+            if not comp_verified:
+                return {
+                    "success": False,
+                    "status": "SUBMISSION_NOT_COMMITTED",
+                    "error": f"SUBMISSION_NOT_COMMITTED: Injected prompt failed to register in composer state (nonce={probe_nonce})."
+                }
+
+            # 3. Poll for strict Send button coordinates & enablement with geometric consistency (bounded up to 4.0s)
             button_query_js = """
             (() => {
-                const sendBtn = document.querySelector('button[data-testid="send-button"]') 
-                    || document.querySelector('button[aria-label="Send prompt"]')
-                    || document.querySelector('button[aria-label="傳送提示詞"]')
-                    || document.querySelector('button[aria-label="傳送"]')
-                    || document.querySelector('button[aria-label*="傳送"]')
-                    || document.querySelector('button[aria-label="Send message"]')
-                    || document.querySelector('button[aria-label="Send Message"]')
-                    || document.querySelector('button[data-testid="fruitjuice-send-button"]')
-                    || document.querySelector('fieldset button:last-of-type')
-                    || document.querySelector('form button:last-of-type');
-                if (sendBtn && !sendBtn.disabled) {
-                    const rect = sendBtn.getBoundingClientRect();
-                    return {
-                        found: true,
-                        disabled: false,
-                        x: Math.round(rect.x + rect.width / 2),
-                        y: Math.round(rect.y + rect.height / 2)
-                    };
+                const strictSelectors = [
+                    'button[data-testid="send-button"]',
+                    'button[aria-label="Send prompt"]',
+                    'button[aria-label="Send message"]',
+                    'button[aria-label="傳送提示"]',
+                    'button[aria-label="傳送提示詞"]',
+                    'button[aria-label="傳送訊息"]',
+                    'button[data-testid="fruitjuice-send-button"]'
+                ];
+                let sendBtn = null;
+                for (const sel of strictSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        sendBtn = el;
+                        break;
+                    }
                 }
-                return { found: !!sendBtn, disabled: sendBtn ? sendBtn.disabled : null };
+                if (!sendBtn) {
+                    const buttons = document.querySelectorAll('button');
+                    for (const b of buttons) {
+                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                        const testId = (b.getAttribute('data-testid') || '').toLowerCase();
+                        if (aria === 'send prompt' || aria === 'send message' || aria === '傳送提示' || aria === '傳送提示詞' || aria === '傳送訊息' || testId === 'send-button') {
+                            sendBtn = b;
+                            break;
+                        }
+                    }
+                }
+                if (!sendBtn) {
+                    return { found: false, error: "NO_STRICT_SEND_BUTTON_FOUND" };
+                }
+
+                const disabled = sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true';
+                const rect = sendBtn.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) {
+                    return { found: false, error: "SEND_BUTTON_ZERO_DIMENSION" };
+                }
+
+                // Geometric sanity check against composer
+                const comp = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                if (comp) {
+                    const compRect = comp.getBoundingClientRect();
+                    // Send button cannot be located to the far left of composer (where attachment/sidebar buttons sit)
+                    if (rect.x < compRect.left) {
+                        return { found: false, error: "BUTTON_GEOMETRICALLY_INCONSISTENT_LEFT" };
+                    }
+                }
+
+                return {
+                    found: true,
+                    disabled: disabled,
+                    x: Math.round(rect.x + rect.width / 2),
+                    y: Math.round(rect.y + rect.height / 2),
+                    rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+                };
             })()
             """
             btn_info = None
@@ -271,17 +338,20 @@ class UniversalCDPClient:
                 await asyncio.sleep(0.2)
 
             if not btn_info or not btn_info.get("found") or btn_info.get("disabled"):
+                error_msg = btn_info.get("error") if btn_info else "Send button not found"
+                if btn_info and btn_info.get("disabled"):
+                    error_msg = "Send button remained disabled after prompt insertion"
                 return {
                     "success": False,
                     "status": "SUBMISSION_NOT_COMMITTED",
-                    "error": "SUBMISSION_NOT_COMMITTED: Send button was not enabled within 4.0s after input injection."
+                    "error": f"SUBMISSION_NOT_COMMITTED: {error_msg}."
                 }
 
-            # 3. Native CDP Submission Dispatch
+            # 4. Native CDP Submission Dispatch
             x = btn_info.get("x")
             y = btn_info.get("y")
 
-            # Dispatch native CDP Mouse click on send button
+            # Dispatch native CDP Mouse click on verified send button
             if x is not None and y is not None:
                 await self.send_cdp_command("Input.dispatchMouseEvent", {
                     "type": "mouseMoved", "x": x, "y": y
@@ -314,24 +384,7 @@ class UniversalCDPClient:
                 "code": "Enter"
             })
 
-            # JavaScript fallback click trigger
-            await self.evaluate("""
-            (() => {
-                const sendBtn = document.querySelector('button[data-testid="send-button"]') 
-                    || document.querySelector('button[aria-label="Send prompt"]')
-                    || document.querySelector('button[aria-label="傳送提示詞"]')
-                    || document.querySelector('button[aria-label="傳送"]')
-                    || document.querySelector('button[aria-label*="傳送"]')
-                    || document.querySelector('button[aria-label="Send message"]')
-                    || document.querySelector('button[aria-label="Send Message"]')
-                    || document.querySelector('button[data-testid="fruitjuice-send-button"]')
-                    || document.querySelector('fieldset button:last-of-type')
-                    || document.querySelector('form button:last-of-type');
-                if (sendBtn && !sendBtn.disabled) sendBtn.click();
-            })()
-            """)
-
-            # 4. Positive SEND_VERIFIED assertion (poll up to 4.0s)
+            # 5. Positive SEND_VERIFIED assertion (poll up to 4.0s)
             verify_send_js = f"""
             (() => {{
                 const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
@@ -353,7 +406,7 @@ class UniversalCDPClient:
                 }}
                 const isCleared = (promptText.length === 0);
                 return {{
-                    verified: isCleared || userMessageMatched,
+                    verified: (targetNonce ? matchedNonce : (isCleared || userMessageMatched)),
                     isCleared: isCleared,
                     userMessageMatched: userMessageMatched,
                     matchedNonce: matchedNonce,

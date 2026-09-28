@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 from ..models import ArchitectDecision, DAIOWorkItem
 
@@ -270,7 +271,8 @@ def discover_tab_by_endpoint(
     auto_recover_closed_tab: bool = True,
     config: Optional[Dict[str, Any]] = None,
     project_root: Optional[str | Path] = None,
-) -> Tuple[str, str, str]:
+    return_metadata: bool = False,
+) -> Tuple[str, str, str] | Tuple[str, str, str, Dict[str, Any]]:
     """
     Discover Chrome tab matching exact Architect Endpoint.
     Enforces 'DAIO-004 EXACT_CONVERSATION' routing policy and fail-closed safety with bounded retry budget.
@@ -298,6 +300,8 @@ def discover_tab_by_endpoint(
                 break
             if attempt < max_retries:
                 time.sleep(0.5)
+
+    before_ids = [t["id"] for t in tabs if t.get("type") == "page"]
 
     ep = resolve_architect_endpoint(endpoint=endpoint, config=config, project_root=project_root)
     proj_id = ep.get("chatgpt_project_id") or ep.get("project_id")
@@ -346,8 +350,25 @@ def discover_tab_by_endpoint(
 
         return None
 
+    def make_telemetry(selected_id: str, current_tabs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        after_ids = [t["id"] for t in current_tabs if t.get("type") == "page"]
+        created = list(set(after_ids) - set(before_ids))
+        closed = list(set(before_ids) - set(after_ids))
+        return {
+            "targets_before": before_ids,
+            "targets_after": after_ids,
+            "target_created_ids": created,
+            "target_closed_ids": closed,
+            "new_tab_created": len(created) > 0,
+            "selected_target_id": selected_id,
+            "pinned_target_id": selected_id,
+        }
+
     match = find_matching_tab(tabs)
     if match:
+        ws_url, tab_id, tab_title = match
+        if return_metadata:
+            return ws_url, tab_id, tab_title, make_telemetry(tab_id, tabs)
         return match
 
     # Auto-recovery: If exact tab is not currently open, safely open canonical URL on Chrome CDP
@@ -371,6 +392,9 @@ def discover_tab_by_endpoint(
                 refreshed_tabs = fetch_tabs()
                 recovered_match = find_matching_tab(refreshed_tabs)
                 if recovered_match:
+                    ws_url, tab_id, tab_title = recovered_match
+                    if return_metadata:
+                        return ws_url, tab_id, tab_title, make_telemetry(tab_id, refreshed_tabs)
                     return recovered_match
                 tabs = refreshed_tabs
         except Exception as ex:
@@ -390,7 +414,10 @@ def discover_tab_by_endpoint(
             tab_url = t.get("url", "")
             tab_title = t.get("title", "")
             if url_pattern.lower() in tab_url.lower() or url_pattern.lower() in tab_title.lower():
-                return t["webSocketDebuggerUrl"], t["id"], tab_title
+                ws_url, tab_id = t["webSocketDebuggerUrl"], t["id"]
+                if return_metadata:
+                    return ws_url, tab_id, tab_title, make_telemetry(tab_id, tabs)
+                return ws_url, tab_id, tab_title
 
     available = [f"[{t.get('title')}] -> {t.get('url')}" for t in tabs if t.get("type") == "page"]
     raise RuntimeError(f"No tab matched pattern '{url_pattern}'. Available tabs:\n" + "\n".join(available))
@@ -502,18 +529,24 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
         if work.architect_endpoint:
             effective_endpoint.update(work.architect_endpoint)
 
-        ws_url, tab_id, tab_title = discover_tab_by_endpoint(
+        ws_url, tab_id, tab_title, telemetry = discover_tab_by_endpoint(
             endpoint=effective_endpoint,
             url_pattern=self.url_pattern,
             cdp_port=self.cdp_port,
             max_retries=self.max_discovery_retries,
+            return_metadata=True,
         )
+
+        nonce = f"DAIO-C1.2-PROBE-{uuid.uuid4().hex[:8]}"
+        telemetry["probe_nonce"] = nonce
+        logger.info(f"Target Lifecycle Telemetry: {json.dumps(telemetry)}")
+
         client = UniversalCDPClient(ws_url)
         await client.connect()
 
-        full_prompt = report_markdown + UNIVERSAL_PROMPT_APPENDIX
+        full_prompt = f"[{nonce}]\n\n" + report_markdown + UNIVERSAL_PROMPT_APPENDIX
         try:
-            res = await client.send_message(full_prompt, timeout_seconds=timeout_seconds)
+            res = await client.send_message(full_prompt, timeout_seconds=timeout_seconds, probe_nonce=nonce)
             if not res or not res.get("success"):
                 raise RuntimeError(f"CDP message dispatch failed: {res.get('error') if res else 'Unknown error'}")
 
