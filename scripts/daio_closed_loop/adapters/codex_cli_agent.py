@@ -8,7 +8,7 @@ Strictly zero direct disk write or git execution authority.
 from __future__ import annotations
 import asyncio
 from ..handoff_contract import Outcome
-from .backend_outcomes import classify_failure
+from .backend_outcomes import classify_process_failure
 import datetime
 import json
 import logging
@@ -213,13 +213,17 @@ Ensure the entire response is wrapped in a ```json code fence.
             stderr_str = stderr_bytes.decode("utf-8", errors="replace")
 
             if proc.returncode != 0:
+                failure = classify_process_failure(stdout_str, stderr_str, proc.returncode)
                 return AgentTaskProposal(
                     work_id=request.work_id,
                     success=False,
-                    outcome=classify_failure(stdout_str),
+                    outcome=failure.outcome,
                     backend_identity="CODEX_CLI",
                     model_name=self.model_name,
-                    error_message="Backend execution failed: " + classify_failure(stdout_str).value,
+                    error_message=(
+                        f"Backend execution failed: {failure.outcome.value} "
+                        f"(exit={proc.returncode}; diagnostic={failure.sanitized_reason})"
+                    ),
                     started_at=started_at,
                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     raw_response=""

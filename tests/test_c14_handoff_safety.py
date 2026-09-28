@@ -427,5 +427,6 @@ def test_cli_capacity_normalization_omits_raw_provider_secrets(adapter_name):
             return await adapter_class(cli_path='/fake/provider').propose_task_solution(
                 AgentTaskRequest('work-test','c1.4','propose','/unused'))
     proposal = asyncio.run(run())
-    assert proposal.outcome == Outcome.QUOTA_EXHAUSTED
+    expected = Outcome.QUOTA_EXHAUSTED if adapter_name.startswith('antigravity') else Outcome.CAPACITY_EXHAUSTED
+    assert proposal.outcome == expected
     assert not proposal.raw_response and 'secret-fixture' not in proposal.error_message
