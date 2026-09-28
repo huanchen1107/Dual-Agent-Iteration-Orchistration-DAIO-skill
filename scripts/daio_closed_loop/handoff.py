@@ -27,6 +27,8 @@ def utcnow():
 class DurableHandoff:
     """Transactional safety foundation; all publications consume a current token."""
 
+    contract_version = CONTRACT_VERSION
+
     def __init__(self, store):
         self.store = store
         with self._transaction() as conn:
@@ -93,7 +95,7 @@ class DurableHandoff:
         conn = self.store._get_connection()
         try:
             row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
-            if not row or row['handoff_contract'] != CONTRACT_VERSION:
+            if not row or row['handoff_contract'] != self.contract_version:
                 raise SafetyError("Work is not enrolled")
             return self._token(row)
         finally:
@@ -102,7 +104,7 @@ class DurableHandoff:
 
     def _validate(self, conn, token, live=False):
         row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (token.work_id,)).fetchone()
-        if not row or row['handoff_contract'] != CONTRACT_VERSION or self._token(row) != token:
+        if not row or row['handoff_contract'] != self.contract_version or self._token(row) != token:
             raise StaleExecution("STALE_EXECUTION: revision/sequence/attempt/fence mismatch")
         require_admission(self.store._row_to_work_item(row))
         if live and (not row['lease_expires_at'] or
@@ -135,11 +137,11 @@ class DurableHandoff:
         return checkpoint_id
 
     def enroll(self, work_id, baseline: Reconstruction, authorized_backends: tuple[str, ...]):
-        manifest = baseline.manifest()
         allowed = {'antigravity_cli', 'codex_cli', 'codex_ide_manual'}
         if not authorized_backends or not set(authorized_backends) <= allowed:
             raise SafetyError("Explicit backend allowlist required")
         with self._transaction() as conn:
+            manifest = baseline.manifest()
             row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
             if not row:
                 raise SafetyError("Work not found")
@@ -149,7 +151,7 @@ class DurableHandoff:
             if row['assigned_role'] != 'ENGINEERING_EXECUTION' or row['status'] != 'QUEUED':
                 raise SafetyError("Only approved queued engineering work may enroll")
             checkpoint_id = self._checkpoint(conn, row, manifest, 'BASELINE')
-            conn.execute("UPDATE daio_work_items SET handoff_contract=? WHERE work_id=?", (CONTRACT_VERSION, work_id))
+            conn.execute("UPDATE daio_work_items SET handoff_contract=? WHERE work_id=?", (self.contract_version, work_id))
             conn.execute("""INSERT INTO daio_backend_control(work_id,state,policy,manifest,checkpoint_id)
                             VALUES(?,?,?,?,?)""", (work_id, 'READY', canonical(sorted(set(authorized_backends))),
                                                   canonical(manifest), checkpoint_id))
@@ -209,7 +211,7 @@ class DurableHandoff:
             payload = json.loads(cp['payload'])
             if digest(payload) != cp['sha256']:
                 raise SafetyError("Checkpoint integrity failure")
-            return dict(contract_version=CONTRACT_VERSION, token=asdict(token),
+            return dict(contract_version=self.contract_version, token=asdict(token),
                         checkpoint_id=cp['checkpoint_id'], checkpoint_sha256=cp['sha256'],
                         manifest=payload['manifest'], backend=json.loads(ctl['authorized_backend']))
 

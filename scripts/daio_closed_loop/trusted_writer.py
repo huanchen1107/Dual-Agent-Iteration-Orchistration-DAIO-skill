@@ -43,6 +43,8 @@ class WriterBusy(SafetyError):
 
 
 class TrustedWriter:
+    _authority_mode = "standalone"
+
     def __init__(self, repository, state_dir):
         self.repo = Path(repository).absolute()
         self.control = Path(state_dir).absolute()
@@ -58,7 +60,10 @@ class TrustedWriter:
         # Same inode lock even when callers supply different control directories.
         with self._lock():
             binding = self.git / 'daio-trusted-writer-binding.json'
-            expected = canonical({'version': VERSION, 'control': str(self.control)})
+            binding_identity = {'version': VERSION, 'control': str(self.control)}
+            if self._authority_mode != 'standalone':
+                binding_identity['authority_mode'] = self._authority_mode
+            expected = canonical(binding_identity)
             if binding.exists() or binding.is_symlink():
                 if binding.is_symlink() or binding.stat().st_nlink != 1 or binding.read_text() != expected:
                     raise SafetyError('Repository already bound to another controller')
@@ -68,12 +73,8 @@ class TrustedWriter:
                     stream.write(expected); stream.flush(); os.fsync(stream.fileno())
                 fsync_dir(self.git)
             with self._db() as conn:
+                self._initialize_authority_schema(conn)
                 conn.executescript('''
-                CREATE TABLE IF NOT EXISTS work (
-                  work_id TEXT PRIMARY KEY, attempt TEXT NOT NULL, fence INTEGER NOT NULL,
-                  revision INTEGER NOT NULL, sequence INTEGER NOT NULL,
-                  authority TEXT NOT NULL, lifecycle TEXT NOT NULL, status TEXT NOT NULL,
-                  baseline TEXT NOT NULL, policy TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS artifacts (
                   artifact_id TEXT PRIMARY KEY, work_id TEXT NOT NULL, payload BLOB NOT NULL,
                   sha256 TEXT NOT NULL, token TEXT NOT NULL);
@@ -81,10 +82,7 @@ class TrustedWriter:
                   apply_id TEXT PRIMARY KEY, artifact_id TEXT UNIQUE NOT NULL, work_id TEXT NOT NULL,
                   state TEXT NOT NULL, token TEXT NOT NULL, before_image TEXT NOT NULL,
                   after_image TEXT NOT NULL, baseline TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS events (
-                  work_id TEXT NOT NULL, sequence INTEGER NOT NULL, revision INTEGER NOT NULL,
-                  attempt TEXT NOT NULL, fence INTEGER NOT NULL, kind TEXT NOT NULL,
-                  PRIMARY KEY(work_id,sequence));
+
                 CREATE TABLE IF NOT EXISTS journal_events (
                   id INTEGER PRIMARY KEY AUTOINCREMENT, apply_id TEXT NOT NULL, state TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS reconciliation_observations (
@@ -103,17 +101,30 @@ class TrustedWriter:
                 CREATE TRIGGER IF NOT EXISTS terminal_apply BEFORE UPDATE OF state ON applies
                   WHEN OLD.state='COMMITTED' AND NEW.state!='COMMITTED'
                   BEGIN SELECT RAISE(ABORT,'committed journal cannot regress'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_journal_events_update BEFORE UPDATE ON journal_events
+                  BEGIN SELECT RAISE(ABORT,'immutable journal event'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_journal_events_delete BEFORE DELETE ON journal_events
+                  BEGIN SELECT RAISE(ABORT,'immutable journal event'); END;
+                ''')
+
+    def _initialize_authority_schema(self, conn):
+        conn.executescript("""
+                CREATE TABLE IF NOT EXISTS work (
+                  work_id TEXT PRIMARY KEY, attempt TEXT NOT NULL, fence INTEGER NOT NULL,
+                  revision INTEGER NOT NULL, sequence INTEGER NOT NULL,
+                  authority TEXT NOT NULL, lifecycle TEXT NOT NULL, status TEXT NOT NULL,
+                  baseline TEXT NOT NULL, policy TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS events (
+                  work_id TEXT NOT NULL, sequence INTEGER NOT NULL, revision INTEGER NOT NULL,
+                  attempt TEXT NOT NULL, fence INTEGER NOT NULL, kind TEXT NOT NULL,
+                  PRIMARY KEY(work_id,sequence));
                 CREATE TRIGGER IF NOT EXISTS immutable_policy BEFORE UPDATE OF baseline,policy ON work
                   BEGIN SELECT RAISE(ABORT,'immutable baseline policy'); END;
                 CREATE TRIGGER IF NOT EXISTS immutable_events_update BEFORE UPDATE ON events
                   BEGIN SELECT RAISE(ABORT,'immutable event'); END;
                 CREATE TRIGGER IF NOT EXISTS immutable_events_delete BEFORE DELETE ON events
                   BEGIN SELECT RAISE(ABORT,'immutable event'); END;
-                CREATE TRIGGER IF NOT EXISTS immutable_journal_events_update BEFORE UPDATE ON journal_events
-                  BEGIN SELECT RAISE(ABORT,'immutable journal event'); END;
-                CREATE TRIGGER IF NOT EXISTS immutable_journal_events_delete BEFORE DELETE ON journal_events
-                  BEGIN SELECT RAISE(ABORT,'immutable journal event'); END;
-                ''')
+        """)
 
     @contextmanager
     def _lock(self):
@@ -253,6 +264,13 @@ class TrustedWriter:
             raise SafetyError('Staged baseline drift')
         return {'identity':self._identity(),'head':head,'tree':tree,'index':index}
 
+    def _observed_baseline(self):
+        return {"identity": self._identity(), "head": self._git("rev-parse", "--verify", "HEAD").decode().strip(),
+                "tree": self._tree(), "index": self._index()}
+
+    def _admit(self, conn, token):
+        return self._current(conn, token)
+
     @staticmethod
     def _token(row):
         return PublicationToken(row['work_id'],row['revision'],row['sequence'],row['attempt'],row['fence'])
@@ -308,7 +326,7 @@ class TrustedWriter:
         if len(paths)!=len(set(paths)): raise SafetyError('Duplicate path')
         sealed=canonical(payload).encode(); digest=sha(sealed)
         with self._lock(),self._db() as conn:
-            self._no_pending(conn); self._current(conn,token)
+            self._no_pending(conn); self._admit(conn,token)
             next_token=self._event(conn,token.work_id,'ARTIFACT_SEALED')
             artifact_id='artifact-'+uuid.uuid4().hex
             conn.execute('INSERT INTO artifacts VALUES(?,?,?,?,?)',(artifact_id,token.work_id,sealed,digest,canonical(asdict(next_token))))
@@ -346,10 +364,10 @@ class TrustedWriter:
     def apply(self,token,artifact_id,expected_hash,crash_hook=lambda stage:None):
         with self._lock():
             with self._db() as conn:
-                self._no_pending(conn); row=self._current(conn,token)
+                self._no_pending(conn); row=self._admit(conn,token)
                 payload=self._sealed(conn,artifact_id,expected_hash,token)
                 baseline=json.loads(row['baseline']); policy=json.loads(row['policy'])
-                if self._baseline()!=baseline: raise SafetyError('Repository baseline drift')
+                if self._observed_baseline()!=baseline: raise SafetyError('Repository baseline drift')
                 before=baseline['tree']; after=dict(before)
                 for edit in payload['changes']:
                     path=self._path(edit['path'])
@@ -369,7 +387,7 @@ class TrustedWriter:
                 # Repeat all admission checks after durable preparation, before any mutation.
                 with self._db() as conn:
                     self._current(conn,token); self._sealed(conn,artifact_id,expected_hash,token)
-                    if self._baseline()!=baseline: raise SafetyError('Baseline drift before mutation')
+                    if self._observed_baseline()!=baseline: raise SafetyError('Baseline drift before mutation')
                 for index,edit in enumerate(payload['changes']):
                     self._replace(edit['path'],after[edit['path']],before[edit['path']],apply_id,
                                   lambda: crash_hook('STAGED_'+str(index)))
@@ -442,7 +460,7 @@ class TrustedWriter:
         identifier(approval_id)
         if action=='REPLACE': identifier(new_attempt)
         with self._lock(),self._db() as conn:
-            self._no_pending(conn); row=self._current(conn,token)
+            self._no_pending(conn); row=self._admit(conn,token)
             conn.execute('INSERT INTO approvals VALUES(?)',(approval_id,))
             if action=='REPLACE':
                 if new_attempt==row['attempt']: raise SafetyError('New attempt required')

@@ -1,0 +1,1303 @@
+{
+  "phase": "C1.4_PHASE_3B3",
+  "status": "IMPLEMENTED_TESTED_PENDING_LEAD_ARCHITECT_REVIEW",
+  "accepted_parent_commit": "9aaba9b2ae5d02afa3e53d9593d20c858ed92c3a",
+  "recorded_at_utc": "2026-09-28T07:08:19.200557+00:00",
+  "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+  "scope": "Disposable repositories and SQLite; inert proposals and real local controller/writer crash processes only",
+  "production_deployment": false,
+  "production_migration": false,
+  "live_backends_invoked": false,
+  "candidate_code_executed": false,
+  "automatic_git_commit_implemented": false,
+  "c1_3_changes": false,
+  "contract": "daio-handoff-writer/v1",
+  "result": {
+    "passed": 172,
+    "unified_cases": 43,
+    "prior_cases": 129,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "command": "/Users/huanchen/opt/anaconda3/bin/python3 -m pytest -q tests/test_c14_unified_handoff.py tests/test_c14_trusted_writer.py tests/test_c14_manual_handoff_integration.py tests/test_c14_handoff_safety.py tests/test_daio_closed_loop_store.py tests/test_daio_closed_loop_router.py tests/test_executor_with_agent.py tests/test_antigravity_cli_agent.py tests/test_baseline_aware_gate_and_atomic_human_gate.py --basetemp=/tmp/daio-3b3-verified --junitxml=/tmp/daio-3b3-verified.xml",
+  "source_sha256": {
+    "scripts/daio_closed_loop/handoff.py": "cf5834eb882d5f02678a02d4de43f061a1bb9415fd1d49f8b2d603bd152e07c3",
+    "scripts/daio_closed_loop/trusted_writer.py": "38fbb14deb86c9101beb2727051a8061ec57a3687c98302dc4e377c0d4616884",
+    "scripts/daio_closed_loop/unified_handoff.py": "232e1ef01aed2af068dda51ec49b9f909d2adb7cccad745230256e9386f223d9",
+    "tests/test_c14_unified_handoff.py": "03d53fe8de893ddbf3154a83cdfff812210aef92add156e98c5158714e8b537e",
+    "docs/closed-loop/C1_4_PHASE3B3_UNIFIED_ADMISSION.md": "b1f7f8e414f3c2572d037967810ba5af0a15463fa3fb9f6d9698e3af217ab523"
+  },
+  "junit_sha256": "fd21ede974501995c5cad6a26a45df42f0e72b15c43941f4aaa8d986f3f7eb34",
+  "disposable_path_note": "Absolute paths within observations identify temporary fixtures, not persistent dependencies. The scenario and test results are copied into this durable artifact; reproduction creates new paths and identities.",
+  "scenario": {
+    "work_id": "W-3b3",
+    "attempts": [
+      {
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "work_id": "W-3b3",
+        "previous_attempt_id": null,
+        "fencing_token": 1,
+        "backend": "{\"adapter\":\"AntigravityCLIAdapter\",\"adapter_version\":\"inert-3b3\",\"backend_id\":\"antigravity_cli\",\"execution_mode\":\"PROPOSAL_ONLY\",\"transport\":\"CLI\"}",
+        "authorization_id": "select-antigravity_cli",
+        "started_at": "2026-09-28T07:06:23.326366+00:00",
+        "outcome": "SUCCESS",
+        "tests": "NOT_RUN",
+        "quiescence": "UNKNOWN",
+        "receipt_id": null,
+        "quiescence_method": null,
+        "reconstruction_sha256": "4545aafec94b5675c025e184588a21141c23436c05a9a8c30f433875c62fc9bb",
+        "result_sha256": "7c7372b3c3ddce8bc03a07b780f21a4aaa82f210f4a3b855597598ad369e4af0"
+      },
+      {
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "work_id": "W-3b3",
+        "previous_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 3,
+        "backend": "{\"adapter\":\"CodexCLIAdapter\",\"adapter_version\":\"inert-3b3\",\"backend_id\":\"codex_cli\",\"execution_mode\":\"PROPOSAL_ONLY\",\"transport\":\"CLI\"}",
+        "authorization_id": "select-codex_cli",
+        "started_at": "2026-09-28T07:06:24.063379+00:00",
+        "outcome": "SUCCESS",
+        "tests": "NOT_RUN",
+        "quiescence": "UNKNOWN",
+        "receipt_id": null,
+        "quiescence_method": null,
+        "reconstruction_sha256": "e0a1465763465f6b2bd5303ec7cfe36e6a46f12405757d6a907268b1d8143faa",
+        "result_sha256": "ea1b5493e2059e41b7c04fa03e84495b11cfb86832061a2aee1d3c6e7500ef90"
+      }
+    ],
+    "events": [
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 1,
+        "work_revision": 1,
+        "execution_attempt_id": null,
+        "fencing_token": 0,
+        "event": "ENROLLED",
+        "created_at": "2026-09-28T07:06:23.276373+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 2,
+        "work_revision": 2,
+        "execution_attempt_id": null,
+        "fencing_token": 0,
+        "event": "BACKEND_AUTHORIZED",
+        "created_at": "2026-09-28T07:06:23.324944+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 3,
+        "work_revision": 3,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 1,
+        "event": "ATTEMPT_CREATED",
+        "created_at": "2026-09-28T07:06:23.326647+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 4,
+        "work_revision": 4,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 1,
+        "event": "RECONSTRUCTION_VALIDATED",
+        "created_at": "2026-09-28T07:06:23.425668+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 5,
+        "work_revision": 5,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 1,
+        "event": "EXECUTION_STARTED",
+        "created_at": "2026-09-28T07:06:23.529848+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 6,
+        "work_revision": 6,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 1,
+        "event": "ARTIFACT_SEALED",
+        "created_at": "2026-09-28T07:06:23.531868+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 7,
+        "work_revision": 7,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 1,
+        "event": "APPLY_COMMITTED",
+        "created_at": "2026-09-28T07:06:23.825540+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 8,
+        "work_revision": 8,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 2,
+        "event": "AUTHORITY_REVOKED",
+        "created_at": "2026-09-28T07:06:23.827795+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 9,
+        "work_revision": 9,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 2,
+        "event": "CHECKPOINT_PUBLISHED",
+        "created_at": "2026-09-28T07:06:24.059569+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 10,
+        "work_revision": 10,
+        "execution_attempt_id": "attempt-739576d9fd4e4e51886b0f8899058ea7",
+        "fencing_token": 2,
+        "event": "BACKEND_AUTHORIZED",
+        "created_at": "2026-09-28T07:06:24.062196+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 11,
+        "work_revision": 11,
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "fencing_token": 3,
+        "event": "ATTEMPT_CREATED",
+        "created_at": "2026-09-28T07:06:24.063594+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 12,
+        "work_revision": 12,
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "fencing_token": 3,
+        "event": "RECONSTRUCTION_VALIDATED",
+        "created_at": "2026-09-28T07:06:24.154768+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 13,
+        "work_revision": 13,
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "fencing_token": 3,
+        "event": "EXECUTION_STARTED",
+        "created_at": "2026-09-28T07:06:24.247554+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 14,
+        "work_revision": 14,
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "fencing_token": 3,
+        "event": "ARTIFACT_SEALED",
+        "created_at": "2026-09-28T07:06:24.250515+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 15,
+        "work_revision": 15,
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "fencing_token": 3,
+        "event": "APPLY_COMMITTED",
+        "created_at": "2026-09-28T07:06:24.529273+00:00"
+      },
+      {
+        "work_id": "W-3b3",
+        "event_sequence": 16,
+        "work_revision": 16,
+        "execution_attempt_id": "attempt-b01a61ebb407468e97c15d9162df7fbf",
+        "fencing_token": 4,
+        "event": "COMPLETED",
+        "created_at": "2026-09-28T07:06:24.619229+00:00"
+      }
+    ],
+    "checkpoint": {
+      "checkpoint_id": "checkpoint-6c3e22566f0350339a9c7c7ba5cf10effdbf8f5a7dcc1f1af67214f4c2eb9ff4",
+      "work_id": "W-3b3",
+      "sha256": "6c3e22566f0350339a9c7c7ba5cf10effdbf8f5a7dcc1f1af67214f4c2eb9ff4",
+      "payload": "{\"contract_version\":\"daio-checkpoint/v1\",\"event_sequence\":8,\"execution_attempt_id\":\"attempt-739576d9fd4e4e51886b0f8899058ea7\",\"fencing_token\":2,\"kind\":\"AUTHORITY_HANDOFF\",\"manifest\":{\"completed_steps\":[\"step-A\"],\"evidence_sha256\":\"b074a6afd500bbf0891340a1cdda223c1516d7bb52518b820848e1d29d12788a\",\"frozen_sha256\":\"dd59a35c39bfc46ed15c920b0b3c04b6de94548686c9c698bd45542947f01d46\",\"head_sha\":\"18d5c41ea9393bb3b901be1eb348b97b603a3c53\",\"next_step\":\"step-B\",\"policy_sha256\":\"3e0371ec58b6d5ccf5fe9b3de02ac70838ba93ffca2fbcfb374da707c1bad2d4\",\"repository_id\":\"disposable-3b3\",\"scope_sha256\":\"f750eff173278d2fa5b30fa4e68292206e0d5ceb8c9ca7ebeac5fe82633fc770\",\"workspace_sha256\":\"0851c7133ed9f7e8e26a0f954e29677cca7cce35566d9763759d42bbe3fa6b12\"},\"work_id\":\"W-3b3\",\"work_revision\":8}"
+    },
+    "journals": [
+      {
+        "apply_id": "apply-445cc2471d5142a8a35d89ebf616e484",
+        "artifact_id": "artifact-3e396148a23c4c09a6183a90306e8fe6",
+        "work_id": "W-3b3",
+        "state": "COMMITTED",
+        "token": "{\"event_sequence\":6,\"execution_attempt_id\":\"attempt-739576d9fd4e4e51886b0f8899058ea7\",\"fencing_token\":1,\"work_id\":\"W-3b3\",\"work_revision\":6}",
+        "before_image": "{\"a.txt\":{\"bytes\":\"YmVmb3JlIGEudHh0Cg==\",\"mode\":420,\"sha256\":\"39ae89e80a5a0751a820466c3daa8449658d96a075aa2bf3c76e0295e7f64c1f\"},\"b.txt\":{\"bytes\":\"YmVmb3JlIGIudHh0Cg==\",\"mode\":420,\"sha256\":\"5631a4496de7dba69ee9135c12a37b34af15c8127439ee9b2a47ff24087af754\"},\"frozen.txt\":{\"bytes\":\"YmVmb3JlIGZyb3plbi50eHQK\",\"mode\":420,\"sha256\":\"6fec8db441a51114eedc4fcd6ce1cbf19218083cd52cda2140e47dc87786233a\"}}",
+        "after_image": "{\"a.txt\":{\"bytes\":\"YWNjZXB0ZWQgYS50eHQK\",\"mode\":420,\"sha256\":\"4ac2e096ae16d7e072681fcd36560012868dc94096c85b545d9f27b76def3b32\"},\"b.txt\":{\"bytes\":\"YmVmb3JlIGIudHh0Cg==\",\"mode\":420,\"sha256\":\"5631a4496de7dba69ee9135c12a37b34af15c8127439ee9b2a47ff24087af754\"},\"frozen.txt\":{\"bytes\":\"YmVmb3JlIGZyb3plbi50eHQK\",\"mode\":420,\"sha256\":\"6fec8db441a51114eedc4fcd6ce1cbf19218083cd52cda2140e47dc87786233a\"}}",
+        "baseline": "{\"head\":\"18d5c41ea9393bb3b901be1eb348b97b603a3c53\",\"identity\":{\"git\":[16777234,52407214],\"path\":\"/private/tmp/daio-3b3-verified/test_end_to_end_single_control0/repo\",\"repo\":[16777234,52407210]},\"index\":{\"a.txt\":[\"100644\",\"4439e6acc0419108902ca869c749fd7be0c2cecb\"],\"b.txt\":[\"100644\",\"91f83fcc4850df8ed4d71f23eaa5f6e546946593\"],\"frozen.txt\":[\"100644\",\"8547915f6bccafd18c1c8d165d396ada2107d780\"]},\"tree\":{\"a.txt\":{\"bytes\":\"YmVmb3JlIGEudHh0Cg==\",\"mode\":420,\"sha256\":\"39ae89e80a5a0751a820466c3daa8449658d96a075aa2bf3c76e0295e7f64c1f\"},\"b.txt\":{\"bytes\":\"YmVmb3JlIGIudHh0Cg==\",\"mode\":420,\"sha256\":\"5631a4496de7dba69ee9135c12a37b34af15c8127439ee9b2a47ff24087af754\"},\"frozen.txt\":{\"bytes\":\"YmVmb3JlIGZyb3plbi50eHQK\",\"mode\":420,\"sha256\":\"6fec8db441a51114eedc4fcd6ce1cbf19218083cd52cda2140e47dc87786233a\"}}}"
+      },
+      {
+        "apply_id": "apply-b242967bf83c4fde854398b68ebdb02e",
+        "artifact_id": "artifact-5d3f7850f6cc4fc78e98a6ef9146f9c1",
+        "work_id": "W-3b3",
+        "state": "COMMITTED",
+        "token": "{\"event_sequence\":14,\"execution_attempt_id\":\"attempt-b01a61ebb407468e97c15d9162df7fbf\",\"fencing_token\":3,\"work_id\":\"W-3b3\",\"work_revision\":14}",
+        "before_image": "{\"a.txt\":{\"bytes\":\"YWNjZXB0ZWQgYS50eHQK\",\"mode\":420,\"sha256\":\"4ac2e096ae16d7e072681fcd36560012868dc94096c85b545d9f27b76def3b32\"},\"b.txt\":{\"bytes\":\"YmVmb3JlIGIudHh0Cg==\",\"mode\":420,\"sha256\":\"5631a4496de7dba69ee9135c12a37b34af15c8127439ee9b2a47ff24087af754\"},\"frozen.txt\":{\"bytes\":\"YmVmb3JlIGZyb3plbi50eHQK\",\"mode\":420,\"sha256\":\"6fec8db441a51114eedc4fcd6ce1cbf19218083cd52cda2140e47dc87786233a\"}}",
+        "after_image": "{\"a.txt\":{\"bytes\":\"YWNjZXB0ZWQgYS50eHQK\",\"mode\":420,\"sha256\":\"4ac2e096ae16d7e072681fcd36560012868dc94096c85b545d9f27b76def3b32\"},\"b.txt\":{\"bytes\":\"QiBiLnR4dAo=\",\"mode\":420,\"sha256\":\"87d37d8d7bcee49e3afd24ad04c90289202903d421b555ce10c825adb12c77d4\"},\"frozen.txt\":{\"bytes\":\"YmVmb3JlIGZyb3plbi50eHQK\",\"mode\":420,\"sha256\":\"6fec8db441a51114eedc4fcd6ce1cbf19218083cd52cda2140e47dc87786233a\"}}",
+        "baseline": "{\"head\":\"18d5c41ea9393bb3b901be1eb348b97b603a3c53\",\"identity\":{\"git\":[16777234,52407214],\"path\":\"/private/tmp/daio-3b3-verified/test_end_to_end_single_control0/repo\",\"repo\":[16777234,52407210]},\"index\":{\"a.txt\":[\"100644\",\"4439e6acc0419108902ca869c749fd7be0c2cecb\"],\"b.txt\":[\"100644\",\"91f83fcc4850df8ed4d71f23eaa5f6e546946593\"],\"frozen.txt\":[\"100644\",\"8547915f6bccafd18c1c8d165d396ada2107d780\"]},\"tree\":{\"a.txt\":{\"bytes\":\"YWNjZXB0ZWQgYS50eHQK\",\"mode\":420,\"sha256\":\"4ac2e096ae16d7e072681fcd36560012868dc94096c85b545d9f27b76def3b32\"},\"b.txt\":{\"bytes\":\"YmVmb3JlIGIudHh0Cg==\",\"mode\":420,\"sha256\":\"5631a4496de7dba69ee9135c12a37b34af15c8127439ee9b2a47ff24087af754\"},\"frozen.txt\":{\"bytes\":\"YmVmb3JlIGZyb3plbi50eHQK\",\"mode\":420,\"sha256\":\"6fec8db441a51114eedc4fcd6ce1cbf19218083cd52cda2140e47dc87786233a\"}}}"
+      }
+    ],
+    "git_head_unchanged": true,
+    "authority": "REVOKED",
+    "lifecycle": "UNKNOWN",
+    "status": "COMPLETED"
+  },
+  "tests": [
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_end_to_end_single_controller_authority",
+      "seconds": 2.059,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_revoke_first_invalidates_sealed_artifact",
+      "seconds": 0.827,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_real_crash_restart_pending_blocks_all_transitions[PREPARED]",
+      "seconds": 1.327,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_real_crash_restart_pending_blocks_all_transitions[APPLYING]",
+      "seconds": 1.319,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_real_crash_restart_pending_blocks_all_transitions[FILE_0]",
+      "seconds": 1.412,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_real_crash_restart_pending_blocks_all_transitions[FILE_1]",
+      "seconds": 1.313,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_real_crash_restart_pending_blocks_all_transitions[APPLIED]",
+      "seconds": 1.334,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_real_crash_restart_pending_blocks_all_transitions[COMMITTED]",
+      "seconds": 1.217,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_unresolvable_partial_apply_stays_blocked[bytes]",
+      "seconds": 1.263,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_unresolvable_partial_apply_stays_blocked[extra]",
+      "seconds": 1.264,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_unresolvable_partial_apply_stays_blocked[mode]",
+      "seconds": 1.266,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_unresolvable_partial_apply_stays_blocked[index]",
+      "seconds": 1.239,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_unresolvable_partial_apply_stays_blocked[head]",
+      "seconds": 1.326,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_unresolvable_partial_apply_stays_blocked[staging]",
+      "seconds": 1.22,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_apply_first_revocation_and_competing_apply_cannot_acknowledge",
+      "seconds": 1.137,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[False-revoke]",
+      "seconds": 0.928,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[False-authorize]",
+      "seconds": 1.399,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[False-seal]",
+      "seconds": 0.862,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[False-begin]",
+      "seconds": 1.361,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[True-revoke]",
+      "seconds": 0.877,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[True-authorize]",
+      "seconds": 1.418,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[True-seal]",
+      "seconds": 0.884,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_controller_transition_crash_atomic_restart[True-begin]",
+      "seconds": 1.411,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_valid_artifact_changed_repository_rejected[head]",
+      "seconds": 1.095,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_valid_artifact_changed_repository_rejected[index]",
+      "seconds": 1.02,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_valid_artifact_changed_repository_rejected[bytes]",
+      "seconds": 0.968,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_legacy_authority_paths_cannot_bypass_unified_state",
+      "seconds": 0.679,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_reconstruction_and_completion_admission",
+      "seconds": 1.493,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_stale_artifact_cannot_be_rebound_to_current_B",
+      "seconds": 1.203,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_only_one_work_can_own_repository",
+      "seconds": 1.144,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_concurrent_stale_A_and_current_B_apply",
+      "seconds": 1.528,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_resolution_restart_does_not_replay_after_images",
+      "seconds": 1.294,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_lease_expiry_blocks_new_admission_but_not_admitted_recovery",
+      "seconds": 1.277,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_terminal_state_rejects_writer_and_replacement[FROZEN]",
+      "seconds": 0.869,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_terminal_state_rejects_writer_and_replacement[STOP]",
+      "seconds": 0.871,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_terminal_state_rejects_writer_and_replacement[SUPERSEDED]",
+      "seconds": 0.871,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_terminal_state_rejects_writer_and_replacement[HUMAN_GATE_REQUIRED]",
+      "seconds": 0.894,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_writer_consumes_exact_controller_token[work_id-wrong-work]",
+      "seconds": 0.868,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_writer_consumes_exact_controller_token[work_revision-999]",
+      "seconds": 0.91,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_writer_consumes_exact_controller_token[event_sequence-999]",
+      "seconds": 0.907,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_writer_consumes_exact_controller_token[execution_attempt_id-wrong-attempt]",
+      "seconds": 0.861,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_writer_consumes_exact_controller_token[fencing_token-999]",
+      "seconds": 0.877,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_unified_handoff",
+      "name": "test_work_repository_binding_mismatch_rejected_atomically",
+      "seconds": 1.044,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_normal_apply_and_backend_path_toctou",
+      "seconds": 0.902,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_hash_mismatch",
+      "seconds": 0.517,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_wrong_publication_identity[work_id-wrong]",
+      "seconds": 0.525,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_wrong_publication_identity[execution_attempt_id-old]",
+      "seconds": 0.522,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_wrong_publication_identity[fencing_token-99]",
+      "seconds": 0.523,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_wrong_publication_identity[work_revision-99]",
+      "seconds": 0.521,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_wrong_publication_identity[event_sequence-99]",
+      "seconds": 0.522,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_old_artifact_after_authority_transition[REVOKE]",
+      "seconds": 0.523,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_old_artifact_after_authority_transition[REPLACE]",
+      "seconds": 0.523,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_old_artifact_after_authority_transition[COMPLETE]",
+      "seconds": 0.526,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_baseline_drift[head]",
+      "seconds": 0.692,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_baseline_drift[dirty]",
+      "seconds": 0.618,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_baseline_drift[untracked]",
+      "seconds": 0.642,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_baseline_drift[staged]",
+      "seconds": 0.666,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_baseline_drift[mode]",
+      "seconds": 0.613,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_baseline_drift[identity]",
+      "seconds": 0.619,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_frozen_path_current_authority",
+      "seconds": 0.609,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[/tmp/out]",
+      "seconds": 0.517,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[../out]",
+      "seconds": 0.517,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[src/../../out]",
+      "seconds": 0.524,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[.git/config]",
+      "seconds": 0.524,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[_daio/state.db]",
+      "seconds": 0.513,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[credentials/key]",
+      "seconds": 0.517,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[src/.env]",
+      "seconds": 0.528,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[src//a.txt]",
+      "seconds": 0.512,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[src/./a.txt]",
+      "seconds": 0.52,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_forbidden_path[src\\\\a.txt]",
+      "seconds": 0.533,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_link_escape[symlink-file]",
+      "seconds": 0.568,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_link_escape[symlink-dir]",
+      "seconds": 0.563,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_link_escape[hardlink]",
+      "seconds": 0.574,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[PREPARED-RECONCILIATION_REQUIRED]",
+      "seconds": 0.723,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[APPLYING-RECONCILIATION_REQUIRED]",
+      "seconds": 0.723,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[STAGED_0-RECONCILIATION_REQUIRED]",
+      "seconds": 0.821,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[FILE_0-RECONCILIATION_REQUIRED]",
+      "seconds": 0.813,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[FILE_1-COMMITTED]",
+      "seconds": 0.934,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[APPLIED-COMMITTED]",
+      "seconds": 0.925,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_real_process_crash_restart[COMMITTED-COMMITTED]",
+      "seconds": 0.825,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_concurrent_writer_and_apply_wins_revocation_race",
+      "seconds": 0.848,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_revocation_wins_apply_race",
+      "seconds": 0.515,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_commands_and_candidate_code_never_executed",
+      "seconds": 0.812,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_second_controller_database_cannot_bypass_journal",
+      "seconds": 0.514,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_recovery_rejects_post_crash_drift[head]",
+      "seconds": 0.895,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_recovery_rejects_post_crash_drift[index]",
+      "seconds": 0.828,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_recovery_rejects_post_crash_drift[bytes]",
+      "seconds": 0.827,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_sealed_storage_corruption_fails_closed",
+      "seconds": 0.521,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_declarative_policy_validation[scope]",
+      "seconds": 0.955,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_declarative_policy_validation[file_hash]",
+      "seconds": 0.608,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_declarative_policy_validation[duplicate]",
+      "seconds": 0.525,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_trusted_writer",
+      "name": "test_declarative_policy_validation[command_field]",
+      "seconds": 0.518,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_disposable_manual_handoff_to_completion",
+      "seconds": 0.22,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_negative_e_terminal_work_never_admitted[COMPLETED]",
+      "seconds": 0.081,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_negative_e_terminal_work_never_admitted[FROZEN]",
+      "seconds": 0.084,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_completion_fails_closed[not-successful]",
+      "seconds": 0.105,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_completion_fails_closed[wrong-measurement]",
+      "seconds": 0.12,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_completion_fails_closed[wrong-receipt]",
+      "seconds": 0.105,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_manual_handoff_integration",
+      "name": "test_completion_fails_closed[duplicate-authorization]",
+      "seconds": 0.108,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_execution_result_preserves_legacy_positional_arguments",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_durable_same_work_manual_handoff_restart_and_provenance",
+      "seconds": 0.026,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_terminal_denied_at_all_legacy_execution_entries[COMPLETED]",
+      "seconds": 0.013,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_terminal_denied_at_all_legacy_execution_entries[FROZEN]",
+      "seconds": 0.012,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_terminal_denied_at_all_legacy_execution_entries[SUPERSEDED]",
+      "seconds": 0.011,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_terminal_denied_at_all_legacy_execution_entries[STOP]",
+      "seconds": 0.012,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_terminal_denied_at_all_legacy_execution_entries[HUMAN_GATE_REQUIRED]",
+      "seconds": 0.011,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_explicit_terminal_markers_not_just_status[kwargs0]",
+      "seconds": 0.007,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_explicit_terminal_markers_not_just_status[kwargs1]",
+      "seconds": 0.007,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_explicit_terminal_markers_not_just_status[kwargs2]",
+      "seconds": 0.007,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_explicit_terminal_markers_not_just_status[kwargs3]",
+      "seconds": 0.007,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_enrolled_work_cannot_escape_through_legacy_apis",
+      "seconds": 0.014,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_old_attempt_late_result_and_checkpoint_rejected",
+      "seconds": 0.022,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_unknown_quiescence_blocks_checkpoint_and_replacement",
+      "seconds": 0.017,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_checkpoint_is_immutable_and_atomic_on_event_failure",
+      "seconds": 0.021,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_reconstruction_independently_measured_not_agent_assertion[head_sha]",
+      "seconds": 0.014,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_reconstruction_independently_measured_not_agent_assertion[workspace_sha256]",
+      "seconds": 0.017,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_reconstruction_independently_measured_not_agent_assertion[policy_sha256]",
+      "seconds": 0.015,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_reconstruction_independently_measured_not_agent_assertion[scope_sha256]",
+      "seconds": 0.015,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_reconstruction_independently_measured_not_agent_assertion[frozen_sha256]",
+      "seconds": 0.014,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_reconstruction_independently_measured_not_agent_assertion[evidence_sha256]",
+      "seconds": 0.014,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_wrong_ack_and_workspace_change_after_ack_fail_closed",
+      "seconds": 0.014,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_capacity_never_test_failure[BACKEND_UNAVAILABLE]",
+      "seconds": 0.016,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_capacity_never_test_failure[QUOTA_EXHAUSTED]",
+      "seconds": 0.016,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_capacity_never_test_failure[AUTHENTICATION_REQUIRED]",
+      "seconds": 0.015,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_competing_controllers_only_one_publication_wins",
+      "seconds": 0.018,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_policy_and_distinct_manual_ide_backend",
+      "seconds": 0.012,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_no_automatic_selection_or_replayed_authorization",
+      "seconds": 0.018,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_policy_revocation_fences_inflight_attempt[STOP]",
+      "seconds": 0.017,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_policy_revocation_fences_inflight_attempt[FROZEN]",
+      "seconds": 0.016,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_policy_revocation_fences_inflight_attempt[SUPERSEDED]",
+      "seconds": 0.02,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_policy_revocation_fences_inflight_attempt[HUMAN_GATE_REQUIRED]",
+      "seconds": 0.019,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_machine_codes_only_and_no_secret_error_echo",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_completed_steps_cannot_be_replayed",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_expired_lease_cannot_publish_or_renew",
+      "seconds": 0.015,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_legacy_executor_capacity_result_does_not_run_tests",
+      "seconds": 0.002,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_orchestrator_preserves_capacity_and_test_budget",
+      "seconds": 0.01,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_process_termination_verifier_requires_reaped_owned_group",
+      "seconds": 0.012,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_wrong_quiescence_attempt_rejected",
+      "seconds": 0.019,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_workspace_change_after_interruption_requires_reconciliation",
+      "seconds": 0.019,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_backend_outside_policy_denied",
+      "seconds": 0.011,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_non_test_failures_do_not_consume_test_budget[ENGINEERING_FAILURE]",
+      "seconds": 0.011,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_non_test_failures_do_not_consume_test_budget[UNKNOWN_FAILURE]",
+      "seconds": 0.01,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_additive_migration_preserves_legacy_frozen_work",
+      "seconds": 0.011,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_cli_capacity_normalization_omits_raw_provider_secrets[antigravity_cli_agent]",
+      "seconds": 0.006,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_c14_handoff_safety",
+      "name": "test_cli_capacity_normalization_omits_raw_provider_secrets[codex_cli_agent]",
+      "seconds": 0.002,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_daio_closed_loop_store",
+      "name": "test_sqlite_work_store_crud",
+      "seconds": 0.006,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_daio_closed_loop_store",
+      "name": "test_sqlite_work_store_lease_locking",
+      "seconds": 0.008,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_daio_closed_loop_router",
+      "name": "test_router_contract_gate_approval",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_daio_closed_loop_router",
+      "name": "test_router_revision_loop",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_daio_closed_loop_router",
+      "name": "test_router_human_gate_escalation",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_executor_with_agent",
+      "name": "test_executor_with_agent_proposal_flow",
+      "seconds": 0.699,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_executor_with_agent",
+      "name": "test_executor_async_inside_event_loop",
+      "seconds": 0.698,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_executor_with_agent",
+      "name": "test_executor_control_plane_classification_and_sha_semantics",
+      "seconds": 0.718,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_executor_with_agent",
+      "name": "test_executor_scope_violation_nulls_generated_commit_sha",
+      "seconds": 0.137,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_executor_with_agent",
+      "name": "test_executor_test_failure_nulls_generated_commit_sha",
+      "seconds": 0.607,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_find_antigravity_cli_path",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_factory_capability_detection",
+      "seconds": 0.001,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_antigravity_cli_adapter_propose_task_mocked",
+      "seconds": 0.004,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_antigravity_cli_adapter_bare_json_and_non_success_handling",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_headless_unattended_command_flags_and_sandbox",
+      "seconds": 0.002,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_flags_suppressed_when_disabled",
+      "seconds": 0.002,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_factory_unattended_and_sandbox_config_propagation",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_antigravity_cli_agent",
+      "name": "test_provider_neutral_core_no_hardcoded_cli_flags",
+      "seconds": 0.001,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_extract_pytest_failures_various_formats",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_is_failure_in_baseline_matching",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_baseline_aware_executor_passes_when_only_approved_failures_present",
+      "seconds": 0.002,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_baseline_aware_executor_fails_when_new_regression_detected",
+      "seconds": 0.003,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_validation_only_fast_path_bypasses_agent_proposal",
+      "seconds": 0.002,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_atomic_human_gate_transition_and_invariants",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_router_human_gate_transitions_maintain_invariants",
+      "seconds": 0.0,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_storage_and_acceptance_isolation_invariants",
+      "seconds": 0.001,
+      "result": "PASSED"
+    },
+    {
+      "class": "tests.test_baseline_aware_gate_and_atomic_human_gate",
+      "name": "test_post_completion_handoff_isolation_prevents_production_leakage",
+      "seconds": 0.011,
+      "result": "PASSED"
+    }
+  ],
+  "required_case_results": {
+    "A": "PASSED",
+    "B": "PASSED",
+    "C": "PASSED",
+    "D": "PASSED",
+    "E": "PASSED",
+    "F": "PASSED",
+    "G": "PASSED",
+    "H": "PASSED",
+    "I": "PASSED",
+    "J": "PASSED",
+    "K": "PASSED",
+    "L": "PASSED"
+  },
+  "limits": [
+    "Trusted host APIs; external Phase-3B1 authority isolation remains a prerequisite.",
+    "POSIX repository locking; process crashes tested, not power loss or malicious trusted host.",
+    "Bounded existing regular text-file replacements; unknown drift and orphan staging files remain blocked.",
+    "Unified generic publish_outcome/termination APIs fail closed; live adapter/outcome plumbing remains outside this phase.",
+    "Execution lifecycle remains UNKNOWN; authority revocation does not establish verified quiescence."
+  ]
+}
