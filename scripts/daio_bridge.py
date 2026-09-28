@@ -30,10 +30,14 @@ def discover_tab_by_url(
 ) -> Tuple[str, str, str] | Tuple[str, str, str, Dict[str, Any]]:
     """Find a Chrome tab matching url_pattern via CDP endpoint."""
     try:
-        req = urllib.request.urlopen(f"http://localhost:{cdp_port}/json/list", timeout=5)
+        req = urllib.request.urlopen(f"http://127.0.0.1:{cdp_port}/json/list", timeout=5)
         tabs = json.loads(req.read().decode("utf-8"))
     except Exception as e:
-        raise RuntimeError(f"Could not connect to Chrome CDP at port {cdp_port}. Is Chrome running with --remote-debugging-port={cdp_port}? Error: {e}")
+        try:
+            req = urllib.request.urlopen(f"http://127.0.0.1:{cdp_port}/json", timeout=5)
+            tabs = json.loads(req.read().decode("utf-8"))
+        except Exception:
+            raise RuntimeError(f"Could not connect to Chrome CDP at 127.0.0.1:{cdp_port}. Is Chrome running with --remote-debugging-port={cdp_port}? Error: {e}")
 
     initial_target_ids = [t["id"] for t in tabs if t.get("type") == "page"]
 

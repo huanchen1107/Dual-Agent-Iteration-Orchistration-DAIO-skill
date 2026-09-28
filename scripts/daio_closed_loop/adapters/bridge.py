@@ -6,6 +6,7 @@ Connects to external Web LLM / ChatGPT Project tab via Chrome CDP WebSocket.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 import asyncio
+from enum import Enum
 import json
 import logging
 import os
@@ -262,6 +263,46 @@ def resolve_architect_endpoint(
     return resolved
 
 
+class CDPDiscoveryState(str, Enum):
+    FOUND = "FOUND"
+    VERIFIED_ABSENT = "VERIFIED_ABSENT"
+    DISCOVERY_ERROR = "DISCOVERY_ERROR"
+
+
+class CDPDiscoveryError(RuntimeError):
+    """Raised when Chrome CDP target enumeration fails or times out (DISCOVERY_ERROR != VERIFIED_ABSENT)."""
+    pass
+
+
+def fetch_cdp_tabs(cdp_port: int = 9222, timeout: float = 3.0) -> List[Dict[str, Any]]:
+    """
+    Fetch raw targets from Chrome CDP using 127.0.0.1 IPv4.
+    Raises CDPDiscoveryError on network errors, timeouts, or malformed data.
+    Never silently converts discovery failures to an empty list.
+    """
+    import urllib.request
+    import json
+    
+    url = f"http://127.0.0.1:{cdp_port}/json/list"
+    try:
+        req = urllib.request.urlopen(url, timeout=timeout)
+        data = json.loads(req.read().decode("utf-8"))
+        if not isinstance(data, list):
+            raise CDPDiscoveryError(f"CDP response from {url} is not a valid list: {type(data)}")
+        return data
+    except Exception as ex:
+        # Fallback to /json endpoint on 127.0.0.1
+        try:
+            alt_url = f"http://127.0.0.1:{cdp_port}/json"
+            req = urllib.request.urlopen(alt_url, timeout=timeout)
+            data = json.loads(req.read().decode("utf-8"))
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+        raise CDPDiscoveryError(f"CDP discovery failed connecting to 127.0.0.1:{cdp_port}: {ex}") from ex
+
+
 def discover_tab_by_endpoint(
     endpoint: Optional[Dict[str, Any]] = None,
     url_pattern: str = "chatgpt.com",
@@ -276,30 +317,41 @@ def discover_tab_by_endpoint(
     """
     Discover Chrome tab matching exact Architect Endpoint.
     Enforces 'DAIO-004 EXACT_CONVERSATION' routing policy and fail-closed safety with bounded retry budget.
-    Verifies BOTH ChatGPT Project ID and Conversation ID before selection or dispatch.
-    If canonical tab is not open, safely opens exact canonical URL on authenticated profile and re-verifies.
+    Explicit Discovery States:
+      1. FOUND: Exact (project_id, conversation_id) exists. Reuse and pin it. /json/new is FORBIDDEN.
+      2. VERIFIED_ABSENT: CDP enumeration completed successfully after bounded retries and target is absent.
+                          Only this state may authorize controlled target recovery.
+      3. DISCOVERY_ERROR: CDP query failed, timed out, or unverified. FAIL CLOSED. /json/new is FORBIDDEN.
     """
     import urllib.request
     import urllib.parse
     import time
 
-    def fetch_tabs() -> List[Dict[str, Any]]:
-        try:
-            req = urllib.request.urlopen(f"http://localhost:{cdp_port}/json/list", timeout=3)
-            return json.loads(req.read().decode("utf-8"))
-        except Exception:
-            return []
-
     tabs: List[Dict[str, Any]] = []
+    discovery_state = CDPDiscoveryState.DISCOVERY_ERROR
+    last_error: Optional[Exception] = None
+
     if raw_tabs is not None:
         tabs = raw_tabs
+        discovery_state = CDPDiscoveryState.VERIFIED_ABSENT
     else:
         for attempt in range(1, max_retries + 1):
-            tabs = fetch_tabs()
-            if tabs:
+            try:
+                tabs = fetch_cdp_tabs(cdp_port=cdp_port, timeout=3.0)
+                discovery_state = CDPDiscoveryState.VERIFIED_ABSENT
+                last_error = None
                 break
-            if attempt < max_retries:
-                time.sleep(0.5)
+            except Exception as ex:
+                last_error = ex
+                if attempt < max_retries:
+                    time.sleep(0.5)
+
+        if discovery_state == CDPDiscoveryState.DISCOVERY_ERROR:
+            # DISCOVERY_ERROR != VERIFIED_ABSENT -> FAIL CLOSED -> /json/new is strictly forbidden!
+            raise CDPDiscoveryError(
+                f"CDP discovery error connecting to Chrome DevTools on 127.0.0.1:{cdp_port} after {max_retries} attempts: {last_error}. "
+                f"Fail-closed policy enforced: DISCOVERY_ERROR != VERIFIED_ABSENT. Target recovery forbidden."
+            ) from last_error
 
     before_ids = [t["id"] for t in tabs if t.get("type") == "page"]
 
@@ -350,11 +402,12 @@ def discover_tab_by_endpoint(
 
         return None
 
-    def make_telemetry(selected_id: str, current_tabs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def make_telemetry(selected_id: str, current_tabs: List[Dict[str, Any]], state_label: str = "FOUND") -> Dict[str, Any]:
         after_ids = [t["id"] for t in current_tabs if t.get("type") == "page"]
         created = list(set(after_ids) - set(before_ids))
         closed = list(set(before_ids) - set(after_ids))
         return {
+            "discovery_state": state_label,
             "targets_before": before_ids,
             "targets_after": after_ids,
             "target_created_ids": created,
@@ -366,20 +419,22 @@ def discover_tab_by_endpoint(
 
     match = find_matching_tab(tabs)
     if match:
+        discovery_state = CDPDiscoveryState.FOUND
         ws_url, tab_id, tab_title = match
         if return_metadata:
-            return ws_url, tab_id, tab_title, make_telemetry(tab_id, tabs)
+            return ws_url, tab_id, tab_title, make_telemetry(tab_id, tabs, state_label=discovery_state.value)
         return match
 
-    # Auto-recovery: If exact tab is not currently open, safely open canonical URL on Chrome CDP
+    # Auto-recovery: If exact tab is verified absent, safely open canonical URL on Chrome CDP
     target_recovery_url = canonical_url
     if not target_recovery_url and proj_id and conv_id:
         target_recovery_url = f"https://chatgpt.com/g/{proj_id}/c/{conv_id}"
 
     if auto_recover_closed_tab and target_recovery_url and raw_tabs is None:
+        logger.info(f"Target discovery status: VERIFIED_ABSENT. Initiating controlled recovery for '{target_recovery_url}'")
         try:
             encoded_url = urllib.parse.quote(target_recovery_url, safe=":/%#?=@[]!$&'()*+,;")
-            new_tab_url = f"http://localhost:{cdp_port}/json/new?{encoded_url}"
+            new_tab_url = f"http://127.0.0.1:{cdp_port}/json/new?{encoded_url}"
             req = urllib.request.Request(new_tab_url, method="PUT")
             try:
                 urllib.request.urlopen(req, timeout=3)
@@ -389,12 +444,12 @@ def discover_tab_by_endpoint(
             # Poll for new tab to register and load
             for _ in range(10):
                 time.sleep(0.5)
-                refreshed_tabs = fetch_tabs()
+                refreshed_tabs = fetch_cdp_tabs(cdp_port=cdp_port, timeout=3.0)
                 recovered_match = find_matching_tab(refreshed_tabs)
                 if recovered_match:
                     ws_url, tab_id, tab_title = recovered_match
                     if return_metadata:
-                        return ws_url, tab_id, tab_title, make_telemetry(tab_id, refreshed_tabs)
+                        return ws_url, tab_id, tab_title, make_telemetry(tab_id, refreshed_tabs, state_label="RECOVERED")
                     return recovered_match
                 tabs = refreshed_tabs
         except Exception as ex:
@@ -405,7 +460,7 @@ def discover_tab_by_endpoint(
         available = [f"[{t.get('title')}] -> {t.get('url')}" for t in tabs if t.get("type") == "page"]
         raise RuntimeError(
             f"DAIO-004 Exact Conversation Routing Failed: Could not find active tab for project_id '{proj_id}', conversation_id '{conv_id}', or canonical_url '{canonical_url}'. "
-            f"Fail-closed policy prevented dispatch to unrelated tabs. Available tabs:\n" + "\n".join(available)
+            f"Discovery State: {discovery_state.value}. Fail-closed policy prevented dispatch to unrelated tabs. Available tabs ({len(available)}):\n" + "\n".join(available)
         )
 
     # 4. Fallback pattern match (only if no exact endpoint specified)
@@ -416,7 +471,7 @@ def discover_tab_by_endpoint(
             if url_pattern.lower() in tab_url.lower() or url_pattern.lower() in tab_title.lower():
                 ws_url, tab_id = t["webSocketDebuggerUrl"], t["id"]
                 if return_metadata:
-                    return ws_url, tab_id, tab_title, make_telemetry(tab_id, tabs)
+                    return ws_url, tab_id, tab_title, make_telemetry(tab_id, tabs, state_label=discovery_state.value)
                 return ws_url, tab_id, tab_title
 
     available = [f"[{t.get('title')}] -> {t.get('url')}" for t in tabs if t.get("type") == "page"]
@@ -537,7 +592,19 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
             return_metadata=True,
         )
 
-        nonce = f"DAIO-C1.2-PROBE-{uuid.uuid4().hex[:8]}"
+        stage_tag = "PROBE"
+        if work.metadata and work.metadata.get("acceptance_stage"):
+            stage_tag = str(work.metadata.get("acceptance_stage")).strip().upper()
+        elif "c1.3" in (work.change_id or "").lower():
+            stage_tag = "C1.3"
+        elif "c1.2" in (work.change_id or "").lower():
+            stage_tag = "C1.2"
+        elif work.change_id:
+            m = re.search(r'(c\d+(?:\.\d+)?)', work.change_id, re.IGNORECASE)
+            if m:
+                stage_tag = m.group(1).upper()
+
+        nonce = f"DAIO-{stage_tag}-PROBE-{uuid.uuid4().hex[:8]}"
         telemetry["probe_nonce"] = nonce
         logger.info(f"Target Lifecycle Telemetry: {json.dumps(telemetry)}")
 
