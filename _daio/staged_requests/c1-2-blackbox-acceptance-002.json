@@ -1,0 +1,23 @@
+{
+  "schema_version": "daio-root-work/v1",
+  "request_id": "c1-2-blackbox-acceptance-002",
+  "project_id": "awin-fintech",
+  "change_id": "c1.2-blackbox-acceptance-retry-002",
+  "requested_action": "Execute read-only verification of DAIO runtime environment and output evidence. DO NOT modify any SMC7S domain files, DO NOT edit existing test files, DO NOT create marker files in workspace root. Only read repository files and verify system status.",
+  "requested_role": "ENGINEERING_EXECUTION",
+  "allowed_scope": [
+    "_daio/evidence/c1_2_blackbox_acceptance.json"
+  ],
+  "architect_endpoint": {
+    "provider": "CHATGPT_WEB",
+    "canonical_url": "https://chatgpt.com/g/g-p-6a7b02e338b8819182fa5b270ed91354-zhuan-an-gan-long-clzhuan-zhe-kxian-smc7s/c/6ab4c10a-38a8-83e8-a71d-64199b27393f",
+    "conversation_id": "6ab4c10a-38a8-83e8-a71d-64199b27393f",
+    "routing_policy": "PROJECT_LEVEL"
+  },
+  "metadata": {
+    "acceptance_stage": "C1.2",
+    "execution_mode": "READ_ONLY_OR_ISOLATED_EVIDENCE",
+    "evidence_file": "_daio/evidence/c1_2_blackbox_acceptance.json",
+    "audit_note": "Retry following c1-2-blackbox-acceptance-001 DAIO-002 scope boundary verification"
+  }
+}

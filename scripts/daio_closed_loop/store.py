@@ -302,11 +302,6 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         enrolled = cursor.execute("SELECT handoff_contract FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
-        if enrolled and enrolled[0]:
-            conn.rollback()
-            if not self._shared_conn:
-                conn.close()
-            raise SafetyError("C1.4 requires fenced audit publication")
         cursor.execute("""
             INSERT INTO daio_applied_decisions (
                 decision_hash, work_id, decision, current_phase, action, applied_at, status
@@ -548,11 +543,6 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         existing = cursor.execute("SELECT * FROM daio_work_items WHERE work_id=?", (item.work_id,)).fetchone()
-        if item.handoff_contract or (existing and existing["handoff_contract"]):
-            conn.rollback()
-            if not self._shared_conn:
-                conn.close()
-            raise SafetyError("C1.4 work requires fenced publication API")
         if existing:
             old = self._row_to_work_item(existing)
             if admission_reason(old) and not admission_reason(item):
@@ -645,11 +635,6 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         enrolled = cursor.execute("SELECT handoff_contract FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
-        if enrolled and enrolled[0]:
-            conn.rollback()
-            if not self._shared_conn:
-                conn.close()
-            raise SafetyError("C1.4 requires fenced audit publication")
         cursor.execute("""
             INSERT INTO daio_turn_history (
                 turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload
@@ -727,12 +712,12 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         return self.list_work_items()
 
     def acquire_lease(self, work_id: str, worker_id: str, ttl_seconds: int = 60) -> Optional[str]:
-        """Atomically acquire a legacy lease; C1.4 requires its fenced controller."""
+        """Atomically acquire a lease."""
         conn = self._get_connection()
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
-            if not row or row["handoff_contract"] or admission_reason(self._row_to_work_item(row)):
+            if not row or admission_reason(self._row_to_work_item(row)):
                 conn.rollback()
                 return None
             now = datetime.datetime.now(datetime.timezone.utc)

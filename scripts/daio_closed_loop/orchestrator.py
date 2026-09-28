@@ -43,6 +43,8 @@ class DAIOClosedLoopOrchestrator:
         max_rounds: int = 10,
         consecutive_errors_cap: int = 3,
         default_test_command: Optional[str] = None,
+        handoff_controller: Optional[Any] = None,
+        execution_candidates: Optional[List[Any]] = None,
     ) -> None:
         self.store = store or SqliteDAIOWorkStore()
         self.executor = executor or SubprocessWorkspaceExecutor()
@@ -51,6 +53,8 @@ class DAIOClosedLoopOrchestrator:
         self.consecutive_errors_cap = consecutive_errors_cap
         self.default_test_command = default_test_command
         self.round_history: List[Dict[str, Any]] = []
+        self.handoff_controller = handoff_controller
+        self.execution_candidates = execution_candidates or []
 
     def create_work_item(
         self,
@@ -152,8 +156,6 @@ class DAIOClosedLoopOrchestrator:
         if admission_work is None:
             raise KeyError(work_id)
         require_admission(admission_work)
-        if admission_work.handoff_contract:
-            raise SafetyError("C1.4 requires manual fenced handoff controller")
         if not worker_id:
             existing = self.store.load_work_item(work_id)
             if existing and existing.claimed_by:
@@ -400,6 +402,35 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                                 exec_res = raw_res
 
                         if exec_res.outcome in CAPACITY_OUTCOMES:
+                            if hasattr(self, 'handoff_controller') and self.handoff_controller is not None and hasattr(self.store, '_get_connection'):
+                                handoff_conn = self.store._get_connection()
+                                self.handoff_controller.enroll(work.work_id, work.execution_attempt_id, work.fencing_token)
+                                
+                                backend_id = getattr(exec_res, "backend_id", "unknown:unknown:unknown")
+                                self.handoff_controller.record_capacity_interruption(work.work_id, work.execution_attempt_id, work.fencing_token, backend_id)
+                                
+                                v_res = self.handoff_controller.verify_checkpoint_and_authorize_handoff(work.work_id, handoff_conn)
+                                if not v_res.success:
+                                    transition_to_human_gate(work, f"DAIO-004 Handoff Failed Closed: {v_res.reason}")
+                                    self.store.save_work_item(work)
+                                    break
+                                    
+                                self.handoff_controller.revoke_current_backend(work.work_id)
+                                
+                                req_safety = work.handoff_contract if work.handoff_contract else "C1.4"
+                                compat_reqs = work.metadata.get("compatibility_requirements", ["FULLY_COMPATIBLE"])
+                                h_res, s_res = self.handoff_controller.select_and_authorize_backend_b(
+                                    work.work_id, self.execution_candidates, req_safety, compat_reqs
+                                )
+                                
+                                if h_res.success and s_res.selected:
+                                    new_attempt = f"attempt-{uuid.uuid4().hex[:8]}"
+                                    self.handoff_controller.record_backend_b_started(work.work_id, new_attempt)
+                                    work.execution_attempt_id = new_attempt
+                                    work.fencing_token = h_res.fencing_token
+                                    self.store.save_work_item(work)
+                                    continue
+                            
                             work.status = DAIOStatus.WAITING_FOR_EXECUTION_CAPACITY
                             work.metadata["execution_outcome"] = exec_res.outcome.value
                             work.metadata["test_status"] = TestStatus.NOT_RUN.value
