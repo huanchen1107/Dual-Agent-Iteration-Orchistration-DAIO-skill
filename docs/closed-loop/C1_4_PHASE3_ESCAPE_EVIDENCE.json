@@ -1,0 +1,23 @@
+{
+  "phase3_result": "BLOCKED_CONTAINMENT_GATE",
+  "platform": "darwin",
+  "parent_pid": 80580,
+  "parent_identity": "80580 80568 80580 Mon Sep 28 14:03:36 2026     Ss",
+  "child_pid": 80581,
+  "child_pgid": 80581,
+  "child_identity": "80581 80580 80581 Mon Sep 28 14:03:36 2026     Ss",
+  "escaped_identity_after_parent_exit": "80581     1 80581 Mon Sep 28 14:03:36 2026     Ss",
+  "parent_returncode": 0,
+  "original_process_group_gone": true,
+  "escaped_descendant_alive": true,
+  "existing_group_verifier_receipt": "TERMINATED",
+  "accepted_quiescence": "UNKNOWN",
+  "backend_b_blocked": true,
+  "production_verifier_gap": "Process-group disappearance does not prove descendant termination",
+  "work_id": "c14-phase3-escape-gate",
+  "current_attempt": "attempt-7d8e57371af84f6ea838e348efdd93ae",
+  "revision": 6,
+  "event_sequence": 6,
+  "remaining_scenarios": "NOT_RUN: stop on containment failure",
+  "cleanup": "Parent reaped; child completion observed and PID absent"
+}
