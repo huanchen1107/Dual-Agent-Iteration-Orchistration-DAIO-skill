@@ -290,7 +290,6 @@ def test_valid_artifact_changed_repository_rejected(fixture, drift):
     assert not ctl.writer.journals()
 
 
-@pytest.mark.skip(reason="Phase 4E allows C1.4 in unified orchestrator")
 def test_legacy_authority_paths_cannot_bypass_unified_state(fixture):
     ctl, token = fixture
     legacy = DurableHandoff(ctl.store)

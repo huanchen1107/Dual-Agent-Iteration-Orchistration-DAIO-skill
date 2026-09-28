@@ -66,7 +66,7 @@ async def run_4e_orchestrator_capacity_handoff_integration(tmp_path):
     work.handoff_contract = "C1.4"
     from scripts.daio_closed_loop.models import DAIORole, DAIOStatus
     work.assigned_role = DAIORole.ENGINEERING_EXECUTION
-    store.save_work_item(work)
+    store.save_fenced_work_item(work, work.fencing_token)
     
     from scripts.daio_closed_loop.capacity_handoff_v2 import HandoffPhase, HandoffResult
     original_verify = controller.verify_checkpoint_and_authorize_handoff

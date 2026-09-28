@@ -136,7 +136,6 @@ def test_explicit_terminal_markers_not_just_status(tmp_path, kwargs):
         asyncio.run(DAIOClosedLoopOrchestrator(store=store).run_autonomous_loop('work-test'))
 
 
-@pytest.mark.skip(reason="Phase 4E integrates C1.4 into orchestrator/store, lifting restrictions")
 def test_enrolled_work_cannot_escape_through_legacy_apis(setup):
     store, ctl, token = setup
     item = store.load_work_item(token.work_id)
@@ -146,8 +145,6 @@ def test_enrolled_work_cannot_escape_through_legacy_apis(setup):
         store.save_work_item(item)
     with pytest.raises(SafetyError):
         store.save_work_item(work())  # a stale caller cannot omit the contract marker
-    with pytest.raises(SafetyError):
-        asyncio.run(DAIOClosedLoopOrchestrator(store=store).run_autonomous_loop(token.work_id))
     with pytest.raises(SafetyError):
         asyncio.run(SubprocessWorkspaceExecutor().execute_task_async(item))
     result = store.apply_decision_transition_atomically(token.work_id, ArchitectDecision('REVISE', 'c1.4-fixture'))

@@ -43,8 +43,6 @@ class DAIOClosedLoopOrchestrator:
         max_rounds: int = 10,
         consecutive_errors_cap: int = 3,
         default_test_command: Optional[str] = None,
-        handoff_controller: Optional[Any] = None,
-        execution_candidates: Optional[List[Any]] = None,
     ) -> None:
         self.store = store or SqliteDAIOWorkStore()
         self.executor = executor or SubprocessWorkspaceExecutor()
@@ -53,8 +51,6 @@ class DAIOClosedLoopOrchestrator:
         self.consecutive_errors_cap = consecutive_errors_cap
         self.default_test_command = default_test_command
         self.round_history: List[Dict[str, Any]] = []
-        self.handoff_controller = handoff_controller
-        self.execution_candidates = execution_candidates or []
 
     def create_work_item(
         self,
@@ -147,6 +143,12 @@ class DAIOClosedLoopOrchestrator:
             logger.info(f"NEXT_WORK_CREATED: work_id={next_work.work_id}, parent_id={completed_work.work_id}, phase={next_phase}")
         return next_work
 
+    def _save_work(self, work: DAIOWorkItem) -> None:
+        if work.handoff_contract:
+            getattr(self.store, 'save_fenced_work_item')(work, getattr(work, 'fencing_token', 0))
+        else:
+            self.store.save_work_item(work)
+
     async def run_autonomous_loop(self, work_id: str, worker_id: Optional[str] = None) -> DAIOWorkItem:
         """
         Execute the autonomous closed loop until COMPLETED, HUMAN_GATE_REQUIRED, or BLOCKED.
@@ -163,7 +165,10 @@ class DAIOClosedLoopOrchestrator:
             else:
                 worker_id = f"worker-{uuid.uuid4().hex[:6]}"
 
-        lease_id = self.store.acquire_lease(work_id, worker_id, ttl_seconds=300)
+        if admission_work.handoff_contract:
+            lease_id = getattr(self.store, 'acquire_fenced_lease')(work_id, worker_id, admission_work.fencing_token, ttl_seconds=300)
+        else:
+            lease_id = self.store.acquire_lease(work_id, worker_id, ttl_seconds=300)
         if not lease_id:
             raise PermissionError(f"Cannot acquire lease for work item '{work_id}' (already locked).")
 
@@ -179,7 +184,10 @@ class DAIOClosedLoopOrchestrator:
         work.execution_started_at = now_iso
         work.last_heartbeat_at = now_iso
         work.status = DAIOStatus.IN_PROGRESS
-        self.store.save_work_item(work)
+        if work.handoff_contract:
+            getattr(self.store, 'save_fenced_work_item')(work, work.fencing_token)
+        else:
+            self._save_work(work)
 
         # Emit WORK_CLAIMED & EXECUTION_STARTED telemetry
         claim_event = {
@@ -265,7 +273,7 @@ class DAIOClosedLoopOrchestrator:
                             work,
                             f"DAIO-001 Zero progress: Repeated review on identical HEAD SHA ({work.head_sha}) at {work.current_gate.value}"
                         )
-                        self.store.save_work_item(work)
+                        self._save_work(work)
                         break
 
                     # Format review package
@@ -332,22 +340,41 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         # Record turn history and log decision persistence
                         turn_id = f"turn-{uuid.uuid4().hex[:8]}"
                         if hasattr(self.store, "record_turn_history"):
-                            self.store.record_turn_history(
-                                turn_id=turn_id,
-                                work_id=work.work_id,
-                                role=DAIORole.LEAD_ARCHITECT_REVIEW.value,
-                                action_summary=decision.instruction or decision.decision,
-                                commit_sha=work.head_sha or "INITIAL",
-                                status=decision.decision,
-                                payload={
-                                    "decision": decision.decision,
-                                    "current_phase": decision.current_phase,
-                                    "next_phase": decision.next_phase,
-                                    "action": decision.action,
-                                    "human_approval_required": decision.human_approval_required,
-                                    "instruction": decision.instruction,
-                                }
-                            )
+                            if work.handoff_contract and hasattr(self.store, "record_fenced_turn_history"):
+                                self.store.record_fenced_turn_history(
+                                    turn_id=turn_id,
+                                    work_id=work.work_id,
+                                    role=DAIORole.LEAD_ARCHITECT_REVIEW.value,
+                                    action_summary=decision.instruction or decision.decision,
+                                    commit_sha=work.head_sha or "INITIAL",
+                                    status=decision.decision,
+                                    payload={
+                                        "decision": decision.decision,
+                                        "current_phase": decision.current_phase,
+                                        "next_phase": decision.next_phase,
+                                        "action": decision.action,
+                                        "human_approval_required": decision.human_approval_required,
+                                        "instruction": decision.instruction,
+                                    },
+                                    expected_fencing_token=work.fencing_token,
+                                )
+                            else:
+                                self.store.record_turn_history(
+                                    turn_id=turn_id,
+                                    work_id=work.work_id,
+                                    role=DAIORole.LEAD_ARCHITECT_REVIEW.value,
+                                    action_summary=decision.instruction or decision.decision,
+                                    commit_sha=work.head_sha or "INITIAL",
+                                    status=decision.decision,
+                                    payload={
+                                        "decision": decision.decision,
+                                        "current_phase": decision.current_phase,
+                                        "next_phase": decision.next_phase,
+                                        "action": decision.action,
+                                        "human_approval_required": decision.human_approval_required,
+                                        "instruction": decision.instruction,
+                                    }
+                                )
                         logger.info(f"ARCHITECT_DECISION_PERSISTED: work_id={work.work_id}, decision={decision.decision}, phase={decision.current_phase}, next_phase={decision.next_phase}")
 
                         # Process routing
@@ -360,7 +387,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                             "instruction": decision.instruction,
                             "sha": work.head_sha,
                         })
-                        self.store.save_work_item(work)
+                        self._save_work(work)
 
                         if work.status == DAIOStatus.COMPLETED:
                             logger.info(f"CURRENT_WORK_COMPLETED: work_id={work.work_id}, stage={work.current_stage}")
@@ -373,7 +400,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                         logger.error(f"Error during Architect review turn ({consecutive_errors}/{self.consecutive_errors_cap}): {ex}")
                         if consecutive_errors >= self.consecutive_errors_cap:
                             transition_to_human_gate(work, f"DAIO-003 Error Cap Reached: {ex}")
-                            self.store.save_work_item(work)
+                            self._save_work(work)
                             break
 
                 # =========================================================================
@@ -402,7 +429,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                                 exec_res = raw_res
 
                         if exec_res.outcome in CAPACITY_OUTCOMES:
-                            if hasattr(self, 'handoff_controller') and self.handoff_controller is not None and hasattr(self.store, '_get_connection'):
+                            if getattr(self, 'handoff_controller', None) is not None and hasattr(self.store, '_get_connection'):
                                 handoff_conn = self.store._get_connection()
                                 self.handoff_controller.enroll(work.work_id, work.execution_attempt_id, work.fencing_token)
                                 
@@ -412,7 +439,10 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                                 v_res = self.handoff_controller.verify_checkpoint_and_authorize_handoff(work.work_id, handoff_conn)
                                 if not v_res.success:
                                     transition_to_human_gate(work, f"DAIO-004 Handoff Failed Closed: {v_res.reason}")
-                                    self.store.save_work_item(work)
+                                    if work.handoff_contract:
+                                        getattr(self.store, 'save_fenced_work_item')(work, work.fencing_token)
+                                    else:
+                                        self._save_work(work)
                                     break
                                     
                                 self.handoff_controller.revoke_current_backend(work.work_id)
@@ -420,34 +450,38 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                                 req_safety = work.handoff_contract if work.handoff_contract else "C1.4"
                                 compat_reqs = work.metadata.get("compatibility_requirements", ["FULLY_COMPATIBLE"])
                                 h_res, s_res = self.handoff_controller.select_and_authorize_backend_b(
-                                    work.work_id, self.execution_candidates, req_safety, compat_reqs
+                                    work.work_id, getattr(self, 'execution_candidates', []), req_safety, compat_reqs
                                 )
                                 
                                 if h_res.success and s_res.selected:
                                     new_attempt = f"attempt-{uuid.uuid4().hex[:8]}"
                                     self.handoff_controller.record_backend_b_started(work.work_id, new_attempt)
                                     work.execution_attempt_id = new_attempt
+                                    expected_token = work.fencing_token
                                     work.fencing_token = h_res.fencing_token
-                                    self.store.save_work_item(work)
+                                    getattr(self.store, 'save_fenced_work_item')(work, expected_token)
                                     continue
-                            
+                                    
                             work.status = DAIOStatus.WAITING_FOR_EXECUTION_CAPACITY
                             work.metadata["execution_outcome"] = exec_res.outcome.value
                             work.metadata["test_status"] = TestStatus.NOT_RUN.value
-                            self.store.save_work_item(work)
+                            if work.handoff_contract:
+                                getattr(self.store, 'save_fenced_work_item')(work, work.fencing_token)
+                            else:
+                                self._save_work(work)
                             break
 
                         if not exec_res.success and not exec_res.scope_violation and exec_res.test_status in {TestStatus.NOT_RUN, TestStatus.UNKNOWN}:
                             work.status = DAIOStatus.BLOCKED
                             work.metadata["execution_outcome"] = exec_res.outcome.value
                             work.metadata["test_status"] = exec_res.test_status.value
-                            self.store.save_work_item(work)
+                            self._save_work(work)
                             break
 
                         # Check Scope Violation (DAIO-002)
                         if exec_res.scope_violation:
                             transition_to_human_gate(work, f"DAIO-002 Scope Violation: {exec_res.error_message}")
-                            self.store.save_work_item(work)
+                            self._save_work(work)
                             break
 
                         consecutive_errors = 0 if exec_res.success else (consecutive_errors + 1)
@@ -476,20 +510,20 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                             "sha": exec_res.commit_sha,
                             "diff_files": exec_res.diff_files,
                         })
-                        self.store.save_work_item(work)
+                        self._save_work(work)
 
                     except Exception as ex:
                         consecutive_errors += 1
                         logger.error(f"Error during Engineering turn ({consecutive_errors}/{self.consecutive_errors_cap}): {ex}")
                         if consecutive_errors >= self.consecutive_errors_cap:
                             transition_to_human_gate(work, f"DAIO-003 Error Cap Reached: {ex}")
-                            self.store.save_work_item(work)
+                            self._save_work(work)
                             break
 
             # If loop exited because of max rounds
             if rounds_executed >= self.max_rounds and work.status not in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED}:
                 transition_to_human_gate(work, f"DAIO-003 Max autonomous rounds ({self.max_rounds}) reached.")
-                self.store.save_work_item(work)
+                self._save_work(work)
 
             return work
 
@@ -531,7 +565,7 @@ If approved, please return an `APPROVE` decision. If this work authorizes a subs
                             self.store.release_lease(claimed.work_id, claimed.lease_id)
                             current_work_id = claimed.work_id
                             continue
-                        elif self.store.acquire_lease(next_work.work_id, worker_id, ttl_seconds=300):
+                        elif (getattr(self.store, 'acquire_fenced_lease')(next_work.work_id, worker_id, next_work.fencing_token, ttl_seconds=300) if next_work.handoff_contract else self.store.acquire_lease(next_work.work_id, worker_id, ttl_seconds=300)):
                             logger.info(f"NEXT_WORK_CLAIMED: work_id={next_work.work_id}, worker={worker_id}")
                             self.store.release_lease(next_work.work_id, worker_id)
                             current_work_id = next_work.work_id

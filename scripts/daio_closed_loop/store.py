@@ -302,6 +302,11 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         enrolled = cursor.execute("SELECT handoff_contract FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+        if enrolled and enrolled[0]:
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError("C1.4 requires fenced audit publication")
         cursor.execute("""
             INSERT INTO daio_applied_decisions (
                 decision_hash, work_id, decision, current_phase, action, applied_at, status
@@ -543,6 +548,11 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         existing = cursor.execute("SELECT * FROM daio_work_items WHERE work_id=?", (item.work_id,)).fetchone()
+        if item.handoff_contract or (existing and existing["handoff_contract"]):
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError("C1.4 work requires fenced publication API")
         if existing:
             old = self._row_to_work_item(existing)
             if admission_reason(old) and not admission_reason(item):
@@ -621,6 +631,107 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         if not self._shared_conn:
             conn.close()
 
+    def save_fenced_work_item(self, item: DAIOWorkItem, expected_fencing_token: int) -> None:
+        """Explicit C1.4-authorized path with fencing validation."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        existing = cursor.execute("SELECT * FROM daio_work_items WHERE work_id=?", (item.work_id,)).fetchone()
+        
+        if existing:
+            old = self._row_to_work_item(existing)
+            if old.fencing_token != expected_fencing_token:
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                raise SafetyError(f"Fencing token mismatch: expected {expected_fencing_token}, got {old.fencing_token}")
+            
+            if admission_reason(old) and not admission_reason(item):
+                conn.rollback()
+                if not self._shared_conn:
+                    conn.close()
+                raise SafetyError("Cannot reopen protected work through save_fenced_work_item")
+
+        cursor.execute("""
+            INSERT INTO daio_work_items (
+                work_id, project_root, change_id, current_stage, current_gate,
+                assigned_role, requested_action, allowed_scope, base_sha,
+                head_sha, status, attempt_count, max_attempts, lease_id,
+                lease_expires_at, next_role, human_gate_reason, human_relay_count,
+                architect_endpoint, parent_work_id, last_decision,
+                authorized_next_phase, claimed_by, execution_attempt_id,
+                execution_started_at, last_heartbeat_at, created_at, updated_at, metadata,
+                handoff_contract, work_revision, event_sequence, fencing_token
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(work_id) DO UPDATE SET
+                current_stage=excluded.current_stage,
+                current_gate=excluded.current_gate,
+                assigned_role=excluded.assigned_role,
+                requested_action=excluded.requested_action,
+                allowed_scope=excluded.allowed_scope,
+                base_sha=excluded.base_sha,
+                head_sha=excluded.head_sha,
+                status=excluded.status,
+                attempt_count=excluded.attempt_count,
+                max_attempts=excluded.max_attempts,
+                lease_id=excluded.lease_id,
+                lease_expires_at=excluded.lease_expires_at,
+                next_role=excluded.next_role,
+                human_gate_reason=excluded.human_gate_reason,
+                human_relay_count=excluded.human_relay_count,
+                architect_endpoint=excluded.architect_endpoint,
+                parent_work_id=excluded.parent_work_id,
+                last_decision=excluded.last_decision,
+                authorized_next_phase=excluded.authorized_next_phase,
+                claimed_by=excluded.claimed_by,
+                execution_attempt_id=excluded.execution_attempt_id,
+                execution_started_at=excluded.execution_started_at,
+                last_heartbeat_at=excluded.last_heartbeat_at,
+                updated_at=excluded.updated_at,
+                metadata=excluded.metadata,
+                handoff_contract=excluded.handoff_contract,
+                work_revision=excluded.work_revision,
+                event_sequence=excluded.event_sequence,
+                fencing_token=excluded.fencing_token
+        """, (
+            item.work_id,
+            item.project_root,
+            item.change_id,
+            item.current_stage,
+            item.current_gate.value,
+            item.assigned_role.value,
+            item.requested_action,
+            json.dumps(item.allowed_scope),
+            item.base_sha,
+            item.head_sha,
+            item.status.value,
+            item.attempt_count,
+            item.max_attempts,
+            item.lease_id,
+            item.lease_expires_at,
+            item.next_role.value if item.next_role else None,
+            item.human_gate_reason,
+            item.human_relay_count,
+            json.dumps(item.architect_endpoint),
+            item.parent_work_id,
+            item.last_decision,
+            item.authorized_next_phase,
+            item.claimed_by,
+            item.execution_attempt_id,
+            item.execution_started_at,
+            item.last_heartbeat_at,
+            item.created_at,
+            item.updated_at,
+            json.dumps(item.metadata),
+            item.handoff_contract,
+            item.work_revision,
+            item.event_sequence,
+            item.fencing_token
+        ))
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
     def record_turn_history(
         self,
         turn_id: str,
@@ -635,6 +746,11 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         enrolled = cursor.execute("SELECT handoff_contract FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+        if enrolled and enrolled[0]:
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError("C1.4 requires fenced audit publication")
         cursor.execute("""
             INSERT INTO daio_turn_history (
                 turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload
@@ -647,6 +763,48 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             action_summary,
             commit_sha,
             status,
+            datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            json.dumps(payload),
+        ))
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
+    def record_fenced_turn_history(
+        self,
+        turn_id: str,
+        work_id: str,
+        role: str,
+        action_summary: str,
+        commit_sha: str,
+        status: str,
+        payload: Dict[str, Any],
+        expected_fencing_token: int,
+    ) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        
+        row = cursor.execute("SELECT fencing_token FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+        if not row:
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise KeyError(work_id)
+            
+        if row[0] != expected_fencing_token:
+            conn.rollback()
+            if not self._shared_conn:
+                conn.close()
+            raise SafetyError(f"Fencing token mismatch: expected {expected_fencing_token}, got {row[0]}")
+            
+        cursor.execute("""
+            INSERT INTO daio_turn_history (
+                turn_id, work_id, role, action_summary, commit_sha, status, created_at, payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(turn_id) DO NOTHING
+        """, (
+            turn_id, work_id, role, action_summary, commit_sha, status,
             datetime.datetime.now(datetime.timezone.utc).isoformat(),
             json.dumps(payload),
         ))
@@ -712,12 +870,12 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         return self.list_work_items()
 
     def acquire_lease(self, work_id: str, worker_id: str, ttl_seconds: int = 60) -> Optional[str]:
-        """Atomically acquire a lease."""
+        """Atomically acquire a legacy lease; C1.4 requires its fenced controller."""
         conn = self._get_connection()
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
-            if not row or admission_reason(self._row_to_work_item(row)):
+            if not row or row["handoff_contract"] or admission_reason(self._row_to_work_item(row)):
                 conn.rollback()
                 return None
             now = datetime.datetime.now(datetime.timezone.utc)
@@ -731,6 +889,43 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             conn.commit()
             return lease
         except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            if not self._shared_conn:
+                conn.close()
+
+    def acquire_fenced_lease(self, work_id: str, worker_id: str, expected_fencing_token: int, ttl_seconds: int = 60) -> Optional[str]:
+        """Atomically acquire a lease explicitly authorized by a fencing token."""
+        conn = self._get_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM daio_work_items WHERE work_id=?", (work_id,)).fetchone()
+            if not row or admission_reason(self._row_to_work_item(row)):
+                conn.rollback()
+                return None
+            old = self._row_to_work_item(row)
+            if old.fencing_token != expected_fencing_token:
+                conn.rollback()
+                raise SafetyError(f"Fencing token mismatch: expected {expected_fencing_token}, got {old.fencing_token}")
+                
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if row["lease_expires_at"]:
+                expires_at = datetime.datetime.fromisoformat(row["lease_expires_at"])
+                if now < expires_at and row["lease_id"] and row["claimed_by"] != worker_id:
+                    conn.rollback()
+                    return None
+
+            lease_id = f"lease-{uuid.uuid4().hex[:8]}"
+            new_expires = (now + datetime.timedelta(seconds=ttl_seconds)).isoformat()
+            
+            conn.execute(
+                "UPDATE daio_work_items SET lease_id=?, lease_expires_at=?, claimed_by=?, updated_at=? WHERE work_id=?",
+                (lease_id, new_expires, worker_id, now.isoformat(), work_id)
+            )
+            conn.commit()
+            return lease_id
+        except Exception:
             conn.rollback()
             raise
         finally:
