@@ -1,0 +1,1099 @@
+{
+  "result": "PASS_DISPOSABLE_AUTHORITY_GATE",
+  "platform": "darwin",
+  "mechanism": "whole-process sandbox-exec deny-default Seatbelt profile",
+  "profile": "(version 1)(deny default)\n(allow process-exec process-fork)\n(allow sysctl-read)\n(allow file-read* (literal \"/\") (literal \"/Library\") (literal \"/Library/Developer\") (literal \"/dev/null\") (literal \"/dev/random\") (literal \"/dev/urandom\") (literal \"/private\") (literal \"/private/tmp\") (literal \"/private/tmp/c14-3b1-native-04\") (literal \"/private/tmp/c14-3b1-native-04/test_native_authority_survives0\")(subpath \"/System\") (subpath \"/usr\") (subpath \"/bin\") (subpath \"/Library/Developer/CommandLineTools\") (subpath \"/private/tmp/c14-3b1-native-04/test_native_authority_survives0/scratch\"))\n(allow file-write* (subpath \"/private/tmp/c14-3b1-native-04/test_native_authority_survives0/scratch\") (literal \"/dev/null\"))\n",
+  "profile_sha256": "716628704d48956c435ee118ce852c450f4af6de842bdb0931ea4870f5bd648b",
+  "sentinel_sha256_before": {
+    "repository": "170befd171f26457270bb5cad35cb05bd0d2081ab7d808fb82aa4ebccc87d507",
+    "git": "fb27fb1dc5e1edd5ea837cd14bb691af9777c9711f98bea387e449f2ff128305",
+    "control": "eab4653c20aa16deb029558c7a80f34f87474dd3316e76ae35b00b6fb6e9a085",
+    "freeze": "81f3a610cbe7de81c7afc725caeb27f612d78819c507c2cfc63ba3b5b73ac79b",
+    "acceptance": "0f22763b60beacdb003e6f55ffef44c2328ec9d20448df8c1aafee72f01d46a3",
+    "authorization": "55400b94af83bb7e282b09274dfe584d82236e4b8e3c1e8227a452031b5a2c60",
+    "credential": "13d60c2e049cc48e821c94090aaf22e84146119de4926b807762e256dd836729",
+    "session": "0f300c186c9ccb6b1ef303e829ffb966b022b6957e9d099069c2dd06dce5ed7b",
+    "writer_control": "a261266ee033d2a7a80a598d573142ea45dd7ae5590e5456355d32d85888f79c",
+    "artifact": "c3ac3e63897651ef7ccada559ce7ca12ec4f75597ce25b58e6fd2dd125dbfef6"
+  },
+  "sentinel_hashes_unchanged": true,
+  "phases": {
+    "parent": {
+      "repository_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "repository_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "fd_path_read": {
+        "denied": true,
+        "errno": 9
+      },
+      "fd_path_write": {
+        "denied": true,
+        "errno": 9
+      },
+      "hardlink_escape": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_endpoint": {
+        "denied": true,
+        "errno": 1
+      },
+      "host_descriptor": {
+        "closed": true,
+        "errno": 9
+      },
+      "other_host_descriptors_closed": {
+        "12": true,
+        "18": true
+      },
+      "open_fds": [
+        14,
+        15
+      ],
+      "generic_rpc": {
+        "result": "FORBIDDEN_OPERATION"
+      },
+      "stale": {
+        "work_id": {
+          "result": "STALE"
+        },
+        "execution_attempt_id": {
+          "result": "STALE"
+        },
+        "fencing_token": {
+          "result": "STALE"
+        },
+        "work_revision": {
+          "result": "STALE"
+        },
+        "event_sequence": {
+          "result": "STALE"
+        }
+      },
+      "publication": {
+        "result": "ACCEPTED",
+        "sha256": "83a5f24af1ddfa09261a08f99d1bc852fa90f556df0949801beb67db0c0d472c",
+        "token": {
+          "event_sequence": 1,
+          "execution_attempt_id": "attempt-inert-A",
+          "fencing_token": 1,
+          "work_id": "c14-3b1-inert",
+          "work_revision": 1
+        }
+      },
+      "accepted_artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "accepted_artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "pid": 83632,
+      "ppid": 83620,
+      "pgid": 83632,
+      "sid": 83632
+    },
+    "fork_group": {
+      "repository_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "repository_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "fd_path_read": {
+        "denied": true,
+        "errno": 9
+      },
+      "fd_path_write": {
+        "denied": true,
+        "errno": 9
+      },
+      "hardlink_escape": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_endpoint": {
+        "denied": true,
+        "errno": 1
+      },
+      "host_descriptor": {
+        "closed": true,
+        "errno": 9
+      },
+      "other_host_descriptors_closed": {
+        "12": true,
+        "18": true
+      },
+      "open_fds": [
+        14,
+        15
+      ],
+      "generic_rpc": {
+        "result": "FORBIDDEN_OPERATION"
+      },
+      "stale": {
+        "work_id": {
+          "result": "STALE"
+        },
+        "execution_attempt_id": {
+          "result": "STALE"
+        },
+        "fencing_token": {
+          "result": "STALE"
+        },
+        "work_revision": {
+          "result": "STALE"
+        },
+        "event_sequence": {
+          "result": "STALE"
+        }
+      },
+      "publication": {
+        "result": "ACCEPTED",
+        "sha256": "f2c1d043d79a6f36f01ab2e7b7a6bff5423a585d7c4bf80b06e433d2ddb8eff8",
+        "token": {
+          "event_sequence": 2,
+          "execution_attempt_id": "attempt-inert-A",
+          "fencing_token": 1,
+          "work_id": "c14-3b1-inert",
+          "work_revision": 2
+        }
+      },
+      "accepted_artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "accepted_artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "pid": 83633,
+      "ppid": 83632,
+      "pgid": 83633,
+      "sid": 83632
+    },
+    "escaped_exec": {
+      "repository_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "repository_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "fd_path_read": {
+        "denied": true,
+        "errno": 9
+      },
+      "fd_path_write": {
+        "denied": true,
+        "errno": 9
+      },
+      "hardlink_escape": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_endpoint": {
+        "denied": true,
+        "errno": 1
+      },
+      "host_descriptor": {
+        "closed": true,
+        "errno": 9
+      },
+      "other_host_descriptors_closed": {
+        "12": true,
+        "18": true
+      },
+      "open_fds": [
+        14,
+        15
+      ],
+      "generic_rpc": {
+        "result": "FORBIDDEN_OPERATION"
+      },
+      "stale": {
+        "work_id": {
+          "result": "STALE"
+        },
+        "execution_attempt_id": {
+          "result": "STALE"
+        },
+        "fencing_token": {
+          "result": "STALE"
+        },
+        "work_revision": {
+          "result": "STALE"
+        },
+        "event_sequence": {
+          "result": "STALE"
+        }
+      },
+      "publication": {
+        "result": "ACCEPTED",
+        "sha256": "42c6bfb7b985f54f7d71f56609adb34bfbd1c1f2eff7d7d0a6cbb697c66b7ec4",
+        "token": {
+          "event_sequence": 3,
+          "execution_attempt_id": "attempt-inert-A",
+          "fencing_token": 1,
+          "work_id": "c14-3b1-inert",
+          "work_revision": 3
+        }
+      },
+      "accepted_artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "accepted_artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "pid": 83634,
+      "ppid": 1,
+      "pgid": 83634,
+      "sid": 83634
+    },
+    "reparented": {
+      "repository_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "repository_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "fd_path_read": {
+        "denied": true,
+        "errno": 9
+      },
+      "fd_path_write": {
+        "denied": true,
+        "errno": 9
+      },
+      "hardlink_escape": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_endpoint": {
+        "denied": true,
+        "errno": 1
+      },
+      "host_descriptor": {
+        "closed": true,
+        "errno": 9
+      },
+      "other_host_descriptors_closed": {
+        "12": true,
+        "18": true
+      },
+      "open_fds": [
+        14,
+        15
+      ],
+      "generic_rpc": {
+        "result": "FORBIDDEN_OPERATION"
+      },
+      "stale": {
+        "work_id": {
+          "result": "STALE"
+        },
+        "execution_attempt_id": {
+          "result": "STALE"
+        },
+        "fencing_token": {
+          "result": "STALE"
+        },
+        "work_revision": {
+          "result": "STALE"
+        },
+        "event_sequence": {
+          "result": "STALE"
+        }
+      },
+      "publication": {
+        "result": "ACCEPTED",
+        "sha256": "92c1c30f16f1394ce6d754ecdb68bc8ebe4f8d88b3c4954668babd3173ebe808",
+        "token": {
+          "event_sequence": 4,
+          "execution_attempt_id": "attempt-inert-A",
+          "fencing_token": 1,
+          "work_id": "c14-3b1-inert",
+          "work_revision": 4
+        }
+      },
+      "accepted_artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "accepted_artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "pid": 83634,
+      "ppid": 1,
+      "pgid": 83634,
+      "sid": 83634
+    },
+    "revoked": {
+      "repository_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "repository_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "fd_path_read": {
+        "denied": true,
+        "errno": 9
+      },
+      "fd_path_write": {
+        "denied": true,
+        "errno": 9
+      },
+      "hardlink_escape": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_endpoint": {
+        "denied": true,
+        "errno": 1
+      },
+      "host_descriptor": {
+        "closed": true,
+        "errno": 9
+      },
+      "other_host_descriptors_closed": {
+        "12": true,
+        "18": true
+      },
+      "open_fds": [
+        14,
+        15
+      ],
+      "generic_rpc": {
+        "result": "FORBIDDEN_OPERATION"
+      },
+      "stale": {
+        "work_id": {
+          "result": "REVOKED"
+        },
+        "execution_attempt_id": {
+          "result": "REVOKED"
+        },
+        "fencing_token": {
+          "result": "REVOKED"
+        },
+        "work_revision": {
+          "result": "REVOKED"
+        },
+        "event_sequence": {
+          "result": "REVOKED"
+        }
+      },
+      "publication": {
+        "result": "REVOKED"
+      },
+      "pid": 83634,
+      "ppid": 1,
+      "pgid": 83634,
+      "sid": 83634
+    },
+    "restarted": {
+      "repository_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "repository_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "git_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "freeze_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "acceptance_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "authorization_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "credential_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "session_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_control_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "artifact_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "sqlite_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "symlink_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_read": {
+        "denied": true,
+        "errno": 1
+      },
+      "dotdot_write": {
+        "denied": true,
+        "errno": 1
+      },
+      "fd_path_read": {
+        "denied": true,
+        "errno": 9
+      },
+      "fd_path_write": {
+        "denied": true,
+        "errno": 9
+      },
+      "hardlink_escape": {
+        "denied": true,
+        "errno": 1
+      },
+      "writer_endpoint": {
+        "denied": true,
+        "errno": 1
+      },
+      "host_descriptor": {
+        "closed": true,
+        "errno": 9
+      },
+      "other_host_descriptors_closed": {
+        "12": true,
+        "18": true
+      },
+      "open_fds": [
+        14,
+        15
+      ],
+      "generic_rpc": {
+        "result": "FORBIDDEN_OPERATION"
+      },
+      "stale": {
+        "work_id": {
+          "result": "REVOKED"
+        },
+        "execution_attempt_id": {
+          "result": "REVOKED"
+        },
+        "fencing_token": {
+          "result": "REVOKED"
+        },
+        "work_revision": {
+          "result": "REVOKED"
+        },
+        "event_sequence": {
+          "result": "REVOKED"
+        }
+      },
+      "publication": {
+        "result": "REVOKED"
+      },
+      "pid": 83634,
+      "ppid": 1,
+      "pgid": 83634,
+      "sid": 83634
+    }
+  },
+  "alive_before_restart": "83634     1 83634 Mon Sep 28 14:27:40 2026     Ss",
+  "alive_after_restart": "83634     1 83634 Mon Sep 28 14:27:40 2026     Ss",
+  "controller_pids": [
+    83631,
+    83637
+  ],
+  "controller_restart": "New broker process reopened durable REVOKED state; retained trusted launch custodian; live descendant attacks rechecked",
+  "lifecycle": "ALIVE",
+  "authority": "REVOKED",
+  "verified_quiescence": false,
+  "events": [
+    [
+      1,
+      "PROPOSAL"
+    ],
+    [
+      2,
+      "PROPOSAL"
+    ],
+    [
+      3,
+      "PROPOSAL"
+    ],
+    [
+      4,
+      "PROPOSAL"
+    ],
+    [
+      5,
+      "REVOKED"
+    ]
+  ],
+  "accepted_proposals": 4,
+  "descriptors_closed": [
+    "authoritative file",
+    "trusted writer socket",
+    "controller command pipe"
+  ],
+  "current_tuple_rejected_after_revocation": true,
+  "scope": "Disposable native boundary feasibility, not production Route-B or live CLI acceptance",
+  "cleanup": "Parent reaped; escaped descendant finished and PID absent; both controller processes exited",
+  "source_baseline": "83d50fb28a6ee416d27bf001863be3107e5cbeb1",
+  "source_sha256": {
+    "tests/test_c14_authority_isolation_gate.py": "7fd13909510c740b1eb08c46b4ea074ea943baf35455c7fd52383c39e7266750",
+    "tests/fixtures/c14_authority_backend.py": "1605f1126d99cedfa6148027ae0ddb43c261b335d6f6875cc163ba886aebe9ae",
+    "tests/fixtures/c14_authority_broker.py": "ae3f793bc2beccc464697fd9c8d8a86a1e7253386d2196a622fe6672dc3f1505"
+  }
+}
