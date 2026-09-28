@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.request
@@ -110,78 +111,145 @@ class UniversalCDPClient:
         initial_count = initial_status.get("assistantCount", 0)
         initial_text = (initial_status.get("lastText") or "").strip()
 
-        # 1. Fill Text Input
-        input_js = f"""
+        # Step 0: Idempotency check on current conversation DOM
+        norm_text = re.sub(r'\s+', ' ', message_text.strip())
+        fingerprint = norm_text[:120] if len(norm_text) >= 120 else norm_text
+
+        idempotency_js = f"""
         (() => {{
-            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
-            if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
-            
-            promptEl.focus();
-            const text = {json.dumps(message_text)};
-            if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {{
-                promptEl.value = text;
-                promptEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                promptEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            }} else {{
-                document.execCommand('selectAll', false, null);
-                document.execCommand('delete', false, null);
-                try {{
-                    const dt = new DataTransfer();
-                    dt.setData('text/plain', text);
-                    const pasteEvent = new ClipboardEvent('paste', {{
-                        clipboardData: dt,
-                        bubbles: true,
-                        cancelable: true
-                    }});
-                    promptEl.dispatchEvent(pasteEvent);
-                }} catch (e) {{}}
-                if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
-                    document.execCommand('insertText', false, text);
+            const userArticles = document.querySelectorAll('[data-message-author-role="user"]');
+            if (userArticles.length > 0) {{
+                const lastUserText = userArticles[userArticles.length - 1].innerText.replace(/\\s+/g, ' ').trim();
+                const targetFp = {json.dumps(fingerprint)};
+                if (lastUserText.includes(targetFp) || (targetFp.length > 30 && targetFp.includes(lastUserText))) {{
+                    return {{ alreadyCommitted: true, userCount: userArticles.length }};
                 }}
-                if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
-                    promptEl.innerHTML = '<p>' + text.replace(/\\n/g, '</p><p>') + '</p>';
-                }}
-                promptEl.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText' }}));
             }}
-            return {{ success: true }};
+            return {{ alreadyCommitted: false, userCount: userArticles.length }};
         }})()
         """
-        res = await self.evaluate(input_js)
-        if not res or not res.get("success"):
-            return res
+        idem_res = await self.evaluate(idempotency_js) or {}
+        if idem_res.get("alreadyCommitted"):
+            logger.info(f"🔁 Message fingerprint already committed in DOM ({idem_res.get('userCount')} user messages). Skipping duplicate input/send.")
+        else:
+            # 1. Fill Text Input
+            input_js = f"""
+            (() => {{
+                const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
+                
+                promptEl.focus();
+                const text = {json.dumps(message_text)};
+                if (promptEl.tagName === 'TEXTAREA' || promptEl.tagName === 'INPUT') {{
+                    promptEl.value = text;
+                    promptEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    promptEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }} else {{
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('delete', false, null);
+                    try {{
+                        const dt = new DataTransfer();
+                        dt.setData('text/plain', text);
+                        const pasteEvent = new ClipboardEvent('paste', {{
+                            clipboardData: dt,
+                            bubbles: true,
+                            cancelable: true
+                        }});
+                        promptEl.dispatchEvent(pasteEvent);
+                    }} catch (e) {{}}
+                    if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
+                        document.execCommand('insertText', false, text);
+                    }}
+                    if (!promptEl.innerText || promptEl.innerText.trim().length === 0) {{
+                        promptEl.innerHTML = '<p>' + text.replace(/\\n/g, '</p><p>') + '</p>';
+                    }}
+                    promptEl.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText' }}));
+                }}
+                return {{ success: true }};
+            }})()
+            """
+            res = await self.evaluate(input_js)
+            if not res or not res.get("success"):
+                return res
 
-        await asyncio.sleep(0.5)
+            # 2. Poll for real send button to become enabled (bounded up to 4.0s)
+            click_send_js = """
+            (() => {
+                const sendBtn = document.querySelector('button[data-testid="send-button"]') 
+                    || document.querySelector('button[aria-label="Send prompt"]')
+                    || document.querySelector('button[aria-label="傳送提示詞"]')
+                    || document.querySelector('button[aria-label="傳送"]')
+                    || document.querySelector('button[aria-label*="傳送"]')
+                    || document.querySelector('button[aria-label="Send message"]')
+                    || document.querySelector('button[aria-label="Send Message"]')
+                    || document.querySelector('button[data-testid="fruitjuice-send-button"]')
+                    || document.querySelector('fieldset button:last-of-type')
+                    || document.querySelector('form button:last-of-type');
+                if (sendBtn && !sendBtn.disabled) {
+                    sendBtn.click();
+                    return { clicked: true, method: "button_click" };
+                }
+                return { clicked: false, sendBtnFound: !!sendBtn, disabled: sendBtn ? sendBtn.disabled : null };
+            })()
+            """
+            button_clicked = False
+            send_attempt_start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - send_attempt_start < 4.0:
+                click_res = await self.evaluate(click_send_js) or {}
+                if click_res.get("clicked"):
+                    button_clicked = True
+                    logger.info(f"Send action dispatched via button_click: {click_res}")
+                    break
+                await asyncio.sleep(0.2)
 
-        # 2. Click Send Button
-        click_send_js = """
-        (() => {
-            const sendBtn = document.querySelector('button[data-testid="send-button"]') 
-                || document.querySelector('button[aria-label="Send prompt"]')
-                || document.querySelector('button[aria-label="傳送提示詞"]')
-                || document.querySelector('button[aria-label="傳送"]')
-                || document.querySelector('button[aria-label*="傳送"]')
-                || document.querySelector('button[aria-label="Send message"]')
-                || document.querySelector('button[aria-label="Send Message"]')
-                || document.querySelector('button[data-testid="fruitjuice-send-button"]')
-                || document.querySelector('fieldset button:last-of-type')
-                || document.querySelector('form button:last-of-type');
-            if (sendBtn && !sendBtn.disabled) {
-                sendBtn.click();
-                return { clicked: true, method: "button_click" };
-            }
-            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
-            if (promptEl) {
-                promptEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                return { clicked: true, method: "enter_key" };
-            }
-            return { clicked: false, error: "No send button found" };
-        })()
-        """
+            if not button_clicked:
+                return {
+                    "success": False,
+                    "status": "SUBMISSION_NOT_COMMITTED",
+                    "error": "SUBMISSION_NOT_COMMITTED: Send button was not enabled within 4.0s after input injection."
+                }
 
-        click_res = await self.evaluate(click_send_js)
-        logger.info(f"Send action dispatched: {click_res}")
+            # 3. Positive SEND_VERIFIED assertion (poll up to 4.0s)
+            verify_send_js = f"""
+            (() => {{
+                const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                const promptText = promptEl ? (promptEl.innerText || promptEl.value || '').trim() : '';
+                const userArticles = document.querySelectorAll('[data-message-author-role="user"]');
+                let userMessageMatched = false;
+                if (userArticles.length > 0) {{
+                    const lastUserText = userArticles[userArticles.length - 1].innerText.replace(/\\s+/g, ' ').trim();
+                    const targetFp = {json.dumps(fingerprint)};
+                    if (lastUserText.includes(targetFp) || (targetFp.length > 30 && targetFp.includes(lastUserText))) {{
+                        userMessageMatched = true;
+                    }}
+                }}
+                const isCleared = (promptText.length === 0);
+                return {{
+                    verified: isCleared || userMessageMatched,
+                    isCleared: isCleared,
+                    userMessageMatched: userMessageMatched,
+                    promptLength: promptText.length
+                }};
+            }})()
+            """
+            send_verified = False
+            verify_start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - verify_start < 4.0:
+                v_res = await self.evaluate(verify_send_js) or {}
+                if v_res.get("verified"):
+                    send_verified = True
+                    logger.info(f"✅ SEND_VERIFIED: Message confirmed committed to conversation DOM: {v_res}")
+                    break
+                await asyncio.sleep(0.2)
 
-        # 3. Wait for generation to start and finish
+            if not send_verified:
+                return {
+                    "success": False,
+                    "status": "SUBMISSION_NOT_COMMITTED",
+                    "error": "SUBMISSION_NOT_COMMITTED: Send action dispatched but neither composer cleared nor matching user message appeared in DOM."
+                }
+
+        # 4. Wait for generation to start and finish
         logger.info("Waiting for Web LLM response stream to finish...")
         await asyncio.sleep(2.0)
         
@@ -210,9 +278,11 @@ class UniversalCDPClient:
                 return {"success": False, "error": f"Timeout waiting for response after {timeout_seconds}s"}
             await asyncio.sleep(2.0)
 
-
     async def post_message_only(self, message_text: str) -> Dict[str, Any]:
-        """Dispatch a one-way message/telemetry without waiting for or parsing a reply."""
+        """Dispatch a one-way message/telemetry with SEND_VERIFIED confirmation without waiting for response."""
+        norm_text = re.sub(r'\s+', ' ', message_text.strip())
+        fingerprint = norm_text[:120] if len(norm_text) >= 120 else norm_text
+
         # 1. Fill Text Input
         input_js = f"""
         (() => {{
@@ -253,14 +323,14 @@ class UniversalCDPClient:
         if not res or not res.get("success"):
             return res or {"success": False, "error": "Input evaluation failed"}
 
-        await asyncio.sleep(0.5)
-
-        # 2. Click Send Button
+        # 2. Poll for send button
         click_send_js = """
         (() => {
             const sendBtn = document.querySelector('button[data-testid="send-button"]') 
                 || document.querySelector('button[aria-label="Send prompt"]')
                 || document.querySelector('button[aria-label="傳送提示詞"]')
+                || document.querySelector('button[aria-label="傳送"]')
+                || document.querySelector('button[aria-label*="傳送"]')
                 || document.querySelector('button[aria-label="Send message"]')
                 || document.querySelector('button[aria-label="Send Message"]')
                 || document.querySelector('fieldset button:last-of-type')
@@ -269,14 +339,36 @@ class UniversalCDPClient:
                 sendBtn.click();
                 return { clicked: true, method: "button_click" };
             }
-            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
-            if (promptEl) {
-                promptEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                return { clicked: true, method: "enter_key" };
-            }
-            return { clicked: false, error: "No send button found" };
+            return { clicked: false, sendBtnFound: !!sendBtn, disabled: sendBtn ? sendBtn.disabled : null };
         })()
         """
-        click_res = await self.evaluate(click_send_js)
-        logger.info(f"One-way telemetry dispatched: {click_res}")
-        return {"success": True, "click_result": click_res}
+        button_clicked = False
+        send_attempt_start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - send_attempt_start < 4.0:
+            click_res = await self.evaluate(click_send_js) or {}
+            if click_res.get("clicked"):
+                button_clicked = True
+                break
+            await asyncio.sleep(0.2)
+
+        if not button_clicked:
+            return {"success": False, "status": "SUBMISSION_NOT_COMMITTED", "error": "SUBMISSION_NOT_COMMITTED: Send button was not enabled within timeout."}
+
+        # 3. Verify
+        verify_send_js = f"""
+        (() => {{
+            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+            const promptText = promptEl ? (promptEl.innerText || promptEl.value || '').trim() : '';
+            return {{ verified: (promptText.length === 0), promptLength: promptText.length }};
+        }})()
+        """
+        verify_start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - verify_start < 4.0:
+            v_res = await self.evaluate(verify_send_js) or {}
+            if v_res.get("verified"):
+                logger.info("✅ SEND_VERIFIED: One-way telemetry confirmed committed.")
+                return {"success": True, "click_result": click_res}
+            await asyncio.sleep(0.2)
+
+        return {"success": False, "status": "SUBMISSION_NOT_COMMITTED", "error": "SUBMISSION_NOT_COMMITTED: Telemetry input was not cleared."}
+
