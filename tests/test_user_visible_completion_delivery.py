@@ -73,3 +73,14 @@ def test_new_revision_has_new_delivery_identity(tmp_path):
     work.work_revision += 1
     asyncio.run(deliver_user_visible_completion(store, bridge, work))
     assert len(bridge.completion_history) == 2
+
+
+def test_observed_stdout_alias_is_published(tmp_path):
+    (tmp_path / "evidence.json").write_text(
+        json.dumps({"observed_stdout": "Hello"}), encoding="utf-8"
+    )
+    store = SqliteDAIOWorkStore(str(tmp_path / "state.db"))
+    bridge = MockArchitectBridgeAdapter()
+    work = completed_work(tmp_path)
+    assert asyncio.run(deliver_user_visible_completion(store, bridge, work))
+    assert "stdout: `Hello`" in bridge.completion_history[0][1]

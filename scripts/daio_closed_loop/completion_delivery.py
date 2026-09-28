@@ -35,8 +35,10 @@ def build_delivery(work: DAIOWorkItem) -> Dict[str, Any]:
         if root in evidence_path.parents and evidence_path.is_file():
             try:
                 evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-                if isinstance(evidence, dict) and isinstance(evidence.get("stdout"), str):
-                    stdout = evidence["stdout"][:2000]
+                if isinstance(evidence, dict):
+                    observed = evidence.get("stdout", evidence.get("observed_stdout"))
+                    if isinstance(observed, str):
+                        stdout = observed[:2000]
             except Exception:
                 pass
     payload = {
