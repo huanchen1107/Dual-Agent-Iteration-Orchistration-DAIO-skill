@@ -199,7 +199,7 @@ class UniversalCDPClient:
         if idem_res.get("alreadyCommitted"):
             logger.info(f"🔁 Message nonce/fingerprint already committed in DOM ({idem_res.get('userCount')} user messages). Skipping duplicate input/send.")
         else:
-            # 1. Focus and clear composer
+            # 1. Focus and clear composer (poll up to 6.0s for DOM readiness)
             input_prep_js = """
             (() => {
                 const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
@@ -221,170 +221,173 @@ class UniversalCDPClient:
                 };
             })()
             """
-            prep_res = await self.evaluate(input_prep_js) or {}
-            if not prep_res.get("success"):
-                return {"success": False, "status": "SUBMISSION_NOT_COMMITTED", "error": prep_res.get("error", "Failed to focus composer")}
-
-            # Click composer center to ensure native browser focus
-            cx = prep_res.get("x")
-            cy = prep_res.get("y")
-            if cx is not None and cy is not None:
-                await self.send_cdp_command("Input.dispatchMouseEvent", {
-                    "type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1
-                })
-                await asyncio.sleep(0.05)
-                await self.send_cdp_command("Input.dispatchMouseEvent", {
-                    "type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1
-                })
-                await asyncio.sleep(0.05)
-
-            # Insert complete prompt using CDP Input.insertText (updates ProseMirror/React state natively)
-            await self.send_cdp_command("Input.insertText", {"text": message_text})
-            await asyncio.sleep(0.1)
-
-            # 2. Verify composer state contains exact nonce/content before attempting submit
-            comp_check_js = f"""
-            (() => {{
-                const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
-                if (!promptEl) return {{ found: false, hasNonce: false }};
-                const text = promptEl.innerText || promptEl.textContent || promptEl.value || '';
-                const targetNonce = {json.dumps(probe_nonce)};
-                const hasNonce = targetNonce ? text.includes(targetNonce) : text.trim().length > 0;
-                return {{ found: true, hasNonce: hasNonce, length: text.length, sample: text.slice(0, 80) }};
-            }})()
-            """
-            comp_verified = False
-            comp_start = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - comp_start < 3.0:
-                c_res = await self.evaluate(comp_check_js) or {}
-                if c_res.get("hasNonce") or (c_res.get("success") and "hasNonce" not in c_res):
-                    comp_verified = True
+            prep_res = None
+            prep_start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - prep_start < 6.0:
+                prep_res = await self.evaluate(input_prep_js) or {}
+                if prep_res.get("success"):
                     break
+                await asyncio.sleep(0.3)
+
+            if not prep_res or not prep_res.get("success"):
+                # Before failing closed, check if nonce was already committed in DOM
+                idem_check = await self.evaluate(idempotency_js) or {}
+                if idem_check.get("alreadyCommitted") or idem_check.get("matchedNonce"):
+                    logger.info(f"🔁 Message nonce already committed in DOM. Skipping input preparation.")
+                else:
+                    return {"success": False, "status": "SUBMISSION_NOT_COMMITTED", "error": prep_res.get("error", "Failed to focus composer") if prep_res else "Failed to focus composer"}
+
+            if prep_res and prep_res.get("success"):
+                # Click composer center to ensure native browser focus
+                cx = prep_res.get("x")
+                cy = prep_res.get("y")
+                if cx is not None and cy is not None:
+                    await self.send_cdp_command("Input.dispatchMouseEvent", {
+                        "type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1
+                    })
+                    await asyncio.sleep(0.05)
+                    await self.send_cdp_command("Input.dispatchMouseEvent", {
+                        "type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1
+                    })
+                    await asyncio.sleep(0.05)
+
+                # Insert complete prompt using CDP Input.insertText (updates ProseMirror/React state natively)
+                await self.send_cdp_command("Input.insertText", {"text": message_text})
                 await asyncio.sleep(0.1)
 
-            if not comp_verified:
-                return {
-                    "success": False,
-                    "status": "SUBMISSION_NOT_COMMITTED",
-                    "error": f"SUBMISSION_NOT_COMMITTED: Injected prompt failed to register in composer state (nonce={probe_nonce})."
-                }
+                # 2. Verify composer state contains exact nonce/content before attempting submit
+                comp_check_js = f"""
+                (() => {{
+                    const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                    if (!promptEl) return {{ found: false, hasNonce: false }};
+                    const text = promptEl.innerText || promptEl.textContent || promptEl.value || '';
+                    const targetNonce = {json.dumps(probe_nonce)};
+                    const hasNonce = targetNonce ? text.includes(targetNonce) : text.trim().length > 0;
+                    return {{ found: true, hasNonce: hasNonce, length: text.length, sample: text.slice(0, 80) }};
+                }})()
+                """
+                comp_verified = False
+                comp_start = asyncio.get_event_loop().time()
+                while asyncio.get_event_loop().time() - comp_start < 3.0:
+                    c_res = await self.evaluate(comp_check_js) or {}
+                    if c_res.get("hasNonce") or (c_res.get("success") and "hasNonce" not in c_res):
+                        comp_verified = True
+                        break
+                    await asyncio.sleep(0.1)
 
-            # 3. Poll for strict Send button coordinates & enablement with geometric consistency (bounded up to 4.0s)
-            button_query_js = """
-            (() => {
-                const strictSelectors = [
-                    'button[data-testid="send-button"]',
-                    'button[aria-label="Send prompt"]',
-                    'button[aria-label="Send message"]',
-                    'button[aria-label="傳送提示"]',
-                    'button[aria-label="傳送提示詞"]',
-                    'button[aria-label="傳送訊息"]',
-                    'button[data-testid="fruitjuice-send-button"]'
-                ];
-                let sendBtn = null;
-                for (const sel of strictSelectors) {
-                    const el = document.querySelector(sel);
-                    if (el) {
-                        sendBtn = el;
-                        break;
+                if not comp_verified:
+                    return {
+                        "success": False,
+                        "status": "SUBMISSION_NOT_COMMITTED",
+                        "error": f"SUBMISSION_NOT_COMMITTED: Injected prompt failed to register in composer state (nonce={probe_nonce})."
                     }
-                }
-                if (!sendBtn) {
-                    const buttons = document.querySelectorAll('button');
-                    for (const b of buttons) {
-                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                        const testId = (b.getAttribute('data-testid') || '').toLowerCase();
-                        if (aria === 'send prompt' || aria === 'send message' || aria === '傳送提示' || aria === '傳送提示詞' || aria === '傳送訊息' || testId === 'send-button') {
-                            sendBtn = b;
+
+                # 3. Poll for strict Send button coordinates & enablement with geometric consistency
+                button_query_js = """
+                (() => {
+                    const strictSelectors = [
+                        'button[data-testid="send-button"]',
+                        'button[aria-label="Send prompt"]',
+                        'button[aria-label="Send message"]',
+                        'button[aria-label="傳送提示"]',
+                        'button[aria-label="傳送提示詞"]',
+                        'button[aria-label="傳送訊息"]',
+                        'button[data-testid="fruitjuice-send-button"]'
+                    ];
+                    let sendBtn = null;
+                    for (const sel of strictSelectors) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            sendBtn = el;
                             break;
                         }
                     }
-                }
-                if (!sendBtn) {
-                    return { found: false, error: "NO_STRICT_SEND_BUTTON_FOUND" };
-                }
-
-                const disabled = sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true';
-                const rect = sendBtn.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) {
-                    return { found: false, error: "SEND_BUTTON_ZERO_DIMENSION" };
-                }
-
-                // Geometric sanity check against composer
-                const comp = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
-                if (comp) {
-                    const compRect = comp.getBoundingClientRect();
-                    // Send button cannot be located to the far left of composer (where attachment/sidebar buttons sit)
-                    if (rect.x < compRect.left) {
-                        return { found: false, error: "BUTTON_GEOMETRICALLY_INCONSISTENT_LEFT" };
+                    if (!sendBtn) {
+                        const buttons = document.querySelectorAll('button');
+                        for (const b of buttons) {
+                            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                            const testId = (b.getAttribute('data-testid') || '').toLowerCase();
+                            if (aria === 'send prompt' || aria === 'send message' || aria === '傳送提示' || aria === '傳送提示詞' || aria === '傳送訊息' || testId === 'send-button') {
+                                sendBtn = b;
+                                break;
+                            }
+                        }
                     }
-                }
+                    if (!sendBtn) {
+                        return { found: false, error: "NO_STRICT_SEND_BUTTON_FOUND" };
+                    }
 
-                return {
-                    found: true,
-                    disabled: disabled,
-                    x: Math.round(rect.x + rect.width / 2),
-                    y: Math.round(rect.y + rect.height / 2),
-                    rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
-                };
-            })()
-            """
-            btn_info = None
-            send_attempt_start = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - send_attempt_start < 4.0:
-                btn_info = await self.evaluate(button_query_js) or {}
-                if btn_info.get("found") and not btn_info.get("disabled"):
-                    break
-                await asyncio.sleep(0.2)
+                    const disabled = sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true';
+                    const rect = sendBtn.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) {
+                        return { found: false, error: "SEND_BUTTON_ZERO_DIMENSION" };
+                    }
 
-            if not btn_info or not btn_info.get("found") or btn_info.get("disabled"):
-                error_msg = btn_info.get("error") if btn_info else "Send button not found"
-                if btn_info and btn_info.get("disabled"):
-                    error_msg = "Send button remained disabled after prompt insertion"
-                return {
-                    "success": False,
-                    "status": "SUBMISSION_NOT_COMMITTED",
-                    "error": f"SUBMISSION_NOT_COMMITTED: {error_msg}."
-                }
+                    // Geometric sanity check against composer
+                    const comp = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                    if (comp) {
+                        const compRect = comp.getBoundingClientRect();
+                        // Send button cannot be located to the far left of composer (where attachment/sidebar buttons sit)
+                        if (rect.x < compRect.left) {
+                            return { found: false, error: "BUTTON_GEOMETRICALLY_INCONSISTENT_LEFT" };
+                        }
+                    }
 
-            # 4. Native CDP Submission Dispatch
-            x = btn_info.get("x")
-            y = btn_info.get("y")
+                    return {
+                        found: true,
+                        disabled: disabled,
+                        x: Math.round(rect.x + rect.width / 2),
+                        y: Math.round(rect.y + rect.height / 2),
+                        rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+                    };
+                })()
+                """
+                btn_info = None
+                send_attempt_start = asyncio.get_event_loop().time()
+                while asyncio.get_event_loop().time() - send_attempt_start < 3.0:
+                    btn_info = await self.evaluate(button_query_js) or {}
+                    if btn_info.get("found") and not btn_info.get("disabled"):
+                        break
+                    await asyncio.sleep(0.2)
 
-            # Dispatch native CDP Mouse click on verified send button
-            if x is not None and y is not None:
-                await self.send_cdp_command("Input.dispatchMouseEvent", {
-                    "type": "mouseMoved", "x": x, "y": y
-                })
-                await self.send_cdp_command("Input.dispatchMouseEvent", {
-                    "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1
+                # 4. Native CDP Submission Dispatch
+                # Dispatch mouse click if button found & enabled
+                if btn_info and btn_info.get("found") and not btn_info.get("disabled"):
+                    x = btn_info.get("x")
+                    y = btn_info.get("y")
+                    if x is not None and y is not None:
+                        await self.send_cdp_command("Input.dispatchMouseEvent", {
+                            "type": "mouseMoved", "x": x, "y": y
+                        })
+                        await self.send_cdp_command("Input.dispatchMouseEvent", {
+                            "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1
+                        })
+                        await asyncio.sleep(0.05)
+                        await self.send_cdp_command("Input.dispatchMouseEvent", {
+                            "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1
+                        })
+                        logger.info(f"Native CDP mouse click dispatched at ({x}, {y})")
+
+                # Always dispatch native CDP Enter key on focused composer
+                await self.send_cdp_command("Input.dispatchKeyEvent", {
+                    "type": "rawKeyDown",
+                    "windowsVirtualKeyCode": 13,
+                    "nativeVirtualKeyCode": 13,
+                    "key": "Enter",
+                    "code": "Enter",
+                    "text": "\r",
+                    "unmodifiedText": "\r"
                 })
                 await asyncio.sleep(0.05)
-                await self.send_cdp_command("Input.dispatchMouseEvent", {
-                    "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1
+                await self.send_cdp_command("Input.dispatchKeyEvent", {
+                    "type": "keyUp",
+                    "windowsVirtualKeyCode": 13,
+                    "nativeVirtualKeyCode": 13,
+                    "key": "Enter",
+                    "code": "Enter"
                 })
-                logger.info(f"Native CDP mouse click dispatched at ({x}, {y})")
 
-            # Also dispatch native CDP Enter key on focused prompt
-            await self.send_cdp_command("Input.dispatchKeyEvent", {
-                "type": "rawKeyDown",
-                "windowsVirtualKeyCode": 13,
-                "nativeVirtualKeyCode": 13,
-                "key": "Enter",
-                "code": "Enter",
-                "text": "\r",
-                "unmodifiedText": "\r"
-            })
-            await asyncio.sleep(0.05)
-            await self.send_cdp_command("Input.dispatchKeyEvent", {
-                "type": "keyUp",
-                "windowsVirtualKeyCode": 13,
-                "nativeVirtualKeyCode": 13,
-                "key": "Enter",
-                "code": "Enter"
-            })
-
-            # 5. Positive SEND_VERIFIED assertion (poll up to 4.0s)
+            # 5. Positive SEND_VERIFIED assertion (poll up to 5.0s)
             verify_send_js = f"""
             (() => {{
                 const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
@@ -396,12 +399,16 @@ class UniversalCDPClient:
                 const targetFp = {json.dumps(fingerprint)};
 
                 if (userArticles.length > 0) {{
-                    const lastUserText = userArticles[userArticles.length - 1].innerText.replace(/\\s+/g, ' ').trim();
-                    if (targetNonce && lastUserText.includes(targetNonce)) {{
-                        userMessageMatched = true;
-                        matchedNonce = true;
-                    }} else if (!targetNonce && (lastUserText.includes(targetFp) || (targetFp.length > 30 && targetFp.includes(lastUserText)))) {{
-                        userMessageMatched = true;
+                    for (let i = userArticles.length - 1; i >= 0; i--) {{
+                        const uText = userArticles[i].innerText.replace(/\\s+/g, ' ').trim();
+                        if (targetNonce && uText.includes(targetNonce)) {{
+                            userMessageMatched = true;
+                            matchedNonce = true;
+                            break;
+                        }} else if (!targetNonce && targetFp && (uText.includes(targetFp) || (targetFp.length > 30 && targetFp.includes(uText)))) {{
+                            userMessageMatched = true;
+                            break;
+                        }}
                     }}
                 }}
                 const isCleared = (promptText.length === 0);
@@ -416,19 +423,24 @@ class UniversalCDPClient:
             """
             send_verified = False
             verify_start = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - verify_start < 4.0:
+            while asyncio.get_event_loop().time() - verify_start < 5.0:
                 v_res = await self.evaluate(verify_send_js) or {}
-                if v_res.get("verified"):
+                if v_res.get("verified") or v_res.get("matchedNonce"):
                     send_verified = True
                     logger.info(f"✅ SEND_VERIFIED: Message confirmed committed to conversation DOM: {v_res}")
                     break
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
 
             if not send_verified:
+                error_msg = "Send action dispatched but neither composer cleared nor matching user message appeared in DOM"
+                if btn_info and btn_info.get("error"):
+                    error_msg = btn_info.get("error")
+                elif btn_info and btn_info.get("disabled"):
+                    error_msg = "Send button remained disabled after prompt insertion"
                 return {
                     "success": False,
                     "status": "SUBMISSION_NOT_COMMITTED",
-                    "error": f"SUBMISSION_NOT_COMMITTED: Send action dispatched but neither composer cleared nor matching user message (nonce={probe_nonce}) appeared in DOM."
+                    "error": f"SUBMISSION_NOT_COMMITTED: {error_msg} (nonce={probe_nonce})."
                 }
 
         # 5. Wait for generation to start and finish
