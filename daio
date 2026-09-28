@@ -253,6 +253,7 @@ def do_dispatch(
     request_id: Optional[str] = None,
     requested_role: str = "ENGINEERING_EXECUTION",
     allowed_scope: Optional[list[str]] = None,
+    completion_evidence_path: Optional[str] = None,
 ):
     """Submit root work through the canonical durable supervisor inbox."""
     from daio_closed_loop.inbox import DAIORootWorkInbox, RootWorkRequest
@@ -277,7 +278,10 @@ def do_dispatch(
         requested_role=requested_role,
         allowed_scope=list(allowed_scope or cfg.get("allowed_scope", [])),
         architect_endpoint=endpoint,
-        metadata={"dispatch_source": "daio-cli"},
+        metadata={
+            "dispatch_source": "daio-cli",
+            **({"completion_evidence_path": completion_evidence_path} if completion_evidence_path else {}),
+        },
     )
     submitted = DAIORootWorkInbox.submit_request(PROJECT_ROOT / "_daio" / "inbox", request)
     print(json.dumps({
@@ -289,9 +293,65 @@ def do_dispatch(
     }, ensure_ascii=False))
 
 
+def do_takeover():
+    """Discover and bind a project to one unambiguous active ChatGPT conversation."""
+    from daio_closed_loop.adapters.bridge import extract_chatgpt_identifiers, fetch_cdp_tabs
+
+    git_root_res = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], cwd=PROJECT_ROOT, capture_output=True, text=True
+    )
+    if git_root_res.returncode != 0:
+        raise RuntimeError("DAIO takeover requires a Git repository")
+    git_root = Path(git_root_res.stdout.strip()).resolve()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=git_root, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    tabs = fetch_cdp_tabs(cdp_port=9222)
+    candidates = []
+    for tab in tabs:
+        project_id, conversation_id = extract_chatgpt_identifiers(str(tab.get("url", "")))
+        if project_id and conversation_id:
+            candidates.append((project_id, conversation_id, tab.get("url", "")))
+    unique = sorted(set(candidates))
+    if len(unique) != 1:
+        raise RuntimeError(
+            f"DAIO takeover requires exactly one active ChatGPT Project conversation; discovered {len(unique)}"
+        )
+    project_id, conversation_id, canonical_url = unique[0]
+
+    daio_dir = git_root / "_daio"
+    daio_dir.mkdir(parents=True, exist_ok=True)
+    (daio_dir / "evidence").mkdir(parents=True, exist_ok=True)
+    cfg_path = daio_dir / "daio_config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+    cfg.setdefault("project_name", git_root.name)
+    cfg.setdefault("project_id", git_root.name)
+    cfg.setdefault("provider", "AUTO")
+    cfg.setdefault("test_gate_command", "pytest tests/ -q")
+    cfg.setdefault("allowed_scope", ["src/**", "tests/**"])
+    cfg["architect_endpoint"] = {
+        "provider": "CHATGPT_WEB",
+        "project_id": project_id,
+        "chatgpt_project_id": project_id,
+        "conversation_id": conversation_id,
+        "canonical_url": canonical_url,
+        "routing_policy": "EXACT_CONVERSATION",
+    }
+    cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(json.dumps({
+        "status": "DAIO_READY",
+        "project_root": str(git_root),
+        "repository_head": head,
+        "project_id": project_id,
+        "conversation_id": conversation_id,
+        "routing_policy": "EXACT_CONVERSATION",
+    }, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description="DAIO One-Click CLI (Generic DAIO v2.1)")
-    parser.add_argument("action", nargs="?", default="start", choices=["start", "stop", "init", "doctor", "status", "daemon-status", "board", "run", "loop", "rpc-status", "rpc-publish", "dispatch", "create-work"],
+    parser.add_argument("action", nargs="?", default="start", choices=["start", "stop", "init", "doctor", "status", "daemon-status", "board", "run", "loop", "rpc-status", "rpc-publish", "dispatch", "create-work", "takeover"],
                         help="Action to perform: start, stop, init, doctor, status, daemon-status, board, rpc-status, rpc-publish, dispatch")
     parser.add_argument("--project", "-C", default=os.environ.get("DAIO_PROJECT_ROOT"), help="Target project root directory (default: current working directory)")
     parser.add_argument("--daemon", "-d", action="store_true", help="Run supervisor in detached background daemon mode")
@@ -304,6 +364,7 @@ def main():
     parser.add_argument("--requested-action", help="Engineering or architect action to execute")
     parser.add_argument("--role", default="ENGINEERING_EXECUTION", choices=["ENGINEERING_EXECUTION", "LEAD_ARCHITECT_REVIEW"], help="Initial DAIO role")
     parser.add_argument("--allow", action="append", dest="allowed_scope", help="Allowed workspace glob; repeat as needed")
+    parser.add_argument("--completion-evidence", help="Project-relative JSON evidence file containing stdout")
     args = parser.parse_args()
 
     global PROJECT_ROOT
@@ -333,7 +394,10 @@ def main():
             request_id=args.request_id,
             requested_role=args.role,
             allowed_scope=args.allowed_scope,
+            completion_evidence_path=args.completion_evidence,
         )
+    elif args.action == "takeover":
+        do_takeover()
     elif args.action in ["start", "loop", "run"]:
         do_start(daemon=args.daemon)
     elif args.action == "board":
@@ -346,4 +410,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -27,6 +27,7 @@ def test_dispatch_submits_to_canonical_inbox(tmp_path):
         "--request-id", "hello-connectivity-test",
         "--change-id", "HELLO_E2E",
         "--requested-action", 'Execute print("Hello")',
+        "--completion-evidence", "evidence/hello.json",
     ], cwd=REPO_ROOT, capture_output=True, text=True, check=True)
 
     response = json.loads(result.stdout)
@@ -40,6 +41,7 @@ def test_dispatch_submits_to_canonical_inbox(tmp_path):
     assert payload["allowed_scope"] == ["tests/probe/**"]
     assert payload["architect_endpoint"]["conversation_id"] == "conversation-test"
     assert payload["metadata"]["dispatch_source"] == "daio-cli"
+    assert payload["metadata"]["completion_evidence_path"] == "evidence/hello.json"
 
 
 def test_create_work_is_dispatch_alias(tmp_path):

@@ -188,6 +188,12 @@ class ArchitectBridgeAdapter(ABC):
         """Dispatches a one-way telemetry message without requesting a decision and without waiting for response."""
         raise NotImplementedError
 
+    async def publish_user_visible_completion(
+        self, work: DAIOWorkItem, message_markdown: str, delivery_id: str, timeout_seconds: int = 30
+    ) -> bool:
+        """Publish a terminal update. Implementations must deduplicate by delivery_id."""
+        return False
+
 
 def normalize_canonical_url(url_str: Optional[str]) -> Optional[str]:
     """Strip any surrounding Markdown link wrapping or angle brackets from URL."""
@@ -654,6 +660,36 @@ class ChromeCDPBridgeAdapter(ArchitectBridgeAdapter):
             logger.warning(f"Failed to dispatch telemetry via CDP bridge: {ex}")
             return False
 
+    async def publish_user_visible_completion(
+        self, work: DAIOWorkItem, message_markdown: str, delivery_id: str, timeout_seconds: int = 30
+    ) -> bool:
+        UniversalCDPClient = self._get_cdp_client_class()
+        effective_endpoint = dict(self.endpoint)
+        effective_endpoint.update(work.architect_endpoint or {})
+        project_id = effective_endpoint.get("chatgpt_project_id") or effective_endpoint.get("project_id")
+        conversation_id = effective_endpoint.get("conversation_id")
+        if not project_id or not conversation_id:
+            logger.error("User-visible completion rejected: exact project_id and conversation_id are required")
+            return False
+        try:
+            ws_url, _, _ = discover_tab_by_endpoint(
+                endpoint=effective_endpoint,
+                url_pattern=self.url_pattern,
+                cdp_port=self.cdp_port,
+                max_retries=self.max_discovery_retries,
+            )
+            client = UniversalCDPClient(ws_url)
+            await client.connect()
+            try:
+                nonce = f"DAIO-DELIVERY-{delivery_id}"
+                result = await client.post_message_only(f"[{nonce}]\n\n{message_markdown}", probe_nonce=nonce)
+                return bool(result and result.get("success"))
+            finally:
+                await client.close()
+        except Exception as ex:
+            logger.warning(f"User-visible completion delivery failed closed: {ex}")
+            return False
+
 
 class MockArchitectBridgeAdapter(ArchitectBridgeAdapter):
     """Mock bridge for deterministic unit testing."""
@@ -664,6 +700,7 @@ class MockArchitectBridgeAdapter(ArchitectBridgeAdapter):
         ]
         self.call_history: List[str] = []
         self.telemetry_history: List[str] = []
+        self.completion_history: List[Tuple[str, str]] = []
 
     async def transmit_review_request(self, work: DAIOWorkItem, report_markdown: str, timeout_seconds: int = 240) -> ArchitectDecision:
         self.call_history.append(report_markdown)
@@ -673,6 +710,13 @@ class MockArchitectBridgeAdapter(ArchitectBridgeAdapter):
 
     async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
         self.telemetry_history.append(telemetry_markdown)
+        return True
+
+    async def publish_user_visible_completion(
+        self, work: DAIOWorkItem, message_markdown: str, delivery_id: str, timeout_seconds: int = 30
+    ) -> bool:
+        if not any(item[0] == delivery_id for item in self.completion_history):
+            self.completion_history.append((delivery_id, message_markdown))
         return True
 
 
@@ -739,4 +783,3 @@ class GeminiArchitectBridgeAdapter(ArchitectBridgeAdapter):
     async def emit_telemetry(self, work: DAIOWorkItem, telemetry_markdown: str, timeout_seconds: int = 30) -> bool:
         logger.info(f"📡 Gemini Architect Telemetry recorded for work {work.work_id}: {telemetry_markdown[:120]}...")
         return True
-

@@ -31,6 +31,7 @@ from .adapters.executor import EngineeringExecutorAdapter, SubprocessWorkspaceEx
 from .adapters.bridge import ArchitectBridgeAdapter, ChromeCDPBridgeAdapter, MockArchitectBridgeAdapter
 from .adapters.factory import create_engineering_agent_adapter, create_architect_bridge_adapter
 from .orchestrator import DAIOClosedLoopOrchestrator
+from .completion_delivery import deliver_user_visible_completion
 
 
 logger = logging.getLogger("DAIO_Persistent_Worker")
@@ -154,6 +155,20 @@ class DAIOPersistentWorker:
                 worker_id=self.worker_id
             )
             logger.info(f"🏁 WORK_ITEM_COMPLETED: work_id={final_work.work_id}, status={final_work.status.value}, decision={final_work.last_decision}")
+
+            if final_work.status in {DAIOStatus.COMPLETED, DAIOStatus.HUMAN_GATE_REQUIRED, DAIOStatus.BLOCKED}:
+                try:
+                    delivered = await deliver_user_visible_completion(self.store, self.bridge, final_work)
+                except Exception as ex:
+                    delivered = False
+                    logger.warning(
+                        f"USER_VISIBLE_COMPLETION_DELIVERY rejected or deferred for "
+                        f"work_id={final_work.work_id}: {ex}"
+                    )
+                logger.info(
+                    f"USER_VISIBLE_COMPLETION_DELIVERY: work_id={final_work.work_id}, "
+                    f"result={'DELIVERED' if delivered else 'PENDING_RETRY'}"
+                )
 
             # If work completed and authorized next phase, automatically create next work item in durable queue
             if final_work.status == DAIOStatus.COMPLETED and final_work.last_decision == "APPROVE":

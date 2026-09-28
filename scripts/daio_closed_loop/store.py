@@ -248,6 +248,23 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
                 metadata TEXT NOT NULL
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daio_user_visible_deliveries (
+                delivery_id TEXT PRIMARY KEY,
+                work_id TEXT NOT NULL,
+                execution_attempt_id TEXT,
+                fencing_token INTEGER NOT NULL,
+                work_revision INTEGER NOT NULL,
+                project_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                delivered_at TEXT
+            )
+        """)
         # Auto-migration for schema evolutions
         cursor.execute("PRAGMA table_info(daio_work_items)")
         existing_cols = {col["name"] for col in cursor.fetchall()}
@@ -276,6 +293,43 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
         if "handoff_contract" not in existing_cols:
             cursor.execute("ALTER TABLE daio_work_items ADD COLUMN handoff_contract TEXT")
 
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+
+    def reserve_user_visible_delivery(self, delivery: Dict[str, Any]) -> str:
+        """Durably reserve one completion publication; returns its current state."""
+        conn = self._get_connection()
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        conn.execute(
+            """INSERT OR IGNORE INTO daio_user_visible_deliveries
+               (delivery_id, work_id, execution_attempt_id, fencing_token, work_revision,
+                project_id, conversation_id, status, payload, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)""",
+            (delivery["delivery_id"], delivery["work_id"], delivery.get("execution_attempt_id"),
+             delivery["fencing_token"], delivery["work_revision"], delivery["project_id"],
+             delivery["conversation_id"], json.dumps(delivery["payload"], ensure_ascii=False), now, now),
+        )
+        row = conn.execute(
+            "SELECT status FROM daio_user_visible_deliveries WHERE delivery_id = ?",
+            (delivery["delivery_id"],),
+        ).fetchone()
+        conn.commit()
+        if not self._shared_conn:
+            conn.close()
+        return str(row["status"])
+
+    def mark_user_visible_delivery(self, delivery_id: str, status: str) -> None:
+        conn = self._get_connection()
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        delivered_at = now if status == "DELIVERED" else None
+        conn.execute(
+            """UPDATE daio_user_visible_deliveries
+               SET status = ?, attempt_count = attempt_count + 1, updated_at = ?,
+                   delivered_at = COALESCE(?, delivered_at)
+               WHERE delivery_id = ?""",
+            (status, now, delivered_at, delivery_id),
+        )
         conn.commit()
         if not self._shared_conn:
             conn.close()
@@ -1273,6 +1327,5 @@ class SqliteDAIOWorkStore(DAIOWorkStore):
             queue_depth=row["queue_depth"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
-
 
 
