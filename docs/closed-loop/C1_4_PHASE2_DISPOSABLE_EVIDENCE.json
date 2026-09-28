@@ -1,0 +1,240 @@
+{
+  "work_id": "c1.4-phase2-disposable-001",
+  "attempt_a": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+  "backend_a": "antigravity_cli",
+  "capacity_outcome": "BACKEND_UNAVAILABLE",
+  "tests_after_a": "NOT_RUN",
+  "failure_budget_before": 1,
+  "failure_budget_after": 1,
+  "max_attempts": 3,
+  "checkpoint_id": "checkpoint-b3f3d73c689272a7dcd9d3683c663e50c3fa59c4a788fc3085776b17f39841e2",
+  "checkpoint_sha256": "b3f3d73c689272a7dcd9d3683c663e50c3fa59c4a788fc3085776b17f39841e2",
+  "checkpoint_hash_verified": true,
+  "quiescence_a": "VERIFIED_FAKE_ISOLATION_REVOKED",
+  "authorization_transition": [
+    "manual-approval-A",
+    "manual-approval-B"
+  ],
+  "attempt_b": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+  "backend_b": "codex_cli",
+  "fences": [
+    1,
+    2,
+    3
+  ],
+  "stale_a_rejected": true,
+  "reconstruction_ack_verified": true,
+  "resume_point": "propose-arithmetic",
+  "final_status": "COMPLETED",
+  "final_updated_at": "2026-09-28T06:00:02.877412+00:00",
+  "events": [
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 1,
+      "work_revision": 1,
+      "execution_attempt_id": null,
+      "fencing_token": 0,
+      "event": "ENROLLED",
+      "created_at": "2026-09-28T06:00:02.756619+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 2,
+      "work_revision": 2,
+      "execution_attempt_id": null,
+      "fencing_token": 0,
+      "event": "BACKEND_AUTHORIZED",
+      "created_at": "2026-09-28T06:00:02.757977+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 3,
+      "work_revision": 3,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "ATTEMPT_CREATED",
+      "created_at": "2026-09-28T06:00:02.758942+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 4,
+      "work_revision": 4,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "RECONSTRUCTION_VALIDATED",
+      "created_at": "2026-09-28T06:00:02.771602+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 5,
+      "work_revision": 5,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "EXECUTION_STARTED",
+      "created_at": "2026-09-28T06:00:02.783581+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 6,
+      "work_revision": 6,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "BACKEND_UNAVAILABLE",
+      "created_at": "2026-09-28T06:00:02.784903+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 7,
+      "work_revision": 7,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "QUIESCENCE_VERIFIED",
+      "created_at": "2026-09-28T06:00:02.788217+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 8,
+      "work_revision": 8,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "CHECKPOINT_PUBLISHED",
+      "created_at": "2026-09-28T06:00:02.799913+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 9,
+      "work_revision": 9,
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 1,
+      "event": "BACKEND_AUTHORIZED",
+      "created_at": "2026-09-28T06:00:02.803129+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 10,
+      "work_revision": 10,
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "fencing_token": 2,
+      "event": "ATTEMPT_CREATED",
+      "created_at": "2026-09-28T06:00:02.804143+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 11,
+      "work_revision": 11,
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "fencing_token": 2,
+      "event": "RECONSTRUCTION_VALIDATED",
+      "created_at": "2026-09-28T06:00:02.839893+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 12,
+      "work_revision": 12,
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "fencing_token": 2,
+      "event": "EXECUTION_STARTED",
+      "created_at": "2026-09-28T06:00:02.852833+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 13,
+      "work_revision": 13,
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "fencing_token": 2,
+      "event": "SUCCESS",
+      "created_at": "2026-09-28T06:00:02.854682+00:00"
+    },
+    {
+      "work_id": "c1.4-phase2-disposable-001",
+      "event_sequence": 14,
+      "work_revision": 14,
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "fencing_token": 3,
+      "event": "COMPLETED",
+      "created_at": "2026-09-28T06:00:02.877412+00:00"
+    }
+  ],
+  "attempts": [
+    {
+      "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "work_id": "c1.4-phase2-disposable-001",
+      "previous_attempt_id": null,
+      "fencing_token": 1,
+      "backend": "{\"adapter\":\"AntigravityCLIAdapter\",\"adapter_version\":\"phase2-fake\",\"backend_id\":\"antigravity_cli\",\"execution_mode\":\"PROPOSAL_ONLY\",\"transport\":\"CLI\"}",
+      "authorization_id": "manual-approval-A",
+      "started_at": "2026-09-28T06:00:02.758741+00:00",
+      "outcome": "BACKEND_UNAVAILABLE",
+      "tests": "NOT_RUN",
+      "quiescence": "TERMINATED",
+      "receipt_id": "fake-isolation-attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "quiescence_method": "ISOLATION_REVOKED",
+      "reconstruction_sha256": "4188bebc4a0bece252d13d57a1384fba99b89e79e07e43012ad060ae3955dbd3",
+      "result_sha256": null
+    },
+    {
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "work_id": "c1.4-phase2-disposable-001",
+      "previous_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+      "fencing_token": 2,
+      "backend": "{\"adapter\":\"CodexCLIAdapter\",\"adapter_version\":\"phase2-fake\",\"backend_id\":\"codex_cli\",\"execution_mode\":\"PROPOSAL_ONLY\",\"transport\":\"CLI\"}",
+      "authorization_id": "manual-approval-B",
+      "started_at": "2026-09-28T06:00:02.803933+00:00",
+      "outcome": "SUCCESS",
+      "tests": "NOT_RUN",
+      "quiescence": "TERMINATED",
+      "receipt_id": "fake-isolation-attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "quiescence_method": "ISOLATION_REVOKED",
+      "reconstruction_sha256": "4188bebc4a0bece252d13d57a1384fba99b89e79e07e43012ad060ae3955dbd3",
+      "result_sha256": "d402808031cf9bfba8e1fe3a04b79c9fac9227e34dd36253c7a20ee665ca2bfb"
+    }
+  ],
+  "reconstruction_ack": {
+    "token": {
+      "work_id": "c1.4-phase2-disposable-001",
+      "work_revision": 10,
+      "event_sequence": 10,
+      "execution_attempt_id": "attempt-76ab87e03c0c40ed944478891b4d3d78",
+      "fencing_token": 2
+    },
+    "checkpoint_id": "checkpoint-b3f3d73c689272a7dcd9d3683c663e50c3fa59c4a788fc3085776b17f39841e2",
+    "checkpoint_sha256": "b3f3d73c689272a7dcd9d3683c663e50c3fa59c4a788fc3085776b17f39841e2",
+    "manifest_sha256": "4188bebc4a0bece252d13d57a1384fba99b89e79e07e43012ad060ae3955dbd3"
+  },
+  "checkpoint_payload": {
+    "contract_version": "daio-checkpoint/v1",
+    "event_sequence": 7,
+    "execution_attempt_id": "attempt-9e566abea69b4a70b2db7a2d0029f736",
+    "fencing_token": 1,
+    "kind": "CAPACITY_INTERRUPTION",
+    "manifest": {
+      "completed_steps": [
+        "prepare-fixture"
+      ],
+      "evidence_sha256": "091f0ce6003b42e4bd8783b8666c76d6bfca653771a8fc84f315010615535f5e",
+      "frozen_sha256": "71de25a0e2bffeac5d7d6e22187c25d383c378646be02079bf799eeefb3b38a0",
+      "head_sha": "7185b165dec5c64d42507274f8f3b006c51378ef",
+      "next_step": "propose-arithmetic",
+      "policy_sha256": "a3375fd665cae1e5adcaf872036fd6cc1e7be7fcee5cfd1e40651ab19f6dd034",
+      "repository_id": "c14-disposable-repo",
+      "scope_sha256": "ee8008255ba481e6480ca573ce6778857d7211c4019b01734789047bd6d5b429",
+      "workspace_sha256": "4b57f405f378184436d5fd7020d376e61c62b1b0868eebac18a3b8c77335542c"
+    },
+    "work_id": "c1.4-phase2-disposable-001",
+    "work_revision": 7
+  },
+  "proposal": {
+    "step": "propose-arithmetic",
+    "proposal": "disposable arithmetic: 2 + 2 = 4"
+  },
+  "negative_cases": {
+    "A": "PASSED",
+    "B": "PASSED",
+    "C": "PASSED",
+    "D": "PASSED",
+    "E": "PASSED",
+    "F": "PASSED"
+  },
+  "execution_mode": "FAKE_PROPOSAL_ONLY",
+  "review_authorization_id": "review-complete"
+}

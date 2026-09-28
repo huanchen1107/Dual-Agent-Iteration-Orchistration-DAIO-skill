@@ -307,6 +307,35 @@ class DurableHandoff:
             new_token = self._event(conn, token.work_id, 'CHECKPOINT_PUBLISHED')
             return new_token, checkpoint_id
 
+    def complete(self, token, review_authorization_id, observe, verify_termination):
+        """Trusted review accepts a proposal-only deliverable, never applies edits.
+
+        Completion requires successful result provenance and verified termination.
+        A current token is sufficient after result publication; an expired lease
+        grants no further backend execution authority.
+        """
+        identifier(review_authorization_id)
+        with self._transaction() as conn:
+            _, ctl = self._validate(conn, token)
+            attempt = conn.execute("SELECT * FROM daio_backend_attempts WHERE execution_attempt_id=?",
+                                   (token.execution_attempt_id,)).fetchone()
+            if (ctl['state'] != 'RESULT_RECORDED' or not attempt
+                    or attempt['outcome'] != Outcome.SUCCESS.value or not attempt['result_sha256']):
+                raise SafetyError("Completion requires a successful proposal awaiting review")
+            if observe().manifest() != json.loads(ctl['manifest']):
+                raise SafetyError("Completion workspace measurement mismatch")
+            receipt = verify_termination(token.execution_attempt_id)
+            receipt.validate(token.execution_attempt_id)
+            conn.execute("INSERT INTO daio_backend_authorizations VALUES(?,?,?,?)",
+                         (review_authorization_id, token.work_id, attempt['backend'], ctl['checkpoint_id']))
+            conn.execute("UPDATE daio_backend_attempts SET quiescence='TERMINATED',receipt_id=?,quiescence_method=? WHERE execution_attempt_id=?",
+                         (receipt.receipt_id, receipt.method, token.execution_attempt_id))
+            conn.execute("UPDATE daio_backend_control SET state='COMPLETED',quiescence='TERMINATED',authorization_id=? WHERE work_id=?",
+                         (review_authorization_id, token.work_id))
+            conn.execute("""UPDATE daio_work_items SET status='COMPLETED',fencing_token=fencing_token+1,
+                         lease_id=NULL,lease_expires_at=NULL,claimed_by=NULL WHERE work_id=?""", (token.work_id,))
+            return self._event(conn, token.work_id, 'COMPLETED')
+
     def stop(self, token, status='STOP'):
         """Trusted policy revocation invalidates authority without claiming process termination."""
         if status not in {'STOP', 'FROZEN', 'SUPERSEDED', 'HUMAN_GATE_REQUIRED'}:
