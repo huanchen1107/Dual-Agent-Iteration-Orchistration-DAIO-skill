@@ -130,3 +130,22 @@ additional Free-plan daily write allowance. At one normal five-minute
 heartbeat this is at most `86,400 / 300 = 288` status writes per day, before
 additional material-transition writes; unchanged observations add zero KV
 writes.
+
+## ChatGPT `dispatch_work` action connection
+
+The relay exposes the typed action contract at `GET /openapi.json`. The
+Native Dispatch operation is `POST /api/v1/dispatch/ticket` with
+`operationId: dispatch_work` and schema `DispatchWorkRequest`.
+
+ChatGPT must supply a real, single-use WebAuthn action ticket in the
+`action_ticket` request field (native clients may use `X-Action-Ticket`). The
+relay validates that ticket against the authoritative credential/binding
+registry, project/conversation context, action name, expiry, task hash, and
+idempotency key. A missing, invented, expired, or reused ticket fails closed.
+
+To expose the operation in ChatGPT, an authorized user must create/connect a
+custom GPT Action or custom MCP app using the production `/openapi.json`
+metadata and allow the relay domain. This repository cannot install or enable
+that ChatGPT-side connection. The real field acceptance remains blocked until
+the connected ChatGPT conversation visibly exposes `dispatch_work` and invokes
+it; do not create a work item manually as a substitute.

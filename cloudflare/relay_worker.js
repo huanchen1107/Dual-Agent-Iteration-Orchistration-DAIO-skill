@@ -705,7 +705,31 @@ const OPENAPI_SPEC = {
     "/api/v1/auth/enroll/verify": { post: { summary: "Register New Passkey Credential", operationId: "registerPasskey" } },
     "/api/v1/auth/credentials": { get: { summary: "List Registered Passkeys (Admin)", operationId: "listPasskeys" } },
     "/api/v1/auth/reset": { post: { summary: "Reset Project Passkeys & Tickets (Admin)", operationId: "resetPasskeys" } },
-    "/api/v1/dispatch/ticket": { post: { summary: "Issue pre-admission native dispatch ticket", operationId: "issueDispatchTicket" } },
+    "/api/v1/dispatch/ticket": {
+      post: {
+        summary: "dispatch_work: issue a pre-admission native dispatch ticket",
+        description: "Creates a short-lived dispatch ticket only when action_ticket is a valid, unexpired, single-use WebAuthn action ticket bound to the authoritative project and conversation. The caller cannot establish identity or binding authority.",
+        operationId: "dispatch_work",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/DispatchWorkRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "201": { description: "Dispatch ticket issued" },
+          "200": { description: "Existing idempotent dispatch ticket reused" },
+          "400": { description: "Malformed request" },
+          "401": { description: "Missing or invalid WebAuthn action ticket" },
+          "403": { description: "Binding or project/conversation mismatch" },
+          "409": { description: "Idempotency key mutation or ticket conflict" },
+        },
+      },
+    },
     "/api/v1/dispatch": { get: { summary: "Poll native dispatch tickets (Mac outbound)", operationId: "pollDispatchTickets" } },
     "/api/v1/dispatch/{ticket_id}/ack": { post: { summary: "Acknowledge native dispatch admission", operationId: "ackDispatchTicket" } },
     "/api/v1/decisions": {
@@ -713,6 +737,32 @@ const OPENAPI_SPEC = {
       get: { summary: "Poll Pending Decisions (Mac Outbound)", operationId: "pollDecisions" },
     },
     "/api/v1/decisions/{decision_id}/ack": { post: { summary: "Acknowledge Decision Processing (Mac)", operationId: "ackDecision" } },
+  },
+  components: {
+    schemas: {
+      DispatchWorkRequest: {
+        type: "object",
+        required: ["action_ticket", "change_id", "requested_action", "client_idempotency_key"],
+        properties: {
+          action_ticket: {
+            type: "string",
+            minLength: 1,
+            writeOnly: true,
+            description: "Single-use WebAuthn-verified action ticket. Obtain it through the /api/v1/auth/challenge + /api/v1/auth/verify ceremony; never invent or reuse it.",
+          },
+          project_id: { type: "string", description: "Optional context checked against the authoritative binding." },
+          chatgpt_project_id: { type: "string", description: "Optional context checked against the authoritative binding." },
+          conversation_id: { type: "string", description: "Optional context checked against the authoritative binding." },
+          change_id: { type: "string", minLength: 1 },
+          requested_action: { type: "string", minLength: 1 },
+          requested_role: { type: "string", enum: ["ENGINEERING_EXECUTION", "LEAD_ARCHITECT_REVIEW"] },
+          allowed_scope: { type: "array", items: { type: "string" } },
+          metadata: { type: "object", additionalProperties: true },
+          client_idempotency_key: { type: "string", minLength: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
   },
 };
 
@@ -1376,18 +1426,26 @@ export default {
     // checked against the authoritative binding; they never establish it.
     if (path === "/api/v1/dispatch/ticket" && request.method === "POST") {
       const actionTicketHeader = request.headers.get("X-Action-Ticket") || "";
-      if (!authKV || !actionTicketHeader) {
+      if (!authKV) {
         return new Response(JSON.stringify({ error: "Unauthorized", reason: "Verified WebAuthn Action Ticket required" }), { status: 401, headers: corsHeaders });
       }
       try {
         const body = await request.json();
+        // ChatGPT Actions cannot configure a per-call dynamic header. Accept
+        // the same single-use ticket in the typed request body, while keeping
+        // the header form for native clients. Both forms go through the exact
+        // same authoritative KV validation below.
+        const suppliedActionTicket = actionTicketHeader || String(body.action_ticket || "").trim();
+        if (!suppliedActionTicket) {
+          return new Response(JSON.stringify({ error: "Unauthorized", reason: "Verified WebAuthn Action Ticket required" }), { status: 401, headers: corsHeaders });
+        }
         const suppliedProjectId = body.project_id ? String(body.project_id) : null;
-        const actionTicketKey = suppliedProjectId ? `ticket:${suppliedProjectId}:${actionTicketHeader}` : null;
+        const actionTicketKey = suppliedProjectId ? `ticket:${suppliedProjectId}:${suppliedActionTicket}` : null;
         let actionTicketStr = actionTicketKey ? await authKV.get(actionTicketKey) : null;
         if (!actionTicketStr) {
           const ticketKeys = await authKV.list({ prefix: "ticket:" });
           for (const key of ticketKeys.keys) {
-            if (key.name.endsWith(`:${actionTicketHeader}`)) {
+            if (key.name.endsWith(`:${suppliedActionTicket}`)) {
               actionTicketStr = await authKV.get(key.name);
               break;
             }
