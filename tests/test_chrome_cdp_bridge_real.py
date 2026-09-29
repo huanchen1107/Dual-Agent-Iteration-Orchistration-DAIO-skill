@@ -186,4 +186,38 @@ def test_discover_tab_by_endpoint_fail_closed_on_missing_conversation():
     assert "Fail-closed policy prevented dispatch" in str(exc_info.value)
 
 
+def test_discover_tab_by_endpoint_fails_closed_for_duplicate_exact_targets():
+    """A CDP target is not a conversation identity; duplicate exact targets are ambiguous."""
+    from scripts.daio_closed_loop.adapters.bridge import discover_tab_by_endpoint
+    endpoint_url = "https://chatgpt.com/g/project-1/c/conversation-1"
+    mock_tabs = [
+        {"type": "page", "id": "tab-a", "title": "ChatGPT", "url": endpoint_url,
+         "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/tab-a"},
+        {"type": "page", "id": "tab-b", "title": "ChatGPT", "url": endpoint_url,
+         "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/tab-b"},
+    ]
+    with pytest.raises(RuntimeError, match="Routing Ambiguous"):
+        discover_tab_by_endpoint(
+            endpoint={"project_id": "project-1", "conversation_id": "conversation-1",
+                      "canonical_url": endpoint_url, "routing_policy": "EXACT_CONVERSATION"},
+            raw_tabs=mock_tabs,
+        )
+
+
+def test_exact_endpoint_ignores_other_project_or_conversation_tabs():
+    from scripts.daio_closed_loop.adapters.bridge import discover_tab_by_endpoint
+    mock_tabs = [
+        {"type": "page", "id": "wrong-project", "title": "Other", "url": "https://chatgpt.com/g/project-2/c/conversation-1",
+         "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/wrong-project"},
+        {"type": "page", "id": "wrong-conversation", "title": "Other", "url": "https://chatgpt.com/g/project-1/c/conversation-2",
+         "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/wrong-conversation"},
+        {"type": "page", "id": "right", "title": "Right", "url": "https://chatgpt.com/g/project-1/c/conversation-1",
+         "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/right"},
+    ]
+    _, tab_id, _ = discover_tab_by_endpoint(
+        endpoint={"project_id": "project-1", "conversation_id": "conversation-1", "routing_policy": "EXACT_CONVERSATION"},
+        raw_tabs=mock_tabs,
+    )
+    assert tab_id == "right"
+
 

@@ -59,3 +59,19 @@ def test_create_work_is_dispatch_alias(tmp_path):
     response = json.loads(result.stdout)
     assert response["work_id"] == "daio-root-alias-test"
     assert (tmp_path / "_daio" / "inbox" / "alias-test.json").exists()
+
+
+def test_repeated_dispatch_without_explicit_request_id_is_idempotent(tmp_path):
+    config_dir = tmp_path / "_daio"
+    config_dir.mkdir()
+    (config_dir / "daio_config.json").write_text(json.dumps({
+        "project_id": "disposable-project", "allowed_scope": ["tests/**"],
+        "architect_endpoint": {"project_id": "project-1", "conversation_id": "conversation-1"},
+    }), encoding="utf-8")
+    command = [sys.executable, str(REPO_ROOT / "daio"), "dispatch", "-C", str(tmp_path),
+               "--change-id", "HELLO", "--requested-action", 'print("Hello")']
+    first = json.loads(subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout)
+    second = json.loads(subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout)
+    assert first["request_id"] == second["request_id"]
+    assert first["work_id"] == second["work_id"]
+    assert len(list((tmp_path / "_daio" / "inbox").glob("*.json"))) == 1

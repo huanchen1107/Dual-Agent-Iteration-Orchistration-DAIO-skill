@@ -10,6 +10,7 @@ Usage:
 """
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,6 @@ import subprocess
 import sys
 from typing import Optional
 import urllib.request
-import uuid
 
 
 PROJECT_ROOT = Path.cwd()
@@ -263,11 +263,28 @@ def do_dispatch(
     if cfg_file.exists():
         cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
 
-    resolved_request_id = request_id or f"dispatch-{uuid.uuid4().hex[:12]}"
     project_id = str(cfg.get("project_id") or cfg.get("project_name") or PROJECT_ROOT.name)
     endpoint = cfg.get("architect_endpoint", {})
     if not isinstance(endpoint, dict):
         raise ValueError("architect_endpoint must be an object")
+
+    # A repeated logical command must enter the existing inbox as the same root
+    # request.  Callers that intentionally want a new logical work item supply
+    # --request-id; otherwise bind the idempotency key to the routed endpoint and
+    # requested operation.  This is deliberately an ingress key, not a new store.
+    if request_id:
+        resolved_request_id = request_id
+    else:
+        logical_request = json.dumps({
+            "project_id": project_id,
+            "change_id": change_id,
+            "requested_action": requested_action,
+            "requested_role": requested_role,
+            "allowed_scope": list(allowed_scope or cfg.get("allowed_scope", [])),
+            "project_endpoint": endpoint.get("project_id") or endpoint.get("chatgpt_project_id"),
+            "conversation_endpoint": endpoint.get("conversation_id"),
+        }, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        resolved_request_id = "dispatch-" + hashlib.sha256(logical_request.encode("utf-8")).hexdigest()[:24]
 
     request = RootWorkRequest(
         schema_version="daio-root-work/v1",
@@ -293,9 +310,22 @@ def do_dispatch(
     }, ensure_ascii=False))
 
 
+def _source_revision() -> str:
+    """Return the installed Generic DAIO source revision without consulting project Git."""
+    source_root = Path(__file__).resolve().parent
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=source_root, capture_output=True, text=True
+    )
+    return result.stdout.strip() if result.returncode == 0 else "UNKNOWN"
+
+
 def do_takeover():
-    """Discover and bind a project to one unambiguous active ChatGPT conversation."""
-    from daio_closed_loop.adapters.bridge import extract_chatgpt_identifiers, fetch_cdp_tabs
+    """Perform onboarding only; discovery/binding must finish before DAIO_READY."""
+    from daio_closed_loop.adapters.bridge import (
+        extract_chatgpt_identifiers,
+        fetch_cdp_tabs,
+        probe_architect_endpoint,
+    )
 
     git_root_res = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], cwd=PROJECT_ROOT, capture_output=True, text=True
@@ -320,6 +350,23 @@ def do_takeover():
         )
     project_id, conversation_id, canonical_url = unique[0]
 
+    # Do not create a target or a ChatGPT conversation during onboarding.  The
+    # exact existing endpoint must pass a passive bidirectional CDP check first.
+    endpoint = {
+        "provider": "CHATGPT_WEB",
+        "project_id": project_id,
+        "chatgpt_project_id": project_id,
+        "conversation_id": conversation_id,
+        "canonical_url": canonical_url,
+        "routing_policy": "EXACT_CONVERSATION",
+    }
+    probe = probe_architect_endpoint(endpoint=endpoint, cdp_port=9222, auto_recover_closed_tab=False)
+    if not probe.get("success"):
+        raise RuntimeError(
+            "DAIO takeover bidirectional connectivity check failed; onboarding is not bound: "
+            f"{probe.get('error', 'unknown CDP endpoint error')}"
+        )
+
     daio_dir = git_root / "_daio"
     daio_dir.mkdir(parents=True, exist_ok=True)
     (daio_dir / "evidence").mkdir(parents=True, exist_ok=True)
@@ -330,15 +377,26 @@ def do_takeover():
     cfg.setdefault("provider", "AUTO")
     cfg.setdefault("test_gate_command", "pytest tests/ -q")
     cfg.setdefault("allowed_scope", ["src/**", "tests/**"])
-    cfg["architect_endpoint"] = {
-        "provider": "CHATGPT_WEB",
-        "project_id": project_id,
-        "chatgpt_project_id": project_id,
-        "conversation_id": conversation_id,
-        "canonical_url": canonical_url,
-        "routing_policy": "EXACT_CONVERSATION",
-    }
+    cfg["architect_endpoint"] = endpoint
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    onboarding = {
+        "schema_version": "daio-onboarding/v1",
+        "status": "DAIO_READY",
+        "state_history": [
+            "TAKEOVER_REQUESTED", "PROJECT_DISCOVERY", "CANONICAL_REPOSITORY_DISCOVERY",
+            "DAIO_PROVENANCE_VERIFICATION", "PROJECT_REGISTRATION", "CHATGPT_PROJECT_DISCOVERY",
+            "LEAD_ARCHITECT_CONVERSATION_DISCOVERY", "CONVERSATION_BINDING",
+            "BIDIRECTIONAL_CONNECTIVITY_CHECK", "DAIO_READY",
+        ],
+        "project_root": str(git_root),
+        "repository_head": head,
+        "installed_daio_revision": _source_revision(),
+        "architect_endpoint": endpoint,
+        "engineering_started": False,
+    }
+    (daio_dir / "onboarding_state.json").write_text(
+        json.dumps(onboarding, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     print(json.dumps({
         "status": "DAIO_READY",
         "project_root": str(git_root),
@@ -346,6 +404,8 @@ def do_takeover():
         "project_id": project_id,
         "conversation_id": conversation_id,
         "routing_policy": "EXACT_CONVERSATION",
+        "onboarding_state": str(daio_dir / "onboarding_state.json"),
+        "engineering_started": False,
     }, ensure_ascii=False))
 
 

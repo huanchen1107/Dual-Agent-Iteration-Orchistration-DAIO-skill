@@ -375,6 +375,7 @@ def discover_tab_by_endpoint(
             conv_id = canon_conv
 
     def find_matching_tab(tab_list: List[Dict[str, Any]]) -> Optional[Tuple[str, str, str]]:
+        matches: List[Tuple[str, str, str]] = []
         for t in tab_list:
             if t.get("type") != "page":
                 continue
@@ -387,26 +388,32 @@ def discover_tab_by_endpoint(
             # Strict Invariant 1: If BOTH proj_id and conv_id are specified, BOTH must match exactly
             if proj_id and conv_id:
                 if tab_proj == proj_id and tab_conv == conv_id:
-                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                    matches.append((t["webSocketDebuggerUrl"], t["id"], t.get("title", "")))
                 continue
 
             # Strict Invariant 2: If conv_id specified without project_id, conversation must match
             if conv_id and not proj_id:
                 if tab_conv == conv_id:
-                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                    matches.append((t["webSocketDebuggerUrl"], t["id"], t.get("title", "")))
                 continue
 
             # Strict Invariant 3: Project-level routing only when routing_policy allows PROJECT_LEVEL
             if proj_id and not conv_id and routing_policy == "PROJECT_LEVEL":
                 if tab_proj == proj_id:
-                    return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                    matches.append((t["webSocketDebuggerUrl"], t["id"], t.get("title", "")))
                 continue
 
             # Strict Invariant 4: Direct canonical URL match (if neither ID parsed)
             if canonical_url and canonical_url in tab_url:
-                return t["webSocketDebuggerUrl"], t["id"], t.get("title", "")
+                matches.append((t["webSocketDebuggerUrl"], t["id"], t.get("title", "")))
 
-        return None
+        if len(matches) > 1:
+            ids = ", ".join(match[1] for match in matches)
+            raise RuntimeError(
+                "DAIO-004 Exact Conversation Routing Ambiguous: multiple browser targets "
+                f"match the same canonical endpoint ({ids}). Fail-closed policy forbids selection or recovery."
+            )
+        return matches[0] if matches else None
 
     def make_telemetry(selected_id: str, current_tabs: List[Dict[str, Any]], state_label: str = "FOUND") -> Dict[str, Any]:
         after_ids = [t["id"] for t in current_tabs if t.get("type") == "page"]
