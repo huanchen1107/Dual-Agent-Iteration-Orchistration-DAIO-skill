@@ -326,16 +326,26 @@ def do_takeover():
         fetch_cdp_tabs,
         probe_architect_endpoint,
     )
-
-    git_root_res = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], cwd=PROJECT_ROOT, capture_output=True, text=True
+    from daio_closed_loop.onboarding import (
+        AMBIGUOUS_REPOSITORY,
+        REPOSITORY_MISMATCH,
+        discover_repository,
+        read_onboarding_state,
+        validate_repository_evolution,
     )
-    if git_root_res.returncode != 0:
-        raise RuntimeError("DAIO takeover requires a Git repository")
-    git_root = Path(git_root_res.stdout.strip()).resolve()
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=git_root, capture_output=True, text=True, check=True
-    ).stdout.strip()
+
+    # Project identity is independent from a Git resource.  Do not initialize
+    # Git, create a remote, or select a similarly named repository here.
+    project_root = PROJECT_ROOT.resolve()
+    daio_dir = project_root / "_daio"
+    existing_onboarding = read_onboarding_state(daio_dir / "onboarding_state.json")
+    repository = validate_repository_evolution(discover_repository(project_root), existing_onboarding)
+    repository_state = repository["repository_state"]
+    if repository_state in {AMBIGUOUS_REPOSITORY, REPOSITORY_MISMATCH}:
+        raise RuntimeError(
+            f"DAIO takeover repository discovery failed closed: {repository_state}. "
+            "Explicit project-owner repository selection or resolution is required."
+        )
 
     tabs = fetch_cdp_tabs(cdp_port=9222)
     candidates = []
@@ -367,13 +377,12 @@ def do_takeover():
             f"{probe.get('error', 'unknown CDP endpoint error')}"
         )
 
-    daio_dir = git_root / "_daio"
     daio_dir.mkdir(parents=True, exist_ok=True)
     (daio_dir / "evidence").mkdir(parents=True, exist_ok=True)
     cfg_path = daio_dir / "daio_config.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-    cfg.setdefault("project_name", git_root.name)
-    cfg.setdefault("project_id", git_root.name)
+    cfg.setdefault("project_name", project_root.name)
+    cfg.setdefault("project_id", project_root.name)
     cfg.setdefault("provider", "AUTO")
     cfg.setdefault("test_gate_command", "pytest tests/ -q")
     cfg.setdefault("allowed_scope", ["src/**", "tests/**"])
@@ -388,8 +397,9 @@ def do_takeover():
             "LEAD_ARCHITECT_CONVERSATION_DISCOVERY", "CONVERSATION_BINDING",
             "BIDIRECTIONAL_CONNECTIVITY_CHECK", "DAIO_READY",
         ],
-        "project_root": str(git_root),
-        "repository_head": head,
+        "project_root": str(project_root),
+        "repository_state": repository_state,
+        "repository_identity": repository.get("repository_identity"),
         "installed_daio_revision": _source_revision(),
         "architect_endpoint": endpoint,
         "engineering_started": False,
@@ -399,8 +409,9 @@ def do_takeover():
     )
     print(json.dumps({
         "status": "DAIO_READY",
-        "project_root": str(git_root),
-        "repository_head": head,
+        "project_root": str(project_root),
+        "repository_state": repository_state,
+        "repository_identity": repository.get("repository_identity"),
         "project_id": project_id,
         "conversation_id": conversation_id,
         "routing_policy": "EXACT_CONVERSATION",

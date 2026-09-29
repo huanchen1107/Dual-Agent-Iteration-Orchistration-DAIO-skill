@@ -6,7 +6,7 @@ second queue, work store, supervisor, or ChatGPT routing path.
 
 ## Take over a project
 
-From an unregistered Git project, run:
+From an unregistered project directory, run:
 
 ```sh
 daio takeover -C /path/to/project
@@ -20,9 +20,23 @@ DAIO_PROVENANCE_VERIFICATION → PROJECT_REGISTRATION → CHATGPT_PROJECT_DISCOV
 → LEAD_ARCHITECT_CONVERSATION_DISCOVERY → CONVERSATION_BINDING →
 BIDIRECTIONAL_CONNECTIVITY_CHECK → DAIO_READY`.
 
-`DAIO_READY` means the repository HEAD, installed Generic DAIO revision and one
-exact ChatGPT Project/conversation binding were observed.  No engineering work
-is submitted or started by takeover.
+`DAIO_READY` means the installed Generic DAIO revision and one exact ChatGPT
+Project/conversation binding were observed.  Git repository identity is an
+optional engineering resource, separate from ChatGPT Project identity.  No
+engineering work is submitted or started by takeover.
+
+Takeover reports one repository state: `REMOTE_CANONICAL` for one configured
+remote, `LOCAL_REPO_ONLY` for a local Git repository without a remote, or
+`NO_REPOSITORY` when no Git repository exists.  All three can reach
+`DAIO_READY`.  Takeover never initializes Git, creates files or commits,
+creates GitHub repositories, configures a remote, or guesses from similar
+repository names.  Multiple remotes and a conflict with durable repository
+identity fail closed and require an explicit project-owner decision.
+
+A project can evolve from `NO_REPOSITORY` to `LOCAL_REPO_ONLY` to
+`REMOTE_CANONICAL` without changing its DAIO Project or conversation binding.
+Repository-required engineering work is an explicit later transition, not an
+implicit effect of onboarding.
 
 The active browser must already expose exactly one unambiguous ChatGPT Project
 conversation.  Ambiguous or missing bindings fail closed.  A CDP target ID is
