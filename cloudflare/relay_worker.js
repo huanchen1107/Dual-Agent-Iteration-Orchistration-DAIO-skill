@@ -1,3 +1,5 @@
+import { verifyRegistrationResponse, verifyAuthenticationResponse } from '@simplewebauthn/server';
+
 /**
  * Cloudflare Worker: Unified DAIO Remote Relay (RPC-1 Status + RPC-2A Decision Transport + RPC-3C.2 Passkey Decision Ingress)
  *
@@ -590,7 +592,9 @@ async function checkEnrollmentToken() {
     btnEnroll.disabled = true;
     btnEnroll.textContent = 'Prompting Biometrics...';
     try {
-      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const ceremony = await fetch('/api/v1/auth/enroll/challenge?project_id=' + encodeURIComponent(projectId) + '&enrollment_token=' + encodeURIComponent(token), {cache:'no-store'});
+      if (!ceremony.ok) throw new Error('Enrollment challenge unavailable');
+      const challenge = base64urlToBuffer((await ceremony.json()).challenge);
       const userId = crypto.getRandomValues(new Uint8Array(16));
 
       const cred = await navigator.credentials.create({
@@ -701,6 +705,9 @@ const OPENAPI_SPEC = {
     "/api/v1/auth/enroll/verify": { post: { summary: "Register New Passkey Credential", operationId: "registerPasskey" } },
     "/api/v1/auth/credentials": { get: { summary: "List Registered Passkeys (Admin)", operationId: "listPasskeys" } },
     "/api/v1/auth/reset": { post: { summary: "Reset Project Passkeys & Tickets (Admin)", operationId: "resetPasskeys" } },
+    "/api/v1/dispatch/ticket": { post: { summary: "Issue pre-admission native dispatch ticket", operationId: "issueDispatchTicket" } },
+    "/api/v1/dispatch": { get: { summary: "Poll native dispatch tickets (Mac outbound)", operationId: "pollDispatchTickets" } },
+    "/api/v1/dispatch/{ticket_id}/ack": { post: { summary: "Acknowledge native dispatch admission", operationId: "ackDispatchTicket" } },
     "/api/v1/decisions": {
       post: { summary: "Submit Decision via Passkey Ticket or Relay Secret", operationId: "submitDecision" },
       get: { summary: "Poll Pending Decisions (Mac Outbound)", operationId: "pollDecisions" },
@@ -727,6 +734,42 @@ function bytesToBase64url(bytes) {
   let str = '';
   for (const b of bytes) str += String.fromCharCode(b);
   return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// The cockpit predates SimpleWebAuthn and serializes ArrayBuffer response
+// members with snake_case names.  Keep that wire format stable, but convert it
+// at the cryptographic boundary to the browser-standard PublicKeyCredential
+// JSON shape expected by @simplewebauthn/server.  These helpers are deliberately
+// validation-only; no caller supplied key material becomes trusted state.
+function registrationResponseForVerifier(body, credentialId) {
+  const response = body && body.response;
+  if (!response || typeof response !== "object" || !credentialId || !body.raw_id) return null;
+  if (!response.client_data_json || !response.attestation_object) return null;
+  return {
+    id: credentialId,
+    rawId: body.raw_id,
+    type: "public-key",
+    response: {
+      clientDataJSON: response.client_data_json,
+      attestationObject: response.attestation_object,
+      transports: Array.isArray(response.transports) ? response.transports : undefined,
+    },
+  };
+}
+
+function authenticationResponseForVerifier(body, credentialId) {
+  if (!body || !credentialId || !body.raw_id || !body.authenticator_data || !body.client_data_json || !body.signature) return null;
+  return {
+    id: credentialId,
+    rawId: body.raw_id,
+    type: "public-key",
+    response: {
+      authenticatorData: body.authenticator_data,
+      clientDataJSON: body.client_data_json,
+      signature: body.signature,
+      userHandle: body.user_handle || undefined,
+    },
+  };
 }
 
 async function sha256Bytes(dataBytes) {
@@ -761,6 +804,20 @@ function derToP1363(derBytes) {
   p1363.set(r, 32 - r.length);
   p1363.set(s, 64 - s.length);
   return p1363;
+}
+
+function normalizeDispatchTask(body) {
+  const task = {
+    change_id: String(body.change_id || '').trim(),
+    requested_action: String(body.requested_action || '').trim(),
+    requested_role: String(body.requested_role || 'ENGINEERING_EXECUTION').trim().toUpperCase(),
+    allowed_scope: Array.isArray(body.allowed_scope) ? body.allowed_scope.map(String).sort() : [],
+    metadata: (body.metadata && typeof body.metadata === 'object') ? body.metadata : {},
+  };
+  if (!task.change_id || !task.requested_action) {
+    throw new Error('Missing required dispatch task fields');
+  }
+  return task;
 }
 
 // =============================================================================
@@ -801,6 +858,9 @@ export default {
     // Helper: resolve KV store bindings
     const statusKV = env.STATUS_KV || env.DECISION_KV || env.DAIO_KV;
     const decisionKV = env.DECISION_KV || env.STATUS_KV || env.DAIO_KV;
+    // Security-critical credentials, challenges, and dispatch tickets use the
+    // decision/auth plane so status heartbeat exhaustion cannot block auth.
+    const authKV = decisionKV;
 
     // Helper: extract bearer token
     const authHeader = request.headers.get("Authorization") || "";
@@ -974,6 +1034,7 @@ export default {
         const ownerLabel = body.owner_label || "iPhone Owner";
         const ttl = parseInt(body.ttl_seconds || "600", 10);
         const token = crypto.randomUUID();
+        const challenge = bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)));
 
         const enrollData = {
           token,
@@ -981,10 +1042,11 @@ export default {
           owner_label: ownerLabel,
           created_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + ttl * 1000).toISOString(),
+          registration_challenge: challenge,
         };
 
-        if (statusKV) {
-          await statusKV.put(`enroll:${projectId}:${token}`, JSON.stringify(enrollData), { expirationTtl: ttl });
+        if (authKV) {
+          await authKV.put(`enroll:${projectId}:${token}`, JSON.stringify(enrollData), { expirationTtl: ttl });
         }
 
         return new Response(JSON.stringify({
@@ -998,6 +1060,13 @@ export default {
       }
     }
 
+    if (path === "/api/v1/auth/enroll/challenge" && request.method === "GET") {
+      const projectId=url.searchParams.get("project_id"), token=url.searchParams.get("enrollment_token");
+      const item=authKV && await authKV.get(`enroll:${projectId}:${token}`, {type:"json"});
+      if (!item || !item.registration_challenge) return new Response(JSON.stringify({error:"Unauthorized"}),{status:401,headers:corsHeaders});
+      return new Response(JSON.stringify({challenge:item.registration_challenge}),{headers:corsHeaders});
+    }
+
     // POST /api/v1/auth/enroll/verify (Client: Verify Attestation & Register Passkey)
     if (path === "/api/v1/auth/enroll/verify" && request.method === "POST") {
       try {
@@ -1006,7 +1075,7 @@ export default {
         const token = body.enrollment_token;
         const credId = body.credential_id;
 
-        if (!projectId || !token || !credId || !statusKV) {
+        if (!projectId || !token || !credId || !authKV) {
           return new Response(JSON.stringify({ error: "Bad Request", reason: "Missing required enrollment fields" }), {
             status: 400, headers: corsHeaders,
           });
@@ -1014,34 +1083,45 @@ export default {
 
         // Verify single-use enrollment token
         const tokenKey = `enroll:${projectId}:${token}`;
-        const tokenStr = await statusKV.get(tokenKey);
+        const tokenStr = await authKV.get(tokenKey);
         if (!tokenStr) {
           return new Response(JSON.stringify({ error: "Unauthorized", reason: "Invalid or expired enrollment token" }), {
             status: 401, headers: corsHeaders,
           });
         }
 
-        // Atomic consume of enrollment token
-        await statusKV.delete(tokenKey);
-
         const tokenData = JSON.parse(tokenStr);
+        const registrationResponse = registrationResponseForVerifier(body, credId);
+        if (!registrationResponse) {
+          return new Response(JSON.stringify({ error: "Bad Request", reason: "Malformed registration response" }), { status: 400, headers: corsHeaders });
+        }
+        let verification;
+        try {
+          verification = await verifyRegistrationResponse({ response: registrationResponse, expectedChallenge: tokenData.registration_challenge, expectedOrigin: url.origin, expectedRPID: url.hostname, requireUserVerification: true });
+        } catch (_) { return new Response(JSON.stringify({ error: "Unauthorized", reason: "Registration verification failed" }), { status: 401, headers: corsHeaders }); }
+        if (!verification.verified || !verification.registrationInfo) return new Response(JSON.stringify({ error: "Unauthorized", reason: "Registration assertion rejected" }), { status: 401, headers: corsHeaders });
+        await authKV.delete(tokenKey);
+        const verifiedCredential = verification.registrationInfo.credential;
         const passkeyRecord = {
           credential_id: credId,
           project_id: projectId,
           label: tokenData.owner_label || "iPhone Owner",
           enrolled_at: new Date().toISOString(),
           last_sign_count: 0,
+          schema_version: "webauthn-verified/v1", verification_state: "VERIFIED", revoked: false,
+          public_key: bytesToBase64url(verifiedCredential.publicKey), counter: verifiedCredential.counter,
+          transports: verifiedCredential.transports || [],
         };
 
         // Store credential in KV
-        await statusKV.put(`auth:passkey:${projectId}:${credId}`, JSON.stringify(passkeyRecord));
+        await authKV.put(`auth:passkey:${projectId}:${credId}`, JSON.stringify(passkeyRecord));
 
         // Update credential index
         const indexKey = `auth:index:${projectId}`;
-        let activeCreds = (await statusKV.get(indexKey, { type: "json" })) || [];
+        let activeCreds = (await authKV.get(indexKey, { type: "json" })) || [];
         if (!activeCreds.includes(credId)) {
           activeCreds.push(credId);
-          await statusKV.put(indexKey, JSON.stringify(activeCreds));
+          await authKV.put(indexKey, JSON.stringify(activeCreds));
         }
 
         return new Response(JSON.stringify({
@@ -1063,12 +1143,12 @@ export default {
 
       const projectId = url.searchParams.get("project_id") || "awin-fintech";
       const indexKey = `auth:index:${projectId}`;
-      const activeCreds = (statusKV && await statusKV.get(indexKey, { type: "json" })) || [];
+      const activeCreds = (authKV && await authKV.get(indexKey, { type: "json" })) || [];
       const credentials = [];
 
-      if (statusKV) {
+      if (authKV) {
         for (const cId of activeCreds) {
-          const cStr = await statusKV.get(`auth:passkey:${projectId}:${cId}`);
+          const cStr = await authKV.get(`auth:passkey:${projectId}:${cId}`);
           if (cStr) credentials.push(JSON.parse(cStr));
         }
       }
@@ -1088,12 +1168,20 @@ export default {
       const body = await request.json().catch(() => ({}));
       const projectId = body.project_id || "awin-fintech";
 
-      if (statusKV) {
-        await statusKV.delete(`auth:passkey:${projectId}:${credId}`);
+      if (authKV) {
+        // Preserve a revocation tombstone. Deletion would collapse an
+        // explicitly revoked verified credential into "unknown".
+        const credentialKey = `auth:passkey:${projectId}:${credId}`;
+        const credential = await authKV.get(credentialKey, { type: "json" });
+        if (credential) {
+          credential.revoked = true;
+          credential.revoked_at = new Date().toISOString();
+          await authKV.put(credentialKey, JSON.stringify(credential));
+        }
         const indexKey = `auth:index:${projectId}`;
-        let activeCreds = (await statusKV.get(indexKey, { type: "json" })) || [];
+        let activeCreds = (await authKV.get(indexKey, { type: "json" })) || [];
         activeCreds = activeCreds.filter(id => id !== credId);
-        await statusKV.put(indexKey, JSON.stringify(activeCreds));
+        await authKV.put(indexKey, JSON.stringify(activeCreds));
       }
 
       return new Response(JSON.stringify({ status: "REVOKED", credential_id: credId }), { headers: corsHeaders });
@@ -1109,13 +1197,13 @@ export default {
       const body = await request.json().catch(() => ({}));
       const projectId = body.project_id || "awin-fintech";
 
-      if (statusKV) {
+      if (authKV) {
         const indexKey = `auth:index:${projectId}`;
-        const activeCreds = (await statusKV.get(indexKey, { type: "json" })) || [];
+        const activeCreds = (await authKV.get(indexKey, { type: "json" })) || [];
         for (const cId of activeCreds) {
-          await statusKV.delete(`auth:passkey:${projectId}:${cId}`);
+          await authKV.delete(`auth:passkey:${projectId}:${cId}`);
         }
-        await statusKV.delete(indexKey);
+        await authKV.delete(indexKey);
       }
 
       return new Response(JSON.stringify({ status: "RESET_COMPLETE", project_id: projectId }), { headers: corsHeaders });
@@ -1129,9 +1217,9 @@ export default {
         const randomBytes = crypto.getRandomValues(new Uint8Array(32));
         const challenge = bytesToBase64url(randomBytes);
 
-        if (statusKV) {
+        if (authKV) {
           // 60-second TTL single-use challenge
-          await statusKV.put(`challenge:${challenge}`, JSON.stringify({ project_id: projectId, created_at: Date.now() }), { expirationTtl: 60 });
+          await authKV.put(`challenge:${challenge}`, JSON.stringify({ project_id: projectId, created_at: Date.now() }), { expirationTtl: 60 });
         }
 
         return new Response(JSON.stringify({
@@ -1158,7 +1246,7 @@ export default {
         const challenge = body.challenge;
         const credId = body.credential_id;
 
-        if (!projectId || !workId || !decision || !challenge || !statusKV) {
+        if (!projectId || !workId || !decision || !challenge || !authKV) {
           return new Response(JSON.stringify({ error: "Bad Request", reason: "Missing required verification parameters" }), {
             status: 400, headers: corsHeaders,
           });
@@ -1166,14 +1254,27 @@ export default {
 
         // 1. Verify Challenge Single-Use Nonce
         const chKey = `challenge:${challenge}`;
-        const chStr = await statusKV.get(chKey);
+        const chStr = await authKV.get(chKey);
         if (!chStr) {
           return new Response(JSON.stringify({ error: "Unauthorized", reason: "Challenge expired or invalid (FAIL-CLOSED)" }), {
             status: 401, headers: corsHeaders,
           });
         }
-        // Atomic challenge delete
-        await statusKV.delete(chKey);
+        const challengeState = JSON.parse(chStr);
+        const credentialStr = await authKV.get(`auth:passkey:${projectId}:${credId}`);
+        if (!credentialStr) return new Response(JSON.stringify({ error: "Unauthorized", reason: "Unknown credential" }), { status: 401, headers: corsHeaders });
+        const credential = JSON.parse(credentialStr);
+        if (credential.verification_state !== "VERIFIED" || credential.schema_version !== "webauthn-verified/v1" || credential.revoked || challengeState.project_id !== projectId) return new Response(JSON.stringify({ error: "Unauthorized", reason: "Credential or challenge is not trusted" }), { status: 401, headers: corsHeaders });
+        const authenticationResponse = authenticationResponseForVerifier(body, credId);
+        if (!authenticationResponse) return new Response(JSON.stringify({ error: "Bad Request", reason: "Malformed assertion response" }), { status: 400, headers: corsHeaders });
+        let assertion;
+        try {
+          assertion = await verifyAuthenticationResponse({ response: authenticationResponse, expectedChallenge: challenge, expectedOrigin: url.origin, expectedRPID: url.hostname, credential: { id: credential.credential_id, publicKey: base64urlToBytes(credential.public_key), counter: credential.counter, transports: credential.transports || [] }, requireUserVerification: true });
+        } catch (_) { return new Response(JSON.stringify({ error: "Unauthorized", reason: "Assertion verification failed" }), { status: 401, headers: corsHeaders }); }
+        if (!assertion.verified) return new Response(JSON.stringify({ error: "Unauthorized", reason: "Assertion rejected" }), { status: 401, headers: corsHeaders });
+        credential.counter = assertion.authenticationInfo.newCounter;
+        await authKV.put(`auth:passkey:${projectId}:${credId}`, JSON.stringify(credential));
+        await authKV.delete(chKey);
 
         // 2. ClientDataJSON parsing & origin check
         if (body.client_data_json) {
@@ -1213,7 +1314,7 @@ export default {
         };
 
         // Store ticket in KV with 180s TTL
-        await statusKV.put(`ticket:${projectId}:${ticketId}`, JSON.stringify(actionTicket), { expirationTtl: 180 });
+        await authKV.put(`ticket:${projectId}:${ticketId}`, JSON.stringify(actionTicket), { expirationTtl: 180 });
 
         // Also register in Durable Object if available
         if (env.TICKET_DO) {
@@ -1238,6 +1339,162 @@ export default {
       } catch (err) {
         return new Response(JSON.stringify({ error: "Bad Request", reason: String(err) }), { status: 400, headers: corsHeaders });
       }
+    }
+
+    // =========================================================================
+    // 3b. NATIVE DISPATCH (PRE-ADMISSION, DISTINCT FROM DECISION TICKETS)
+    // =========================================================================
+
+    // Admin-only authoritative credential -> project/conversation binding.
+    if (path === "/api/v1/auth/bindings" && request.method === "POST") {
+      const relaySecret = env.DAIO_RELAY_SECRET || "";
+      if (!relaySecret || bearerToken !== relaySecret || !authKV) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      try {
+        const body = await request.json();
+        const binding = {
+          credential_id: String(body.credential_id || "").trim(),
+          project_id: String(body.project_id || "").trim(),
+          chatgpt_project_id: String(body.chatgpt_project_id || "").trim(),
+          conversation_id: String(body.conversation_id || "").trim(),
+          binding_version: String(body.binding_version || crypto.randomUUID()).trim(),
+          revoked: false,
+        };
+        if (!binding.credential_id || !binding.project_id || !binding.chatgpt_project_id || !binding.conversation_id) {
+          return new Response(JSON.stringify({ error: "Bad Request", reason: "Incomplete authoritative binding" }), { status: 400, headers: corsHeaders });
+        }
+        await authKV.put(`binding:${binding.credential_id}`, JSON.stringify(binding));
+        return new Response(JSON.stringify({ status: "BINDING_REGISTERED", binding }), { status: 201, headers: corsHeaders });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Bad Request", reason: String(err) }), { status: 400, headers: corsHeaders });
+      }
+    }
+
+    // A verified WebAuthn action ticket authorizes creation of a short-lived
+    // dispatch ticket.  Caller-supplied project/conversation values are only
+    // checked against the authoritative binding; they never establish it.
+    if (path === "/api/v1/dispatch/ticket" && request.method === "POST") {
+      const actionTicketHeader = request.headers.get("X-Action-Ticket") || "";
+      if (!authKV || !actionTicketHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized", reason: "Verified WebAuthn Action Ticket required" }), { status: 401, headers: corsHeaders });
+      }
+      try {
+        const body = await request.json();
+        const suppliedProjectId = body.project_id ? String(body.project_id) : null;
+        const actionTicketKey = suppliedProjectId ? `ticket:${suppliedProjectId}:${actionTicketHeader}` : null;
+        let actionTicketStr = actionTicketKey ? await authKV.get(actionTicketKey) : null;
+        if (!actionTicketStr) {
+          const ticketKeys = await authKV.list({ prefix: "ticket:" });
+          for (const key of ticketKeys.keys) {
+            if (key.name.endsWith(`:${actionTicketHeader}`)) {
+              actionTicketStr = await authKV.get(key.name);
+              break;
+            }
+          }
+        }
+        if (!actionTicketStr) {
+          return new Response(JSON.stringify({ error: "Unauthorized", reason: "Action Ticket missing or expired" }), { status: 401, headers: corsHeaders });
+        }
+        const actionTicket = JSON.parse(actionTicketStr);
+        if (actionTicket.action !== "dispatch_work") {
+          return new Response(JSON.stringify({ error: "Forbidden", reason: "Action Ticket is not authorized for dispatch_work" }), { status: 403, headers: corsHeaders });
+        }
+        const binding = JSON.parse(await authKV.get(`binding:${actionTicket.credential_id}`) || "null");
+        if (!binding || binding.revoked || binding.project_id !== actionTicket.project_id) {
+          return new Response(JSON.stringify({ error: "Forbidden", reason: "No authoritative credential binding" }), { status: 403, headers: corsHeaders });
+        }
+        if (suppliedProjectId && suppliedProjectId !== binding.project_id) {
+          return new Response(JSON.stringify({ error: "Forbidden", reason: "Project context mismatch" }), { status: 403, headers: corsHeaders });
+        }
+        if (body.chatgpt_project_id && body.chatgpt_project_id !== binding.chatgpt_project_id) {
+          return new Response(JSON.stringify({ error: "Forbidden", reason: "ChatGPT Project context mismatch" }), { status: 403, headers: corsHeaders });
+        }
+        if (body.conversation_id && body.conversation_id !== binding.conversation_id) {
+          return new Response(JSON.stringify({ error: "Forbidden", reason: "Conversation context mismatch" }), { status: 403, headers: corsHeaders });
+        }
+
+        const task = normalizeDispatchTask(body);
+        const idempotencyKey = String(body.client_idempotency_key || "").trim();
+        if (!idempotencyKey) {
+          return new Response(JSON.stringify({ error: "Bad Request", reason: "client_idempotency_key required" }), { status: 400, headers: corsHeaders });
+        }
+        const taskHash = bytesToBase64url(await sha256Bytes(new TextEncoder().encode(JSON.stringify(task))));
+        const idemKey = `dispatch:idempotency:${binding.project_id}:${idempotencyKey}`;
+        const existingId = await authKV.get(idemKey);
+        if (existingId) {
+          const existing = await authKV.get(`dispatch:ticket:${binding.project_id}:${existingId}`);
+          if (!existing) {
+            return new Response(JSON.stringify({ error: "Conflict", reason: "Idempotency record has no ticket" }), { status: 409, headers: corsHeaders });
+          }
+          const existingTicket = JSON.parse(existing);
+          if (existingTicket.task_hash !== taskHash || existingTicket.binding_version !== binding.binding_version) {
+            return new Response(JSON.stringify({ error: "Conflict", reason: "Idempotency key mutation rejected" }), { status: 409, headers: corsHeaders });
+          }
+          return new Response(JSON.stringify({ status: "DISPATCH_TICKET_REUSED", dispatch_ticket: existingTicket }), { status: 200, headers: corsHeaders });
+        }
+
+        const ticketId = crypto.randomUUID();
+        const issuedAt = new Date();
+        const dispatchTicket = {
+          ticket_id: ticketId,
+          credential_id: binding.credential_id,
+          project_id: binding.project_id,
+          chatgpt_project_id: binding.chatgpt_project_id,
+          conversation_id: binding.conversation_id,
+          binding_version: binding.binding_version,
+          action: "dispatch_work",
+          task_hash: taskHash,
+          client_idempotency_key: idempotencyKey,
+          issued_at: issuedAt.toISOString(),
+          expires_at: new Date(issuedAt.getTime() + 180000).toISOString(),
+          consumed: false,
+          task,
+        };
+        await authKV.put(`dispatch:ticket:${binding.project_id}:${ticketId}`, JSON.stringify(dispatchTicket), { expirationTtl: 180 });
+        await authKV.put(idemKey, ticketId, { expirationTtl: 180 });
+        return new Response(JSON.stringify({ status: "DISPATCH_TICKET_ISSUED", dispatch_ticket: dispatchTicket }), { status: 201, headers: corsHeaders });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Bad Request", reason: String(err) }), { status: 400, headers: corsHeaders });
+      }
+    }
+
+    // Outbound-only Mac poller.  It can observe tickets but cannot establish
+    // identity or binding authority.
+    if (path === "/api/v1/dispatch" && request.method === "GET") {
+      const relaySecret = env.DAIO_RELAY_SECRET || "";
+      const projectId = url.searchParams.get("project_id");
+      if (!relaySecret || bearerToken !== relaySecret || !projectId || !authKV) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      const listed = await authKV.list({ prefix: `dispatch:ticket:${projectId}:` });
+      const tickets = [];
+      for (const key of listed.keys) {
+        const raw = await authKV.get(key.name);
+        if (!raw) continue;
+        const ticket = JSON.parse(raw);
+        if (!ticket.consumed && new Date(ticket.expires_at).getTime() >= Date.now()) tickets.push(ticket);
+      }
+      return new Response(JSON.stringify({ project_id: projectId, count: tickets.length, tickets }), { headers: corsHeaders });
+    }
+
+    if (path.startsWith("/api/v1/dispatch/") && path.endsWith("/ack") && request.method === "POST") {
+      const relaySecret = env.DAIO_RELAY_SECRET || "";
+      if (!relaySecret || bearerToken !== relaySecret || !authKV) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      const ticketId = path.split("/")[4];
+      const body = await request.json().catch(() => ({}));
+      const projectId = String(body.project_id || "").trim();
+      const key = `dispatch:ticket:${projectId}:${ticketId}`;
+      const raw = await authKV.get(key);
+      if (!raw) return new Response(JSON.stringify({ error: "Not Found", reason: "Dispatch ticket missing or expired" }), { status: 404, headers: corsHeaders });
+      const ticket = JSON.parse(raw);
+      if (ticket.consumed) return new Response(JSON.stringify({ error: "Conflict", reason: "Dispatch ticket already consumed" }), { status: 409, headers: corsHeaders });
+      if (new Date(ticket.expires_at).getTime() < Date.now()) return new Response(JSON.stringify({ error: "Unauthorized", reason: "Dispatch ticket expired" }), { status: 401, headers: corsHeaders });
+      ticket.consumed = true;
+      await authKV.put(key, JSON.stringify(ticket), { expirationTtl: 180 });
+      return new Response(JSON.stringify({ status: "DISPATCH_ACK_PROCESSED", ticket_id: ticketId }), { headers: corsHeaders });
     }
 
     // =========================================================================
@@ -1295,7 +1552,7 @@ export default {
                   ticket = doJson.ticket;
                   ticketConsumed = true;
                   // Clear KV replica as well
-                  if (statusKV) await statusKV.delete(`ticket:${projectId}:${actionTicketHeader}`);
+                  if (authKV) await authKV.delete(`ticket:${projectId}:${actionTicketHeader}`);
                 } else {
                   const errJson = await doResp.json().catch(() => ({}));
                   return new Response(JSON.stringify({ error: "Unauthorized", reason: errJson.reason || "Action Ticket consumption rejected by DO Authority (FAIL-CLOSED)" }), {
@@ -1312,11 +1569,11 @@ export default {
 
             // 2. Fallback if DO not configured: KV single-use delete
             if (!ticketConsumed) {
-              if (!statusKV) {
+              if (!authKV) {
                 return new Response(JSON.stringify({ error: "Storage Error" }), { status: 500, headers: corsHeaders });
               }
               const ticketKey = `ticket:${projectId}:${actionTicketHeader}`;
-              const ticketStr = await statusKV.get(ticketKey);
+              const ticketStr = await authKV.get(ticketKey);
               if (!ticketStr) {
                 return new Response(JSON.stringify({ error: "Unauthorized", reason: "Invalid or already consumed Action Ticket (FAIL-CLOSED)" }), {
                   status: 401, headers: corsHeaders,
@@ -1335,7 +1592,7 @@ export default {
               }
 
               // Atomic single-use ticket consumption
-              await statusKV.delete(ticketKey);
+              await authKV.delete(ticketKey);
             }
             authMode = "PASSKEY_ACTION_TICKET";
           }
@@ -1519,4 +1776,3 @@ export class TicketAuthority {
     return new Response("Not Found", { status: 404 });
   }
 }
-

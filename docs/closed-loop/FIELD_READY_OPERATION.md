@@ -85,3 +85,48 @@ runtime state, then reload exactly the supervisor that owns the project.
 Health checks are local and must not invoke an engineering model.  Do not place
 credentials, tokens, cookies, raw provider stderr, or browser session data in
 logs, evidence, Git, or documentation.
+
+## WebAuthn Phase 0 and native dispatch
+
+Phase 0 is frozen only after the executable verifier-backed matrix records
+`WEBAUTHN_PHASE0_RESULT: PASS`. The matrix includes the valid path plus
+`LEGACY_UNVERIFIED`, project/context mismatch, and required-user-verification
+rejection. The Generic acceptance harness is
+`scripts/daio_closed_loop/webauthn_phase0.py` and its executable matrix is
+`tests/test_webauthn_phase0_acceptance.py`.
+
+Native dispatch is a separate pre-admission path:
+
+```text
+verified WebAuthn identity
+  -> authoritative credential/binding registry
+  -> pre-admission dispatch ticket
+  -> Cloudflare Relay
+  -> outbound-only Mac poller
+  -> DAIORootWorkInbox
+  -> RootWorkRequest
+  -> canonical Work ID
+```
+
+The binding registry is authoritative for project, ChatGPT Project, and
+Conversation IDs. Caller-supplied context can only be checked against that
+record; it cannot establish authority. A dispatch ticket binds credential,
+binding version, `dispatch_work`, normalized task hash, client idempotency key,
+and expiry. It never contains a `work_id` or `gate_id`; those exist only after
+canonical inbox admission. Relay delivery is acknowledged after durable
+admission, so poll retries and supervisor restart map to one root work.
+
+## RPC-1 status write budget
+
+`STATUS_KV` is an operational snapshot plane. The publisher observes local
+state every supervisor tick, suppresses unchanged material payloads, refreshes
+at most once per five-minute heartbeat, and publishes immediately when the
+material status fingerprint changes. Quota/rate-limit/network failures use
+bounded exponential backoff and set a local degraded marker; they never stop
+inbox admission or worker execution. Credentials, challenges, action tickets,
+and native dispatch tickets use the auth/decision plane and do not depend on
+high-frequency status publication. Two namespaces provide isolation, not
+additional Free-plan daily write allowance. At one normal five-minute
+heartbeat this is at most `86,400 / 300 = 288` status writes per day, before
+additional material-transition writes; unchanged observations add zero KV
+writes.

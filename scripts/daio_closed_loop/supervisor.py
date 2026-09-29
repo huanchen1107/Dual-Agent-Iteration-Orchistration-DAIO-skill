@@ -146,7 +146,11 @@ class DAIOSupervisor:
                     collector=collector,
                     relay_url=self.remote_relay_adapter.client.endpoint_url,
                     publish_token=self.remote_relay_adapter.client.auth_token,
-                    interval_seconds=self.poll_interval_seconds,
+                    # Observe each local tick, but publish a normal heartbeat
+                    # only every 2--5 minutes.  The publisher fingerprints
+                    # material state and emits immediately on transitions.
+                    interval_seconds=300,
+                    observation_interval_seconds=self.poll_interval_seconds,
                 )
             except Exception as ex:
                 logger.warning(f"Could not initialize DAIOStatusPublisher: {ex}")
@@ -356,18 +360,22 @@ class DAIOSupervisor:
         except Exception as ex:
             logger.warning(f"Could not record supervisor heartbeat: {ex}")
 
-        # 5. Continuous Live Status Publishing to Cloudflare Relay (throttled to conserve KV quota)
+        # 5. Continuous Live Status observation.  The publisher suppresses
+        # unchanged snapshots, refreshes at its heartbeat interval, and uses
+        # bounded backoff after quota/rate-limit/network failures.  Remote
+        # status is strictly non-authoritative; failures never stop local DAIO.
         if self.status_publisher:
-            import time
-            now_mono = time.monotonic()
-            has_events = bool(worker_result or remote_decisions_processed)
-            last_pub = getattr(self, "_last_status_publish_time", None)
-            if last_pub is None or has_events or (now_mono - last_pub >= 15.0):
-                try:
-                    self.status_publisher.publish_once()
-                    self._last_status_publish_time = now_mono
-                except Exception as ex:
-                    logger.debug(f"Cloudflare status publication non-fatal: {ex}")
+            try:
+                self.status_publisher.publish_once()
+                if self.status_publisher.remote_status_degraded:
+                    logger.warning(
+                        "Cloudflare status plane degraded; local supervisor remains authoritative: %s",
+                        self.status_publisher.last_failure_detail,
+                    )
+            except Exception as ex:
+                # Defensive isolation: status telemetry can never fail local
+                # inbox admission, worker execution, or decision processing.
+                logger.debug(f"Cloudflare status publication non-fatal: {ex}")
 
 
 

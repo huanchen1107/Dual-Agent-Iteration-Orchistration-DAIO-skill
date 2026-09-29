@@ -18,6 +18,17 @@ from .orchestrator import DAIOClosedLoopOrchestrator
 from .worker import DAIOPersistentWorker, run_persistent_worker
 from .watchdog import DAIOHandoffWatchdog
 from .supervisor import DAIOSupervisor, run_supervisor
+from .native_dispatch import (
+    AuthoritativeCredentialBindingRegistry,
+    CredentialBinding,
+    InMemoryNativeDispatchRelay,
+    NativeDispatchError,
+    NativeDispatchPoller,
+    NativeDispatchResult,
+    NativeDispatchService,
+    PreAdmissionDispatchTicket,
+    VerifiedWebAuthnIdentity,
+)
 
 __all__ = [
     "ArchitectDecision",
@@ -36,6 +47,14 @@ __all__ = [
     "DAIOHandoffWatchdog",
     "DAIOSupervisor",
     "run_supervisor",
+    "AuthoritativeCredentialBindingRegistry",
+    "CredentialBinding",
+    "InMemoryNativeDispatchRelay",
+    "NativeDispatchError",
+    "NativeDispatchPoller",
+    "NativeDispatchResult",
+    "NativeDispatchService",
+    "PreAdmissionDispatchTicket",
+    "VerifiedWebAuthnIdentity",
 ]
-
 

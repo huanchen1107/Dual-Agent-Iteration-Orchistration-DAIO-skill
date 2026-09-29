@@ -66,7 +66,7 @@ def test_valid_passkey_registration_flow(worker_source: str):
     """3. Valid Passkey Registration: Verify enrollment token verification and storage."""
     assert 'path === "/api/v1/auth/enroll/token"' in worker_source
     assert 'path === "/api/v1/auth/enroll/verify"' in worker_source
-    assert 'await statusKV.delete(tokenKey)' in worker_source  # Atomic single-use enrollment token
+    assert 'await authKV.delete(tokenKey)' in worker_source  # Atomic single-use enrollment token
     assert 'auth:passkey:' in worker_source
 
 
@@ -80,7 +80,7 @@ def test_expired_and_reused_challenge_fail_closed(worker_source: str):
     """5. Expired & Reused Challenge: Verify 60s TTL and single-use atomic deletion."""
     assert 'expirationTtl: 60' in worker_source
     assert 'challenge:${challenge}' in worker_source
-    assert 'await statusKV.delete(chKey)' in worker_source  # Atomic delete on verify
+    assert 'await authKV.delete(chKey)' in worker_source  # Atomic delete on verify
 
 
 def test_valid_action_ticket_generation_and_schema(worker_source: str):
