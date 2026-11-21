@@ -30,6 +30,7 @@ from ..models import (
 )
 from ..router import DAIORoleRouter
 from ..store import DAIOWorkStore
+from ..work_result import WorkResultEnvelope
 
 logger = logging.getLogger("DAIO_Remote_Relay")
 
@@ -315,6 +316,44 @@ class RemoteDecisionRelayClient:
             logger.error(f"Relay acknowledge exception: {ex}")
             return False
 
+    def publish_work_result(self, envelope: WorkResultEnvelope) -> bool:
+        """Publish a bounded WorkResultEnvelope as relay projection state."""
+        if envelope.project_id != self.project_id:
+            raise PermissionError("work-result project does not match relay client project")
+        url = f"{self.endpoint_url}/api/v1/work-results"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(envelope.to_dict()).encode("utf-8"),
+            headers=self._get_headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                return resp.status in (200, 201)
+        except urllib.error.HTTPError as ex:
+            logger.warning("Work-result publication rejected: HTTP %s", ex.code)
+            return False
+        except Exception as ex:
+            logger.warning("Work-result publication failed: %s", ex)
+            return False
+
+    def get_work_result(self, work_id: str, dispatch_ticket: str) -> Optional[WorkResultEnvelope]:
+        """Query a project-scoped result using the one-use-WebAuthn-derived dispatch capability."""
+        if not work_id or not dispatch_ticket:
+            raise PermissionError("work_id and dispatch_ticket are required")
+        query = urllib.parse.urlencode({"project_id": self.project_id})
+        url = f"{self.endpoint_url}/api/v1/work-results/{urllib.parse.quote(work_id, safe='')}?{query}"
+        req = urllib.request.Request(url, headers={**self._get_headers(), "X-Dispatch-Ticket": dispatch_ticket}, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                if resp.status != 200:
+                    return None
+                return WorkResultEnvelope.from_dict(json.loads(resp.read().decode("utf-8"))["result"])
+        except urllib.error.HTTPError as ex:
+            if ex.code in (401, 403, 404):
+                return None
+            raise
+
 
 class RemoteDecisionAdapter:
     """
@@ -562,4 +601,3 @@ class RemoteDecisionAdapter:
             logger.info(f"🏛️ RPC-2B Application Result for [{env.decision_id}]: {app_res.status} ({app_res.reason})")
 
         return results
-

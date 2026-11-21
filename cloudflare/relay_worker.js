@@ -732,6 +732,8 @@ const OPENAPI_SPEC = {
     },
     "/api/v1/dispatch": { get: { summary: "Poll native dispatch tickets (Mac outbound)", operationId: "pollDispatchTickets" } },
     "/api/v1/dispatch/{ticket_id}/ack": { post: { summary: "Acknowledge native dispatch admission", operationId: "ackDispatchTicket" } },
+    "/api/v1/work-results": { post: { summary: "Publish canonical WorkResultEnvelope projection (Mac outbound)", operationId: "publishWorkResult" } },
+    "/api/v1/work-results/{work_id}": { get: { summary: "Query project-scoped canonical WorkResultEnvelope projection", operationId: "getWorkResult" } },
     "/api/v1/decisions": {
       post: { summary: "Submit Decision via Passkey Ticket or Relay Secret", operationId: "submitDecision" },
       get: { summary: "Poll Pending Decisions (Mac Outbound)", operationId: "pollDecisions" },
@@ -915,6 +917,7 @@ export default {
     // Helper: extract bearer token
     const authHeader = request.headers.get("Authorization") || "";
     const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const relaySecret = env.DAIO_RELAY_SECRET || "";
 
     // =========================================================================
     // 1. COCKPIT STATIC ASSETS (Strict CSP Compliant)
@@ -1553,6 +1556,64 @@ export default {
       ticket.consumed = true;
       await authKV.put(key, JSON.stringify(ticket), { expirationTtl: 180 });
       return new Response(JSON.stringify({ status: "DISPATCH_ACK_PROCESSED", ticket_id: ticketId }), { headers: corsHeaders });
+    }
+
+    // =========================================================================
+    // 3c. GENERIC WORK RESULT PROJECTION (NOT CANONICAL WORK STORAGE)
+    // =========================================================================
+
+    // RESULT_KV is an optional projection/cache binding. DECISION_KV is the
+    // compatibility fallback for existing deployments; STATUS_KV is never used.
+    const resultKV = env.RESULT_KV || decisionKV;
+    if (path === "/api/v1/work-results" && request.method === "POST") {
+      if (!relaySecret || bearerToken !== relaySecret || !resultKV) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      try {
+        const body = await request.json();
+        const required = ["schema_version", "project_id", "work_id", "lifecycle", "updated_at", "integrity_sha256"];
+        if (required.some((key) => !body[key]) || body.schema_version !== "daio-work-result/v1") {
+          return new Response(JSON.stringify({ error: "Bad Request", reason: "Invalid WorkResultEnvelope" }), { status: 400, headers: corsHeaders });
+        }
+        if (JSON.stringify(body).length > 20000 || (body.evidence_references || []).length > 32) {
+          return new Response(JSON.stringify({ error: "Bad Request", reason: "WorkResultEnvelope exceeds safe bounds" }), { status: 400, headers: corsHeaders });
+        }
+        const key = `work-result:${String(body.project_id)}:${String(body.work_id)}`;
+        const priorRaw = await resultKV.get(key);
+        if (priorRaw) {
+          const prior = JSON.parse(priorRaw);
+          const priorVersion = [Number(prior.work_revision || 0), Number(prior.event_sequence || 0), String(prior.updated_at || "")];
+          const incomingVersion = [Number(body.work_revision || 0), Number(body.event_sequence || 0), String(body.updated_at || "")];
+          if (incomingVersion < priorVersion) {
+            return new Response(JSON.stringify({ status: "STALE_IGNORED", work_id: body.work_id }), { status: 200, headers: corsHeaders });
+          }
+        }
+        await resultKV.put(key, JSON.stringify(body), { expirationTtl: 604800 });
+        return new Response(JSON.stringify({ status: "PROJECTED", work_id: body.work_id }), { status: 201, headers: corsHeaders });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Bad Request", reason: String(err) }), { status: 400, headers: corsHeaders });
+      }
+    }
+
+    if (path.startsWith("/api/v1/work-results/") && request.method === "GET") {
+      if (!authKV || !resultKV) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      const workId = decodeURIComponent(path.split("/")[4] || "");
+      const projectId = String(url.searchParams.get("project_id") || "").trim();
+      const dispatchTicketId = request.headers.get("X-Dispatch-Ticket") || "";
+      if (!workId || !projectId || !dispatchTicketId) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      const ticketRaw = await authKV.get(`dispatch:ticket:${projectId}:${dispatchTicketId}`);
+      if (!ticketRaw) return new Response(JSON.stringify({ error: "Unauthorized", reason: "Dispatch capability missing or expired" }), { status: 401, headers: corsHeaders });
+      const ticket = JSON.parse(ticketRaw);
+      if (ticket.project_id !== projectId || ticket.action !== "dispatch_work" || new Date(ticket.expires_at).getTime() < Date.now()) {
+        return new Response(JSON.stringify({ error: "Forbidden", reason: "Dispatch capability/project mismatch" }), { status: 403, headers: corsHeaders });
+      }
+      const raw = await resultKV.get(`work-result:${projectId}:${workId}`);
+      if (!raw) return new Response(JSON.stringify({ error: "Not Found", reason: "Work result projection unavailable" }), { status: 404, headers: corsHeaders });
+      return new Response(JSON.stringify({ result: JSON.parse(raw) }), { status: 200, headers: corsHeaders });
     }
 
     // =========================================================================

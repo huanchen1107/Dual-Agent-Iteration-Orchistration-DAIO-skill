@@ -38,6 +38,7 @@ from .adapters.factory import create_engineering_agent_adapter, create_architect
 from .adapters.remote_relay import RemoteDecisionAdapter, RemoteDecisionRelayClient
 from .adapters.rpc_status_collector import DAIOStatusCollector
 from .adapters.rpc_status_publisher import DAIOStatusPublisher
+from .work_result import build_work_result
 
 logger = logging.getLogger("DAIO_Supervisor")
 
@@ -335,6 +336,18 @@ class DAIOSupervisor:
 
         # 3. Worker polling & execution
         worker_result = await self.worker.run_once()
+
+        # Work results use a separate, low-volume relay projection.  The
+        # canonical SQLite store remains authoritative; relay failures are
+        # non-fatal and never affect local execution or STATUS_KV.
+        if worker_result and self.remote_relay_adapter and self.remote_relay_adapter.client:
+            try:
+                envelope = build_work_result(worker_result)
+                published = self.remote_relay_adapter.client.publish_work_result(envelope)
+                if not published:
+                    logger.warning("Work-result projection deferred: work_id=%s", worker_result.work_id)
+            except Exception as ex:
+                logger.warning("Work-result projection failed non-fatally: %s", ex)
 
         # 4. Record durable supervisor heartbeat
         last_prog = now_iso if worker_result else None

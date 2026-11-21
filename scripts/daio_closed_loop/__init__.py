@@ -13,6 +13,7 @@ from .models import (
     HandoffWatch,
 )
 from .store import DAIOWorkStore, SqliteDAIOWorkStore
+from .work_result import WorkResultEnvelope, WorkResultProjector, build_work_result
 from .router import DAIORoleRouter
 from .orchestrator import DAIOClosedLoopOrchestrator
 from .worker import DAIOPersistentWorker, run_persistent_worker
@@ -40,6 +41,9 @@ __all__ = [
     "HandoffWatch",
     "DAIOWorkStore",
     "SqliteDAIOWorkStore",
+    "WorkResultEnvelope",
+    "WorkResultProjector",
+    "build_work_result",
     "DAIORoleRouter",
     "DAIOClosedLoopOrchestrator",
     "DAIOPersistentWorker",
@@ -57,4 +61,3 @@ __all__ = [
     "PreAdmissionDispatchTicket",
     "VerifiedWebAuthnIdentity",
 ]
-

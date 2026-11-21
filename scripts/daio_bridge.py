@@ -22,6 +22,16 @@ except ImportError:
 
 logger = logging.getLogger("DAIO_Bridge")
 
+# ChatGPT currently renders historical message editors as contenteditable nodes
+# alongside the live composer.  The live composer has a stable semantic marker;
+# generic contenteditable fallback must not select an off-screen history editor.
+COMPOSER_SELECTOR = (
+    '#prompt-textarea, '
+    '[contenteditable="true"][data-composer-markdown], '
+    '[contenteditable="true"][aria-label="問問 ChatGPT"], '
+    'textarea'
+)
+
 
 def discover_tab_by_url(
     url_pattern: str,
@@ -81,6 +91,7 @@ class UniversalCDPClient:
         self.ws_url = ws_url
         self.msg_id = 0
         self.ws = None
+        self.cdp_events: List[Dict[str, Any]] = []
 
     async def connect(self):
         self.ws = await websockets.connect(self.ws_url, max_size=25 * 1024 * 1024)
@@ -107,6 +118,8 @@ class UniversalCDPClient:
                 if "error" in data:
                     logger.warning(f"CDP command '{method}' returned error: {data['error']}")
                 return data.get("result", {})
+            if data.get("method"):
+                self.cdp_events.append(data)
 
     async def evaluate(self, expr: str) -> Any:
         self.msg_id += 1
@@ -126,6 +139,8 @@ class UniversalCDPClient:
             if data.get("id") == self.msg_id:
                 result = data.get("result", {}).get("result", {})
                 return result.get("value")
+            if data.get("method"):
+                self.cdp_events.append(data)
 
     async def get_status(self) -> Dict[str, Any]:
         check_js = """
@@ -142,7 +157,7 @@ class UniversalCDPClient:
             
             // Detection across ChatGPT, Claude, and generic web UIs
             const isStreaming = !!document.querySelector('button[aria-label="Stop streaming"], button[aria-label="停止串流"], button[aria-label="停止產生"], button[aria-label="停止"], button[data-testid="stop-button"], .result-streaming, .streaming');
-            const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"], textarea');
+            const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
             
             return {
                 assistantCount: assistantEls.length > 0 ? assistantEls.length : markdowns.length,
@@ -168,6 +183,19 @@ class UniversalCDPClient:
         initial_status = await self.get_status() or {}
         initial_count = initial_status.get("assistantCount", 0)
         initial_text = (initial_status.get("lastText") or "").strip()
+        baseline_turn_state = await self.evaluate("""
+        (() => {
+            const turns = [...document.querySelectorAll('[data-chatgpt-search-message-ids]')];
+            return {
+                ids: turns.map((el) => el.getAttribute('data-chatgpt-search-message-ids')).filter(Boolean),
+                count: turns.length
+            };
+        })()
+        """) or {"ids": [], "count": 0}
+        baseline_turn_ids = baseline_turn_state.get("ids", [])
+        baseline_turn_count = baseline_turn_state.get("count", 0)
+        self.cdp_events.clear()
+        await self.send_cdp_command("Network.enable", {})
 
         # Extract or resolve nonce & fingerprint
         if not probe_nonce:
@@ -210,7 +238,7 @@ class UniversalCDPClient:
             # 1. Focus and clear composer (poll up to 6.0s for DOM readiness)
             input_prep_js = """
             (() => {
-                const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
                 if (!promptEl) return { success: false, error: "Prompt input element not found" };
                 
                 promptEl.focus();
@@ -266,7 +294,7 @@ class UniversalCDPClient:
                 # 2. Verify composer state contains exact nonce/content before attempting submit
                 comp_check_js = f"""
                 (() => {{
-                    const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                    const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
                     if (!promptEl) return {{ found: false, hasNonce: false }};
                     const text = promptEl.innerText || promptEl.textContent || promptEl.value || '';
                     const targetNonce = {json.dumps(probe_nonce)};
@@ -337,7 +365,7 @@ class UniversalCDPClient:
                     }
 
                     // Geometric sanity check against composer
-                    const comp = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                    const comp = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
                     if (comp) {
                         const compRect = comp.getBoundingClientRect();
                         // Send button cannot be located to the far left of composer (where attachment/sidebar buttons sit)
@@ -403,51 +431,92 @@ class UniversalCDPClient:
             # 5. Positive SEND_VERIFIED assertion (poll up to 5.0s)
             verify_send_js = f"""
             (() => {{
-                const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+                const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
                 const promptText = promptEl ? (promptEl.innerText || promptEl.value || '').trim() : '';
-                const userArticles = document.querySelectorAll('[data-chatgpt-search-unit-key*="user"], [data-message-author-role="user"], [data-user-message-bubble="true"]');
+                const userArticles = [...document.querySelectorAll('[data-chatgpt-search-message-ids]')];
+                const baselineIds = new Set({json.dumps(baseline_turn_ids)});
                 let userMessageMatched = false;
                 let matchedNonce = false;
+                let matchedTurnId = null;
                 const targetNonce = {json.dumps(probe_nonce)};
                 const targetFp = {json.dumps(fingerprint)};
 
                 if (userArticles.length > 0) {{
                     for (let i = userArticles.length - 1; i >= 0; i--) {{
                         const uText = userArticles[i].innerText.replace(/\\s+/g, ' ').trim();
-                        if (targetNonce && uText.includes(targetNonce)) {{
+                        const turnId = userArticles[i].getAttribute('data-chatgpt-search-message-ids');
+                        const isNewTurn = !!turnId && !baselineIds.has(turnId);
+                        if (isNewTurn && targetNonce && uText.includes(targetNonce)) {{
                             userMessageMatched = true;
                             matchedNonce = true;
+                            matchedTurnId = turnId;
                             break;
-                        }} else if (!targetNonce && targetFp && (uText.includes(targetFp) || (targetFp.length > 30 && targetFp.includes(uText)))) {{
+                        }} else if (isNewTurn && !targetNonce && targetFp && (uText.includes(targetFp) || (targetFp.length > 30 && targetFp.includes(uText)))) {{
                             userMessageMatched = true;
+                            matchedTurnId = turnId;
                             break;
                         }}
                     }}
                 }}
-                if (targetNonce && !matchedNonce) {{
-                    const main = document.querySelector('main') || document.body;
-                    if (main && main.innerText.includes(targetNonce)) {{
-                        userMessageMatched = true;
-                        matchedNonce = true;
-                    }}
-                }}
                 const isCleared = (promptText.length === 0);
                 return {{
-                    verified: (targetNonce ? matchedNonce : (isCleared || userMessageMatched)),
+                    verified: userMessageMatched,
                     isCleared: isCleared,
                     userMessageMatched: userMessageMatched,
                     matchedNonce: matchedNonce,
+                    matchedTurnId: matchedTurnId,
+                    baselineTurnCount: {baseline_turn_count},
+                    currentTurnCount: userArticles.length,
                     promptLength: promptText.length
                 }};
             }})()
             """
             send_verified = False
+            confirmed_turn_id = None
+            network_submission_confirmed = False
+            checked_network_response_ids = set()
             verify_start = asyncio.get_event_loop().time()
             while asyncio.get_event_loop().time() - verify_start < 5.0:
                 v_res = await self.evaluate(verify_send_js) or {}
+                request_ids = {
+                    event.get("params", {}).get("requestId")
+                    for event in self.cdp_events
+                    if event.get("method") == "Network.requestWillBeSent"
+                    and "/backend-api/f/conversation" in event.get("params", {}).get("request", {}).get("url", "")
+                    and probe_nonce
+                    and probe_nonce in (event.get("params", {}).get("request", {}).get("postData") or "")
+                }
+                network_submission_confirmed = any(
+                    event.get("method") == "Network.responseReceived"
+                    and event.get("params", {}).get("requestId") in request_ids
+                    and int(event.get("params", {}).get("response", {}).get("status", 0)) == 200
+                    for event in self.cdp_events
+                )
+                if not network_submission_confirmed:
+                    for event in self.cdp_events:
+                        if event.get("method") != "Network.responseReceived":
+                            continue
+                        params = event.get("params", {})
+                        response = params.get("response", {})
+                        request_id = params.get("requestId")
+                        if request_id in checked_network_response_ids or "/backend-api/f/conversation" not in response.get("url", ""):
+                            continue
+                        checked_network_response_ids.add(request_id)
+                        if int(response.get("status", 0)) != 200:
+                            continue
+                        request_body = await self.send_cdp_command(
+                            "Network.getRequestPostData", {"requestId": request_id}
+                        )
+                        if probe_nonce and probe_nonce in (request_body.get("postData") or ""):
+                            network_submission_confirmed = True
+                            break
                 if v_res.get("verified") or v_res.get("matchedNonce"):
                     send_verified = True
                     logger.info(f"✅ SEND_VERIFIED: Message confirmed committed to conversation DOM: {v_res}")
+                    break
+                if network_submission_confirmed:
+                    send_verified = True
+                    logger.info("✅ SEND_VERIFIED: Conversation request with the exact nonce returned HTTP 200.")
                     break
                 await asyncio.sleep(0.3)
 
@@ -462,6 +531,7 @@ class UniversalCDPClient:
                     "status": "SUBMISSION_NOT_COMMITTED",
                     "error": f"SUBMISSION_NOT_COMMITTED: {error_msg} (nonce={probe_nonce})."
                 }
+            confirmed_turn_id = v_res.get("matchedTurnId")
 
         # 5. Wait for generation to start and finish
         logger.info("Waiting for Web LLM response stream to finish...")
@@ -488,6 +558,9 @@ class UniversalCDPClient:
                         "reply": curr_text,
                         "assistant_count": curr_count,
                         "probe_nonce": probe_nonce,
+                        "user_turn_id": confirmed_turn_id,
+                        "baseline_user_turn_count": baseline_turn_count,
+                        "network_submission_confirmed": network_submission_confirmed,
                     }
             if asyncio.get_event_loop().time() - start_time > timeout_seconds:
                 return {"success": False, "error": f"Timeout waiting for response after {timeout_seconds}s"}
@@ -506,7 +579,7 @@ class UniversalCDPClient:
         # 1. Fill Text Input
         input_js = f"""
         (() => {{
-            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+            const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
             if (!promptEl) return {{ success: false, error: "Prompt input element not found" }};
             
             promptEl.focus();
@@ -593,7 +666,7 @@ class UniversalCDPClient:
         # 4. Verify
         verify_send_js = f"""
         (() => {{
-            const promptEl = document.querySelector('#prompt-textarea') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+            const promptEl = document.querySelector('#prompt-textarea, [contenteditable="true"][data-composer-markdown], [contenteditable="true"][aria-label="問問 ChatGPT"], textarea');
             const promptText = promptEl ? (promptEl.innerText || promptEl.value || '').trim() : '';
             return {{ verified: (promptText.length === 0), promptLength: promptText.length }};
         }})()
